@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, separate-cms-erp, phase-3-monorepo]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build all apps
+        run: pnpm run build
+        env:
+          # Stub values so Next.js's static-render-time imports don't crash.
+          # Real Supabase calls happen at request time, not build time.
+          NEXT_PUBLIC_SUPABASE_URL: https://stub.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: stub-anon-key-for-build-only
+          SUPABASE_SERVICE_ROLE_KEY: stub-service-role-key-for-build-only

@@ -1,0 +1,16 @@
+{
+  "name": "@nkps/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "@googlemaps/js-api-loader": "^2.0.2",
+    "resend": "^6.12.2"
+  },
+  "devDependencies": {
+    "@types/google.maps": "^3.64.0"
+  }
+}
