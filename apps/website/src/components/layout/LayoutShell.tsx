@@ -7,6 +7,7 @@ import { TopBar } from "@/components/layout/TopBar";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { ChalkCursor } from "@/components/layout/ChalkCursor";
 import { ChalkObjects } from "@/components/layout/ChalkObjects";
+import { ChalkWriting } from "@/components/layout/ChalkWriting";
 import { ChatBot } from "@nkps/shared/components/ChatBot";
 import { WhatsAppButton } from "@nkps/shared/components/WhatsAppButton";
 
@@ -28,6 +29,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="site-chalk">
       <ChalkObjects />
+      <ChalkWriting />
       <ChalkCursor />
       <div className="relative z-10 flex min-h-screen flex-col">
         <TopBar />
