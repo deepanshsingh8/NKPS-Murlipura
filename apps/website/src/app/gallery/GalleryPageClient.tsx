@@ -107,7 +107,7 @@ function EventPhotoCarousel({
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3, delay: index * 0.03 }}
-            className="group relative flex-shrink-0 w-72 sm:w-80 md:w-96 aspect-[4/3] overflow-hidden rounded-2xl bg-navy-100 cursor-pointer"
+            className="group relative flex-shrink-0 w-72 sm:w-80 md:w-96 aspect-[4/3] overflow-hidden rounded-2xl bg-navy-100 cursor-pointer shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)]"
             onClick={() => onImageClick(image)}
           >
             <Image
@@ -467,7 +467,7 @@ export function GalleryPageClient() {
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.05 }}
-                      className="group cursor-pointer bg-white rounded-2xl border border-navy-900/5 overflow-hidden shadow-sm hover:shadow-xl hover:border-gold-500/20 transition-all duration-300 hover:-translate-y-1"
+                      className="group cursor-pointer bg-white rounded-2xl border border-black/5 overflow-hidden shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)] hover:shadow-[0_20px_40px_-16px_rgba(0,0,0,0.7)] hover:border-gold-500/30 transition-all duration-300 hover:-translate-y-1"
                       onClick={() => fetchEventImages(evt)}
                     >
                       <div className="aspect-[16/9] bg-navy-100 relative overflow-hidden">
@@ -515,13 +515,13 @@ export function GalleryPageClient() {
                 </motion.div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-20">
-                  <div className="rounded-full bg-cream-100 p-6">
-                    <ImageIcon className="h-10 w-10 text-navy-800/30" />
+                  <div className="rounded-full bg-white/[0.06] p-6">
+                    <ImageIcon className="h-10 w-10 text-chalk-faint" />
                   </div>
-                  <h3 className="mt-5 text-lg font-semibold text-navy-900">
+                  <h3 className="mt-5 text-lg font-semibold text-chalk">
                     No events found
                   </h3>
-                  <p className="mt-2 text-sm text-navy-800/50 text-center max-w-sm">
+                  <p className="mt-2 text-sm text-chalk-faint text-center max-w-sm">
                     {selectedYear !== "all"
                       ? `No gallery events for ${selectedYear}. Try selecting a different year.`
                       : "Gallery events will appear here once added by the school administration."}
@@ -540,16 +540,16 @@ export function GalleryPageClient() {
               <div className="mb-8">
                 <button
                   onClick={() => { setSelectedEvent(null); setEventImages([]); }}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-navy-900 hover:text-gold-600 transition-colors mb-4"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-chalk hover:text-chalk-gold transition-colors mb-4"
                 >
                   <ChevronLeft className="h-4 w-4" />
                   Back to events
                 </button>
-                <h3 className="font-heading text-2xl font-bold text-navy-900">
+                <h3 className="font-heading text-2xl font-bold text-chalk">
                   {selectedEvent.title}
                 </h3>
                 <div className="flex items-center gap-3 mt-2">
-                  <span className="text-sm text-gray-500 flex items-center gap-1">
+                  <span className="text-sm text-chalk-faint flex items-center gap-1">
                     <Calendar className="h-3.5 w-3.5" />
                     {new Date(selectedEvent.event_date + "T00:00:00").toLocaleDateString("en-IN", {
                       day: "numeric",
@@ -558,11 +558,11 @@ export function GalleryPageClient() {
                     })}
                   </span>
                   {selectedEvent.academic_year && (
-                    <span className="text-xs bg-cream-100 text-navy-800 px-2.5 py-0.5 rounded-full font-medium">
+                    <span className="text-xs bg-white/10 text-chalk-dim px-2.5 py-0.5 rounded-full font-medium">
                       {selectedEvent.academic_year}
                     </span>
                   )}
-                  <span className="text-xs bg-navy-50 text-navy-700 px-2.5 py-0.5 rounded-full font-medium">
+                  <span className="text-xs bg-white/10 text-chalk-dim px-2.5 py-0.5 rounded-full font-medium">
                     {eventImages.length} photo{eventImages.length !== 1 ? "s" : ""}
                   </span>
                 </div>
@@ -570,10 +570,10 @@ export function GalleryPageClient() {
 
               {eventImages.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20">
-                  <div className="rounded-full bg-cream-100 p-6">
-                    <ImageIcon className="h-10 w-10 text-navy-800/30" />
+                  <div className="rounded-full bg-white/[0.06] p-6">
+                    <ImageIcon className="h-10 w-10 text-chalk-faint" />
                   </div>
-                  <p className="mt-4 text-sm text-gray-400">
+                  <p className="mt-4 text-sm text-chalk-faint">
                     No photos uploaded for this event yet.
                   </p>
                 </div>
@@ -588,7 +588,7 @@ export function GalleryPageClient() {
           )}
 
           {/* Note */}
-          <p className="mt-12 text-center text-sm text-gray-400">
+          <p className="mt-12 text-center text-sm text-chalk-faint">
             Gallery images are managed by the school administration.
           </p>
         </div>

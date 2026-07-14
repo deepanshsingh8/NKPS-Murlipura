@@ -15,13 +15,13 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter);
   --font-heading: var(--font-playfair);
-  --font-chalk: var(--font-gaegu);
+  --font-chalk: var(--font-chalk-hand);
   --font-mono: var(--font-geist-mono);
 
   /* ── Chalkboard theme (public website) ── */
-  --color-board: #0C3A29;       /* deep forest chalkboard surface */
-  --color-board-2: #0E4230;     /* lifted board panel */
-  --color-board-deep: #061D13;  /* vignette / topbar / footer */
+  --color-board: #0A2A1D;       /* deep, desaturated greenboard surface */
+  --color-board-2: #0E3626;     /* lifted board panel */
+  --color-board-deep: #04140D;  /* vignette / topbar / footer */
   --color-chalk: #F2EFE4;       /* warm chalk white (body + display) */
   --color-chalk-dim: #C3CEC4;   /* faded chalk (secondary text) */
   --color-chalk-faint: #8FA494; /* dusty chalk (muted labels) */
@@ -176,23 +176,34 @@
      app keep their light theme untouched.
      ══════════════════════════════════════════════════════════ */
 
-  /* Base board surface + chalk grain + faint eraser smudges */
+  /* Base board surface — deep greenboard with chalk grain, drifting eraser
+     smudges, faint diagonal chalk streaks and an edge vignette. */
   .site-chalk {
     color: var(--color-chalk);
     background-color: var(--color-board);
     background-image:
-      radial-gradient(130% 80% at 15% -5%, rgba(255, 255, 255, 0.05), transparent 55%),
-      radial-gradient(120% 120% at 100% 100%, var(--color-board-deep), transparent 60%),
-      radial-gradient(ellipse 45% 16% at 25% 30%, rgba(255, 255, 255, 0.03), transparent 70%),
-      radial-gradient(ellipse 42% 18% at 82% 60%, rgba(255, 255, 255, 0.028), transparent 70%),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
-    background-attachment: fixed, fixed, fixed, fixed, fixed;
+      /* edge vignette — darkens toward the frame like a real board */
+      radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.45) 100%),
+      /* broad tonal lift top-left, deepen bottom-right */
+      radial-gradient(130% 90% at 12% -8%, rgba(255, 255, 255, 0.055), transparent 55%),
+      radial-gradient(130% 120% at 105% 108%, var(--color-board-deep), transparent 60%),
+      /* eraser smudges (soft cloudy wipes) */
+      radial-gradient(ellipse 46% 15% at 24% 28%, rgba(255, 255, 255, 0.045), transparent 72%),
+      radial-gradient(ellipse 40% 13% at 80% 58%, rgba(255, 255, 255, 0.038), transparent 72%),
+      radial-gradient(ellipse 52% 12% at 55% 84%, rgba(255, 255, 255, 0.03), transparent 74%),
+      /* faint diagonal chalk-swipe streaks */
+      repeating-linear-gradient(58deg, rgba(255, 255, 255, 0.014) 0 2px, transparent 2px 46px),
+      repeating-linear-gradient(-52deg, rgba(255, 255, 255, 0.01) 0 2px, transparent 2px 62px),
+      /* fine chalk grain */
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+    background-attachment: fixed;
   }
-  /* All headings on the public site render in chalk display type */
-  .site-chalk :is(h1, h2, h3, h4, h5, h6) {
-    font-family: var(--font-chalk), "Comic Sans MS", cursive;
+  /* Only large display headings use the chalk hand — keeps small UI headings
+     crisp (Playfair) so the theme reads elegant, not childish. */
+  .site-chalk :is(h1, h2) {
+    font-family: var(--font-chalk), "Segoe Script", cursive;
     font-weight: 700;
-    letter-spacing: 0.01em;
+    letter-spacing: 0.005em;
   }
 
   /* Chalk display heading helper (use where an element isn't a heading tag) */

@@ -100,7 +100,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${playfair.variable} ${gaegu.variable}`}>
+    <html lang="en" className={`${inter.variable} ${playfair.variable} ${caveat.variable}`}>
       <body className="min-h-screen flex flex-col antialiased">
         <JsonLd data={schoolJsonLd} />
         <LayoutShell>

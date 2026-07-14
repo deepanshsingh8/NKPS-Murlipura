@@ -6,6 +6,7 @@ import { Footer } from "@/components/layout/Footer";
 import { TopBar } from "@/components/layout/TopBar";
 import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { ChalkCursor } from "@/components/layout/ChalkCursor";
+import { ChalkObjects } from "@/components/layout/ChalkObjects";
 import { ChatBot } from "@nkps/shared/components/ChatBot";
 import { WhatsAppButton } from "@nkps/shared/components/WhatsAppButton";
 
@@ -25,12 +26,15 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="site-chalk flex min-h-screen flex-col">
+    <div className="site-chalk">
+      <ChalkObjects />
       <ChalkCursor />
-      <TopBar />
-      <Navbar />
-      {children}
-      <Footer />
+      <div className="relative z-10 flex min-h-screen flex-col">
+        <TopBar />
+        <Navbar />
+        {children}
+        <Footer />
+      </div>
       <ScrollToTop />
       <WhatsAppButton />
       <ChatBot />
