@@ -6,6 +6,43 @@ task logs are all under `_reference/`.
 
 ---
 
+## Launch-parity completion pass (2026-07-14) — DONE
+
+Verified the launch-parity plan (Website + CMS). Findings + finishing work:
+
+**Already complete (commit bff82e8):** NewsAchievements homepage block, /alumni
+page (200, graceful empty state), VisionMission on /about, admissions enquiry
+modal, conditional social links (no empty `href=""`), `next.config.ts` image
+optimization (WebP + long cache) and full CSP/security headers, Murlipura
+content in `constants.ts`, CMS site-media editor parity, zero Rajawas /
+1730406 / Grand Sikar / 20,000 strings in website+shared.
+
+**Database (Supabase now resumed — was paused/521):**
+- section_cards = 30 rows: hero_slider(3, real banner images), facilities(6),
+  why_choose_us(4), legacy_timeline(5), leadership(3, real portraits),
+  accolades(3), student_achievements(6). articles = 3. All 6 storage buckets
+  exist; hero/leadership images resolve (200) and serve as WebP.
+- Left unseeded on purpose: testimonials / activities / annual_events /
+  campus_facilities seeds (051/057/058) reference stripped `/images/gallery/st*`
+  + `/images/news/n*` files → would show broken images; these sections
+  `return null` when empty, so they hide cleanly. alumni intentionally unseeded.
+- **Created first admin user** (deepanshsingh8@gmail.com, role=admin,
+  must_change_password=true) — auth.users was empty; CMS was unloginable.
+
+**Fixed this pass:** `sitemap.ts` was missing `/alumni` (Workstream G) — added.
+
+**Verified:** website + CMS `build` exit 0; lint 0 errors (16 pre-existing
+warnings, unrelated files); all 11 public routes 200; homepage renders all
+seeded sections; CSP + HSTS + X-Frame-Options headers present; hero served as
+image/webp; sitemap now lists /alumni; robots targets nkpsmurlipura.com.
+
+**Still needs the school (content confirmation, non-blocking):** CBSE
+affiliation number, exact pin code, fee structure, real testimonials/events/
+staff roster, active social handles — all currently TODO(content) placeholders
+or gracefully hidden.
+
+---
+
 ## Chalkboard theme rollout (in progress — 2026-07-14)
 
 Full-site blackboard + chalk re-skin (approved direction). Gaegu chalk font,
