@@ -20,9 +20,9 @@ export function LegacyTimeline({ cards }: LegacyTimelineProps = {}) {
 
   if (allMilestones.length === 0) return null;
   return (
-    <section className="section-padding bg-cream-50">
+    <section className="section-padding">
       <div className="page-container">
-        <SectionHeading title="Our Legacy" />
+        <SectionHeading title="Our Legacy" light />
 
         <div className="relative mt-12 max-w-3xl mx-auto">
           {/* Vertical line */}
@@ -35,17 +35,17 @@ export function LegacyTimeline({ cards }: LegacyTimelineProps = {}) {
                 style={{ transitionDelay: `${index * 100}ms` }}
               >
                 {/* Dot */}
-                <div className="absolute left-2 md:left-4 top-1 w-5 h-5 rounded-full bg-gold-500 border-4 border-cream-50 z-10" />
+                <div className="absolute left-2 md:left-4 top-1 w-5 h-5 rounded-full bg-gold-500 border-4 border-board z-10" />
 
                 {/* Year badge */}
-                <span className="inline-block bg-navy-900 text-white text-sm font-semibold px-3 py-1 rounded-full mb-2">
+                <span className="inline-block bg-gold-500 text-navy-900 text-sm font-semibold px-3 py-1 rounded-full mb-2">
                   {milestone.year}
                 </span>
 
-                <h3 className="font-heading text-xl font-bold text-navy-900 mt-1">
+                <h3 className="font-heading text-xl font-bold text-chalk mt-1">
                   {milestone.title}
                 </h3>
-                <p className="text-gray-600 mt-1">{milestone.description}</p>
+                <p className="text-chalk-dim mt-1">{milestone.description}</p>
               </div>
             </AnimatedSection>
           ))}

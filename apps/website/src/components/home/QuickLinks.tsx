@@ -39,12 +39,13 @@ const links = [
 
 export function QuickLinks() {
   return (
-    <section className="bg-cream-50 section-padding relative overflow-hidden">
+    <section className="section-padding relative overflow-hidden">
       <div className="page-container relative z-10">
         <SectionHeading
           label="Get Started"
           title="Access Your Portal"
           subtitle="Jump into academic resources, results, and school information"
+          light
         />
 
         <motion.div
@@ -66,8 +67,8 @@ export function QuickLinks() {
                   className={cn(
                     "group relative rounded-3xl overflow-hidden p-4 sm:p-7 h-full cursor-pointer transition-all duration-300 hover:shadow-xl",
                     link.featured
-                      ? "bg-gradient-to-br from-navy-900 to-navy-800 border border-gold-500/20 hover:border-gold-500/40"
-                      : "bg-white border border-gray-100 hover:border-gold-500/20"
+                      ? "bg-gradient-to-br from-navy-900 to-navy-800 border border-gold-500/30 hover:border-gold-500/50"
+                      : "bg-white/[0.04] border border-chalk/20 hover:border-gold-500/40 hover:bg-white/[0.06]"
                   )}
                 >
                   <div className="relative flex items-start gap-3 sm:gap-5">
@@ -84,19 +85,19 @@ export function QuickLinks() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className={cn(
-                          "font-heading text-base sm:text-lg font-semibold",
-                          link.featured ? "text-white" : "text-navy-900"
+                          "text-lg sm:text-xl",
+                          link.featured ? "text-white" : "text-chalk"
                         )}>
                           {link.title}
                         </h3>
                         <ArrowRight className={cn(
                           "w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300",
-                          link.featured ? "text-gold-400" : "text-gray-400"
+                          link.featured ? "text-gold-400" : "text-chalk-faint"
                         )} />
                       </div>
                       <p className={cn(
                         "text-sm mt-1 leading-relaxed",
-                        link.featured ? "text-gray-300" : "text-gray-500"
+                        link.featured ? "text-gray-300" : "text-chalk-dim"
                       )}>
                         {link.description}
                       </p>

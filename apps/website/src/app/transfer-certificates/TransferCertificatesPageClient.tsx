@@ -71,26 +71,26 @@ export function TransferCertificatesPageClient() {
         subtitle="Securely look up and download a TC issued by NK Public School"
       />
 
-      <SectionDivider />
+      <SectionDivider color="fill-board" />
 
       <section className="py-20 px-6">
         <div className="mx-auto max-w-3xl">
           <AnimatedSection>
-            <SectionHeading title="Find Your Transfer Certificate" />
+            <SectionHeading title="Find Your Transfer Certificate" light />
           </AnimatedSection>
 
           {/* Privacy Notice */}
           <AnimatedSection delay={0.1}>
-            <div className="mt-8 rounded-2xl border border-gold-500/20 bg-gradient-to-r from-cream-50 to-gold-500/5 p-5 md:p-6">
+            <div className="mt-8 rounded-2xl border border-chalk/20 bg-white/[0.04] p-5 md:p-6">
               <div className="flex gap-4 items-start">
                 <div className="flex-shrink-0 rounded-xl bg-gold-500/10 p-2.5">
-                  <Info className="h-5 w-5 text-gold-600" />
+                  <Info className="h-5 w-5 text-chalk-gold" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-navy-900 text-sm">
+                  <h3 className="font-semibold text-chalk text-sm">
                     Why we ask for both details
                   </h3>
-                  <p className="mt-1 text-sm text-navy-800/70 leading-relaxed">
+                  <p className="mt-1 text-sm text-chalk-dim leading-relaxed">
                     Transfer certificates contain personal information, so we never
                     list them publicly. Enter the student&apos;s admission number
                     and date of birth exactly as they appear in school records to
@@ -253,7 +253,7 @@ export function TransferCertificatesPageClient() {
           )}
 
           <AnimatedSection delay={0.2}>
-            <div className="mt-12 flex items-start gap-3 text-sm text-gray-500">
+            <div className="mt-12 flex items-start gap-3 text-sm text-chalk-faint">
               <FileText className="h-4 w-4 shrink-0 mt-0.5" />
               <p>
                 Transfer certificates are uploaded by the school administration.
@@ -261,7 +261,7 @@ export function TransferCertificatesPageClient() {
                 please contact the school office at{" "}
                 <a
                   href="/contact"
-                  className="font-semibold text-navy-900 hover:text-gold-600 underline-offset-4 hover:underline"
+                  className="font-semibold text-chalk hover:text-chalk-gold underline-offset-4 hover:underline"
                 >
                   the contact page
                 </a>

@@ -20,6 +20,8 @@ export type FeatureKey =
   | "contact"
   | "site_media"
   | "disclosure"
+  | "prospectus"
+  | "holiday_homework"
   | "staff"
   | "students"
   | "classes"
@@ -61,6 +63,8 @@ export const FEATURE_CATALOG: readonly FeatureDef[] = [
   { key: "contact", label: "Contact Messages", href: "/contact", group: "cms" },
   { key: "site_media", label: "Site Media", href: "/site-media", group: "cms" },
   { key: "disclosure", label: "Disclosure", href: "/disclosure", group: "cms" },
+  { key: "prospectus", label: "Prospectus", href: "/prospectus", group: "cms" },
+  { key: "holiday_homework", label: "Holiday Homework", href: "/holiday-homework", group: "cms" },
   // ERP hrefs are app-relative (apps/erp serves these directly).
   { key: "staff", label: "Staff", href: "/people/staff", group: "erp" },
   { key: "students", label: "Students", href: "/people/students", group: "erp" },

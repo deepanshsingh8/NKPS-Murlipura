@@ -2,18 +2,20 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion, useTransform } from "framer-motion";
-import { ArrowRight, Users, CalendarDays, GraduationCap, Building2 } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, GraduationCap, Building2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn } from "@nkps/shared/lib/utils";
 import { useMouseMotion } from "@nkps/shared/hooks/useMousePosition";
 import type { SectionCard } from "@nkps/shared/types";
 
+// Campus-level facts only (no group-wide marketing figures). TODO(content):
+// add a verified campus student count here once the school confirms it.
 const stats = [
-  { number: "20,000+", label: "Students", icon: Users },
-  { number: "40+", label: "Years", icon: CalendarDays },
-  { number: "300+", label: "Faculty", icon: GraduationCap },
-  { number: "6", label: "Institutes", icon: Building2 },
+  { number: "Since 1985", label: "Founding Campus", icon: CalendarDays },
+  { number: "40+", label: "Years of Legacy", icon: BookOpen },
+  { number: "Nursery–XII", label: "Co-educational", icon: GraduationCap },
+  { number: "CBSE", label: "Affiliated", icon: Building2 },
 ];
 
 const INTERVAL = 7000;
@@ -73,8 +75,8 @@ function AnimatedHeading({
 
   return (
     <h1
-      className="font-heading text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold leading-[1.08] text-white"
-      style={{ letterSpacing: "-0.03em" }}
+      className="font-heading font-bold text-5xl md:text-6xl lg:text-7xl xl:text-8xl leading-[1.05] text-white"
+      style={{ letterSpacing: "-0.02em" }}
     >
       {lines.map((line, lineIdx) => {
         const prevChars = lines
@@ -375,7 +377,7 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
               >
                 <div className="liquid-glass border border-white/15 px-6 py-3.5 rounded-xl gold-glow-sm">
                   <p className="text-lg md:text-xl lg:text-2xl font-light text-white/90 tracking-tight">
-                    CBSE Affiliated&ensp;&middot;&ensp;Est. 1985&ensp;&middot;&ensp;6 Campuses
+                    CBSE Affiliated&ensp;&middot;&ensp;Est. 1985&ensp;&middot;&ensp;Nursery&ndash;XII
                   </p>
                 </div>
               </FadeIn>

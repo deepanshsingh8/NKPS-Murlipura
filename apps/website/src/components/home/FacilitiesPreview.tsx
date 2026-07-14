@@ -39,6 +39,7 @@ export function FacilitiesPreview({ cards }: FacilitiesPreviewProps = {}) {
           label="Our Campus"
           title="Explore Our Facilities"
           subtitle="State-of-the-art infrastructure for holistic development"
+          light
         />
 
         <motion.div
@@ -98,7 +99,7 @@ export function FacilitiesPreview({ cards }: FacilitiesPreviewProps = {}) {
         <div className="mt-8 text-center">
           <Link
             href="/facilities"
-            className="group inline-flex items-center gap-2 text-navy-900 font-semibold hover:text-gold-600 transition-colors duration-300"
+            className="group inline-flex items-center gap-2 text-chalk font-semibold hover:text-chalk-gold transition-colors duration-300"
           >
             View All Facilities
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" />

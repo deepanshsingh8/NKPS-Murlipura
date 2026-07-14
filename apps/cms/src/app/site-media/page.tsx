@@ -40,14 +40,14 @@ const PAGE_LABELS: Record<string, string> = {
   about: "About Page",
   facilities: "Facilities Page",
   "student-life": "Student Life Page",
+  alumni: "Alumni Page",
   global: "Global (Site-wide)",
 };
 
 const SECTION_LABELS: Record<string, string> = {
-  hero_slider: "Hero Slider",
+  hero_slider: "Home Page Slider",
   facilities_preview: "Facilities Preview",
   stats_counter: "Stats Counter",
-  latest_updates: "Latest Updates",
   activities: "Activities",
   leadership: "Leadership",
   founder_tribute: "Founder Tribute",
@@ -55,13 +55,17 @@ const SECTION_LABELS: Record<string, string> = {
   branding: "Branding",
   campus_facilities: "Campus Facilities",
   testimonials: "Testimonials",
+  accolades: "School Accolades",
+  student_achievements: "Student Achievements",
+  alumni: "Alumni Achievements",
+  sports_indoor: "Sports — Indoor",
+  sports_outdoor: "Sports — Outdoor",
 };
 
 // Sections that support dynamic cards
 const CARD_ENABLED_SECTIONS: SectionCardType[] = [
   "hero_slider",
   "testimonials",
-  "latest_updates",
   "facilities_preview",
   "leadership",
   "legacy_timeline",
@@ -69,6 +73,11 @@ const CARD_ENABLED_SECTIONS: SectionCardType[] = [
   "activities",
   "annual_events",
   "campus_facilities",
+  "accolades",
+  "student_achievements",
+  "alumni",
+  "sports_indoor",
+  "sports_outdoor",
 ];
 
 const SECTION_FIELD_MAP: Record<SectionCardType, { required: string[]; optional: string[] }> = {
@@ -79,10 +88,6 @@ const SECTION_FIELD_MAP: Record<SectionCardType, { required: string[]; optional:
   testimonials: {
     required: ["quote", "name", "role"],
     optional: [],
-  },
-  latest_updates: {
-    required: ["title", "description", "date"],
-    optional: ["link"],
   },
   facilities_preview: {
     required: ["title", "description"],
@@ -111,6 +116,26 @@ const SECTION_FIELD_MAP: Record<SectionCardType, { required: string[]; optional:
   campus_facilities: {
     required: ["title", "description"],
     optional: ["icon"],
+  },
+  accolades: {
+    required: ["title"],
+    optional: ["description"],
+  },
+  student_achievements: {
+    required: ["name", "title"],
+    optional: ["description", "year"],
+  },
+  alumni: {
+    required: ["name"],
+    optional: ["year", "designation", "description"],
+  },
+  sports_indoor: {
+    required: ["title"],
+    optional: [],
+  },
+  sports_outdoor: {
+    required: ["title"],
+    optional: [],
   },
 };
 
@@ -204,8 +229,9 @@ const SECTION_ORDER: Record<string, string[]> = {
   home: [
     "hero_slider",
     "facilities_preview",
+    "accolades",
+    "student_achievements",
     "stats_counter",
-    "latest_updates",
     "testimonials",
   ],
   about: [
@@ -216,7 +242,8 @@ const SECTION_ORDER: Record<string, string[]> = {
     "why_choose_us",
   ],
   facilities: ["campus_facilities"],
-  "student-life": ["activities", "annual_events"],
+  "student-life": ["activities", "sports_indoor", "sports_outdoor", "annual_events"],
+  alumni: ["alumni"],
   global: ["branding"],
 };
 
@@ -235,7 +262,7 @@ function sortSections(page: string, sections: string[]): string[] {
 }
 
 function groupMedia(items: SiteMedia[]): GroupedMedia[] {
-  const pageOrder = ["home", "about", "facilities", "student-life", "global"];
+  const pageOrder = ["home", "about", "facilities", "student-life", "alumni", "global"];
   const pageMap = new Map<string, Map<string, SiteMedia[]>>();
 
   for (const item of items) {
@@ -279,8 +306,6 @@ function getCardSecondaryText(card: SectionCard): string {
       return card.subtitle || "";
     case "testimonials":
       return card.name ? `— ${card.name}${card.role ? `, ${card.role}` : ""}` : "";
-    case "latest_updates":
-      return card.date || "";
     case "leadership":
       return card.designation || "";
     case "legacy_timeline":
@@ -832,14 +857,18 @@ export default function AdminSiteMediaPage() {
   const SECTION_PAGE_MAP: Record<string, string> = {
     hero_slider: "home",
     testimonials: "home",
-    latest_updates: "home",
     facilities_preview: "home",
+    accolades: "home",
+    student_achievements: "home",
     leadership: "about",
     legacy_timeline: "about",
     why_choose_us: "about",
     activities: "student-life",
     annual_events: "student-life",
     campus_facilities: "facilities",
+    alumni: "alumni",
+    sports_indoor: "student-life",
+    sports_outdoor: "student-life",
   };
 
   const grouped = groupMedia(items);
@@ -875,7 +904,7 @@ export default function AdminSiteMediaPage() {
     ? [...SECTION_FIELD_MAP[dialogSection].required, ...SECTION_FIELD_MAP[dialogSection].optional]
     : [];
   // Sections where image is optional
-  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events"];
+  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements"];
   const isImageRequired = !editing && !imageOptionalSections.includes(dialogSection);
 
   return (

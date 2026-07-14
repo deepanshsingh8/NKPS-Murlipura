@@ -9,6 +9,8 @@ import {
   ScrollText,
   Newspaper,
   FolderOpen,
+  BookText,
+  NotebookPen,
 } from "lucide-react";
 import {
   SidebarShell,
@@ -30,6 +32,8 @@ const cmsItems: SidebarItem[] = [
       { kind: "link", icon: Newspaper, label: "Articles", href: "/articles" },
       { kind: "link", icon: Layers, label: "Site Media", href: "/site-media" },
       { kind: "link", icon: ScrollText, label: "Disclosure", href: "/disclosure" },
+      { kind: "link", icon: BookText, label: "Prospectus", href: "/prospectus" },
+      { kind: "link", icon: NotebookPen, label: "Holiday Homework", href: "/holiday-homework" },
     ],
   },
   { kind: "link", icon: FileText, label: "Transfer Certificates", href: "/transfer-certificates" },

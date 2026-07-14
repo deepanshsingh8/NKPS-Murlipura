@@ -72,11 +72,12 @@ export function CurriculumOverview() {
   const [activeTab, setActiveTab] = useState(0);
 
   return (
-    <section className="section-padding bg-cream-50">
+    <section className="section-padding">
       <div className="page-container">
         <SectionHeading
           title="Our Curriculum"
           subtitle="CBSE-affiliated comprehensive education from Nursery to Class XII"
+          light
         />
 
         {/* Tab buttons */}
@@ -88,8 +89,8 @@ export function CurriculumOverview() {
               className={cn(
                 "whitespace-nowrap rounded-full px-6 py-3 text-sm font-semibold transition-all duration-300 cursor-pointer shrink-0",
                 i === activeTab
-                  ? "bg-navy-900 text-white shadow-lg shadow-navy-900/20"
-                  : "bg-gray-100 text-navy-900 hover:bg-gray-200"
+                  ? "bg-navy-900 text-white shadow-lg shadow-navy-900/20 border border-gold-500/30"
+                  : "bg-white/[0.04] text-chalk border border-chalk/20 hover:border-gold-500/40 hover:bg-white/[0.07]"
               )}
             >
               {level.tab}
@@ -107,7 +108,7 @@ export function CurriculumOverview() {
               exit={{ opacity: 0, y: -16 }}
               transition={{ duration: 0.35, ease: "easeInOut" }}
             >
-              <div className="bg-white rounded-3xl p-5 sm:p-8 md:p-10 border border-gray-100 shadow-sm">
+              <div className="bg-white/[0.04] rounded-3xl p-5 sm:p-8 md:p-10 border border-chalk/20 shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)]">
                 <div className="flex gap-4 sm:gap-6 md:gap-8">
                   {/* Accent bar */}
                   <div
@@ -119,10 +120,10 @@ export function CurriculumOverview() {
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-heading text-2xl font-bold text-navy-900">
+                    <h3 className="font-heading text-2xl font-bold text-chalk">
                       {levels[activeTab].title}
                     </h3>
-                    <p className="text-gray-500 text-sm mt-1">
+                    <p className="text-chalk-faint text-sm mt-1">
                       {levels[activeTab].range}
                     </p>
 
@@ -138,7 +139,7 @@ export function CurriculumOverview() {
                             delay: idx * 0.04,
                             ease: "easeOut",
                           }}
-                          className="bg-gray-100 text-navy-700 rounded-full px-4 py-2 text-sm font-medium"
+                          className="bg-white/[0.06] text-chalk-dim border border-chalk/15 rounded-full px-4 py-2 text-sm font-medium"
                         >
                           {subject}
                         </motion.span>

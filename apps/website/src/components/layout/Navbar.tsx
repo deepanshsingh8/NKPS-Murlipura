@@ -72,7 +72,7 @@ export function Navbar() {
             <span
               className={cn(
                 "font-heading text-lg font-bold transition-colors duration-500 hidden sm:inline",
-                "text-white"
+                "text-chalk"
               )}
             >
               NK Public School
@@ -250,33 +250,39 @@ export function Navbar() {
                   </a>
                 </div>
                 <div className="flex items-center gap-5 text-white/40">
-                  <Link
-                    href={SCHOOL.social.facebook}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Facebook"
-                    className="hover:text-gold-400 transition-colors"
-                  >
-                    <FacebookIcon className="h-4 w-4" />
-                  </Link>
-                  <Link
-                    href={SCHOOL.social.instagram}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Instagram"
-                    className="hover:text-gold-400 transition-colors"
-                  >
-                    <InstagramIcon className="h-4 w-4" />
-                  </Link>
-                  <Link
-                    href={SCHOOL.social.youtube}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="YouTube"
-                    className="hover:text-gold-400 transition-colors"
-                  >
-                    <YoutubeIcon className="h-4 w-4" />
-                  </Link>
+                  {SCHOOL.social.facebook && (
+                    <Link
+                      href={SCHOOL.social.facebook}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Facebook"
+                      className="hover:text-gold-400 transition-colors"
+                    >
+                      <FacebookIcon className="h-4 w-4" />
+                    </Link>
+                  )}
+                  {SCHOOL.social.instagram && (
+                    <Link
+                      href={SCHOOL.social.instagram}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Instagram"
+                      className="hover:text-gold-400 transition-colors"
+                    >
+                      <InstagramIcon className="h-4 w-4" />
+                    </Link>
+                  )}
+                  {SCHOOL.social.youtube && (
+                    <Link
+                      href={SCHOOL.social.youtube}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="YouTube"
+                      className="hover:text-gold-400 transition-colors"
+                    >
+                      <YoutubeIcon className="h-4 w-4" />
+                    </Link>
+                  )}
                 </div>
                 {/* Thumb-friendly bottom close — top-right X is hard to reach one-handed */}
                 <button

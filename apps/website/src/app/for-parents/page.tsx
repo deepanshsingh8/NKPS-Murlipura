@@ -85,7 +85,7 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+    <div className="rounded-2xl border border-black/5 bg-white p-6 shadow-[0_16px_30px_-14px_rgba(0,0,0,0.55)] sm:p-8">
       <div className="flex items-start gap-4">
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-navy-900 text-gold-400">
           {icon}
@@ -196,9 +196,9 @@ export default function ForParentsPage() {
 
         {/* Closing */}
         <AnimatedSection delay={0.05}>
-          <div className="mt-10 flex items-start gap-4 rounded-2xl border border-gold-500/30 bg-gold-500/5 p-6 sm:p-8">
-            <BookOpenCheck className="h-6 w-6 shrink-0 text-gold-600" />
-            <p className="text-[15px] leading-relaxed text-gray-700">
+          <div className="mt-10 flex items-start gap-4 rounded-2xl border border-chalk/20 bg-white/[0.04] p-6 sm:p-8">
+            <BookOpenCheck className="h-6 w-6 shrink-0 text-chalk-gold" />
+            <p className="text-[15px] leading-relaxed text-chalk-dim">
               Together — parents, teachers and the school — we shape the future of
               every child. Your active participation in the daily life of the school
               is the single biggest factor in your child&rsquo;s success.

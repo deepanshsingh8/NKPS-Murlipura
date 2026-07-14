@@ -66,13 +66,14 @@ export function SchoolEvents() {
   };
 
   return (
-    <section className="section-padding bg-cream-50">
+    <section className="section-padding">
       <div className="page-container">
         <AnimatedSection>
           <SectionHeading
             label="School Calendar"
             title="Upcoming Events"
             subtitle="Stay updated with the latest happenings at NKPS"
+            light
           />
         </AnimatedSection>
 
@@ -91,12 +92,12 @@ export function SchoolEvents() {
                 variants={fadeUp}
                 whileHover={{ y: -4 }}
                 transition={{ type: "spring", stiffness: 300, damping: 25 }}
-                className="group bg-white rounded-2xl border border-gray-100/80 p-5 shadow-sm hover:shadow-xl hover:shadow-gold-500/6 hover:border-gold-500/20 transition-all duration-500 cursor-default"
+                className="group bg-white/[0.04] rounded-2xl border border-chalk/20 p-5 hover:bg-white/[0.06] hover:border-gold-500/40 transition-all duration-500 cursor-default"
               >
                 <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 w-14 text-center bg-navy-900/5 rounded-xl py-2.5 group-hover:bg-gold-500/10 transition-colors duration-500">
-                    <p className="text-xl font-bold text-navy-900 group-hover:text-gold-600 transition-colors duration-300">{date.day}</p>
-                    <p className="text-xs text-gray-500 uppercase font-medium">
+                  <div className="flex-shrink-0 w-14 text-center bg-white/[0.06] rounded-xl py-2.5 group-hover:bg-gold-500/15 transition-colors duration-500">
+                    <p className="text-xl font-bold text-chalk group-hover:text-chalk-gold transition-colors duration-300">{date.day}</p>
+                    <p className="text-xs text-chalk-faint uppercase font-medium">
                       {date.month}
                     </p>
                   </div>
@@ -108,15 +109,15 @@ export function SchoolEvents() {
                           EVENT_TYPE_COLORS.other
                         }`}
                       />
-                      <span className="text-xs font-medium text-gray-500">
+                      <span className="text-xs font-medium text-chalk-faint">
                         {EVENT_TYPE_LABELS[evt.event_type] ?? evt.event_type}
                       </span>
                     </div>
-                    <h3 className="font-semibold text-navy-900 text-sm leading-snug">
+                    <h3 className="text-chalk text-base leading-snug">
                       {evt.title}
                     </h3>
                     {evt.description && (
-                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                      <p className="text-xs text-chalk-dim mt-1 line-clamp-2">
                         {evt.description}
                       </p>
                     )}

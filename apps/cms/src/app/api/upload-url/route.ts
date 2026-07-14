@@ -20,6 +20,14 @@ const BUCKET_RULES = {
     exts: ["pdf"],
     description: "mandatory public disclosure PDFs",
   },
+  prospectus: {
+    exts: ["pdf"],
+    description: "prospectus PDFs",
+  },
+  "holiday-homework": {
+    exts: ["pdf"],
+    description: "holiday homework PDFs",
+  },
 };
 
 export const POST = createUploadUrlHandler({ bucketRules: BUCKET_RULES });

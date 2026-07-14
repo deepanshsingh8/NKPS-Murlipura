@@ -74,7 +74,7 @@ export interface StaffMember {
   updated_at: string;
 }
 
-export type SectionCardType = 'hero_slider' | 'testimonials' | 'latest_updates' | 'facilities_preview' | 'leadership' | 'legacy_timeline' | 'why_choose_us' | 'activities' | 'annual_events' | 'campus_facilities';
+export type SectionCardType = 'hero_slider' | 'testimonials' | 'facilities_preview' | 'leadership' | 'legacy_timeline' | 'why_choose_us' | 'activities' | 'annual_events' | 'campus_facilities' | 'accolades' | 'alumni' | 'student_achievements' | 'sports_indoor' | 'sports_outdoor';
 
 export interface SectionCard {
   id: string;
@@ -784,6 +784,29 @@ export interface DisclosureDocument {
   file_url: string | null;
   file_name: string | null;
   sort_order: number;
+  updated_at: string;
+}
+
+export interface ProspectusDocument {
+  id: string;
+  title: string;
+  file_url: string;
+  file_name: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HolidayHomework {
+  id: string;
+  title: string;
+  class_grade: string;
+  session: string;
+  academic_year: string;
+  file_url: string;
+  file_name: string | null;
+  sort_order: number;
+  created_at: string;
   updated_at: string;
 }
 

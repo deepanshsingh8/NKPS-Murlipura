@@ -87,6 +87,7 @@ export function StudentLifeContent({
             <SectionHeading
               title="Activities & Clubs"
               subtitle="Discover your passion through our diverse range of extracurricular activities"
+              light
             />
           </AnimatedSection>
 
@@ -136,17 +137,18 @@ export function StudentLifeContent({
       )}
 
       {/* Sports & Athletics */}
-      <section className="bg-cream-50 py-20 px-6">
+      <section className="py-20 px-6">
         <div className="mx-auto max-w-4xl">
           <AnimatedSection>
             <SectionHeading
               title="Sports & Athletics"
               subtitle="Building teamwork, discipline and physical fitness through sports"
+              light
             />
           </AnimatedSection>
 
           <AnimatedSection delay={0.15}>
-            <p className="mx-auto mt-6 max-w-2xl text-center leading-relaxed text-gray-600">
+            <p className="mx-auto mt-6 max-w-2xl text-center leading-relaxed text-chalk-dim">
               Our school provides excellent sports facilities and professional
               coaching to help students excel in various sporting disciplines.
               Regular inter-house and inter-school competitions encourage healthy
@@ -165,10 +167,10 @@ export function StudentLifeContent({
               <motion.div
                 key={sport.name}
                 variants={fadeUp}
-                className="group flex cursor-default items-center gap-2.5 rounded-full border border-gray-200 bg-white px-6 py-3 shadow-sm transition-all duration-300 hover:border-gold-500 hover:shadow-md"
+                className="group flex cursor-default items-center gap-2.5 rounded-full border border-chalk/20 bg-white/[0.04] px-6 py-3 shadow-sm transition-all duration-300 hover:border-gold-500/40 hover:bg-white/[0.06]"
               >
-                <sport.icon className="h-4.5 w-4.5 text-navy-700 transition-colors duration-300 group-hover:text-gold-600" />
-                <span className="text-sm font-semibold text-navy-900">
+                <sport.icon className="h-4.5 w-4.5 text-chalk-dim transition-colors duration-300 group-hover:text-chalk-gold" />
+                <span className="text-sm font-semibold text-chalk">
                   {sport.name}
                 </span>
               </motion.div>
@@ -185,13 +187,14 @@ export function StudentLifeContent({
             <SectionHeading
               title="Annual Events"
               subtitle="Memorable celebrations that bring our school community together"
+              light
             />
           </AnimatedSection>
 
           <div className="mt-14 space-y-6">
             {allEvents.map((event, index) => (
               <AnimatedSection key={event.id} delay={index * 0.12}>
-                <div className="group flex flex-col gap-5 rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition-all duration-300 hover:border-gold-300 hover:shadow-lg sm:flex-row sm:items-start">
+                <div className="group flex flex-col gap-5 rounded-2xl border border-chalk/20 bg-white/[0.04] p-6 shadow-sm transition-all duration-300 hover:border-gold-500/40 hover:bg-white/[0.06] hover:shadow-lg sm:flex-row sm:items-start">
                   {/* Season Badge */}
                   <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-gold-400 to-gold-600 shadow-md transition-transform duration-300 group-hover:scale-105">
                     <Star className="h-5 w-5 text-white" />
@@ -202,10 +205,10 @@ export function StudentLifeContent({
 
                   {/* Content */}
                   <div className="flex-1">
-                    <h3 className="font-heading text-lg font-bold text-navy-900">
+                    <h3 className="font-heading text-lg font-bold text-chalk">
                       {event.title}
                     </h3>
-                    <p className="mt-1.5 leading-relaxed text-gray-600">
+                    <p className="mt-1.5 leading-relaxed text-chalk-dim">
                       {event.description}
                     </p>
                   </div>

@@ -144,16 +144,17 @@ export function StaffDirectory() {
   }, [activeTab]);
 
   return (
-    <section className="section-padding bg-cream-50">
+    <section className="section-padding">
       <div className="page-container">
         <SectionHeading
           title="Our Faculty"
           subtitle="Meet our dedicated team of educators committed to academic excellence"
+          light
         />
 
         {/* Premium pill tabs with sliding indicator */}
         <div className="flex justify-center mt-10 overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] px-4">
-          <div className="relative inline-flex items-center gap-1 rounded-full bg-white p-1.5 shadow-sm border border-gray-200/80 shrink-0">
+          <div className="relative inline-flex items-center gap-1 rounded-full bg-white/[0.04] p-1.5 shadow-sm border border-chalk/20 shrink-0">
             {/* Sliding indicator */}
             <motion.div
               className="absolute top-1.5 bottom-1.5 rounded-full bg-navy-900"
@@ -178,7 +179,7 @@ export function StaffDirectory() {
                   "relative z-10 flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-xs sm:text-sm font-medium transition-colors duration-200",
                   activeTab === tab.key
                     ? "text-white"
-                    : "text-navy-700 hover:text-navy-900"
+                    : "text-chalk-dim hover:text-chalk"
                 )}
               >
                 {tab.label}
@@ -187,7 +188,7 @@ export function StaffDirectory() {
                     "inline-flex items-center justify-center min-w-[1.375rem] h-[1.375rem] px-1.5 rounded-full text-xs font-semibold transition-colors duration-200",
                     activeTab === tab.key
                       ? "bg-white/20 text-white"
-                      : "bg-navy-100 text-navy-600"
+                      : "bg-white/10 text-chalk-dim"
                   )}
                 >
                   {getCount(tab.key)}
@@ -199,13 +200,13 @@ export function StaffDirectory() {
 
         {/* Polished search */}
         <div className="max-w-md mx-auto mt-8 relative group">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-gold-500 transition-colors" />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-chalk-faint group-focus-within:text-gold-500 transition-colors" />
           <input
             type="text"
             placeholder="Search faculty by name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-3 rounded-xl border border-gray-200 bg-white text-sm text-navy-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-gold-500/20 focus:border-gold-500 shadow-sm transition-all"
+            className="w-full pl-11 pr-4 py-3 rounded-xl border border-chalk/20 bg-white/[0.06] text-sm text-chalk placeholder:text-chalk-faint focus:outline-none focus:ring-2 focus:ring-gold-500/20 focus:border-gold-500 shadow-sm transition-all"
           />
         </div>
 
@@ -223,9 +224,9 @@ export function StaffDirectory() {
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex flex-col items-center justify-center py-16 text-gray-400"
+                className="flex flex-col items-center justify-center py-16 text-chalk-faint"
               >
-                <Users className="w-10 h-10 mb-3 text-gray-300" />
+                <Users className="w-10 h-10 mb-3 text-chalk-faint" />
                 <p className="text-sm font-medium">No faculty members found</p>
                 <p className="text-xs mt-1">Try adjusting your search</p>
               </motion.div>
@@ -239,14 +240,14 @@ export function StaffDirectory() {
                     initial="hidden"
                     animate="visible"
                     exit="exit"
-                    className="group/card relative bg-white rounded-2xl border border-gray-200/80 p-5 transition-all duration-300 hover:shadow-lg hover:border-gold-500/30 hover:-translate-y-0.5"
+                    className="group/card relative bg-white/[0.04] rounded-2xl border border-chalk/20 p-5 transition-all duration-300 hover:shadow-lg hover:border-gold-500/40 hover:-translate-y-0.5"
                   >
                     {/* Subtle top accent line */}
                     <div className="absolute top-0 left-6 right-6 h-px bg-gradient-to-r from-transparent via-gold-500/40 to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-300" />
 
                     {/* Avatar */}
                     {member.photo_url ? (
-                      <div className="w-12 h-12 rounded-full overflow-hidden mb-3.5 shadow-sm relative">
+                      <div className="w-12 h-12 rounded-full overflow-hidden mb-3.5 shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)] ring-1 ring-chalk/20 relative">
                         <Image
                           src={member.photo_url}
                           alt={member.name}
@@ -269,10 +270,10 @@ export function StaffDirectory() {
                     )}
 
                     {/* Info */}
-                    <h3 className="text-sm font-semibold text-navy-900 leading-snug">
+                    <h3 className="text-sm font-semibold text-chalk leading-snug">
                       {member.name}
                     </h3>
-                    <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                    <p className="text-xs text-chalk-dim mt-1 leading-relaxed">
                       {member.subject}
                     </p>
                   </motion.div>
@@ -284,7 +285,7 @@ export function StaffDirectory() {
 
         {/* Subtle member count */}
         <div className="mt-6 text-center">
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-chalk-faint">
             {dbLoading ? (
               <span className="inline-flex items-center gap-1">
                 <Loader2 className="h-3 w-3 animate-spin" /> Loading...
