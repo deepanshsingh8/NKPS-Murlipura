@@ -85,7 +85,7 @@ export const schoolJsonLd = {
         SCHOOL.social.facebook,
         SCHOOL.social.instagram,
         SCHOOL.social.youtube,
-      ],
+      ].filter(Boolean),
       address: {
         "@type": "PostalAddress",
         streetAddress: SCHOOL.address.line1,
@@ -105,14 +105,21 @@ export const schoolJsonLd = {
         name: "Central Board of Secondary Education",
         alternateName: "CBSE",
         url: "https://www.cbse.gov.in",
-        identifier: SCHOOL.affiliationNumber,
+        // Only assert an affiliation number once it is confirmed for the
+        // Murlipura campus — never emit an empty or a sister-branch number.
+        ...(SCHOOL.affiliationNumber
+          ? { identifier: SCHOOL.affiliationNumber }
+          : {}),
       },
-      identifier: {
-        "@type": "PropertyValue",
-        propertyID: "CBSE Affiliation Number",
-        value: SCHOOL.affiliationNumber,
-      },
-      numberOfStudents: 20000,
+      ...(SCHOOL.affiliationNumber
+        ? {
+            identifier: {
+              "@type": "PropertyValue",
+              propertyID: "CBSE Affiliation Number",
+              value: SCHOOL.affiliationNumber,
+            },
+          }
+        : {}),
       employee: SCHOOL.leadership.map((l) => ({
         "@type": "Person",
         name: l.name,
@@ -165,7 +172,7 @@ export const schoolJsonLd = {
         SCHOOL.social.facebook,
         SCHOOL.social.instagram,
         SCHOOL.social.youtube,
-      ],
+      ].filter(Boolean),
     },
     {
       "@type": "Place",

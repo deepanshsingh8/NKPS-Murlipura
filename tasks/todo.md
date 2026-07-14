@@ -6,6 +6,34 @@ task logs are all under `_reference/`.
 
 ---
 
+## Chalkboard theme rollout (in progress — 2026-07-14)
+
+Full-site blackboard + chalk re-skin (approved direction). Gaegu chalk font,
+site-wide chalk cursor, worksheet-card readability pattern, real photos styled
+as pinned notices.
+
+**Done & build-verified:**
+- [x] Foundation: Gaegu font (`--font-chalk`), chalkboard tokens + utility
+      classes (`.site-chalk`, `.chalk-heading`, `.chalk-underline`,
+      `.chalk-frame`/`.chalk-inboard`, `.chalk-card`, `.worksheet`, `.photo-pin`,
+      `.btn-chalk`) in `globals.css`.
+- [x] `ChalkCursor` component + mounted in `LayoutShell` (public pages only).
+- [x] Global chrome: TopBar, Navbar, Footer → chalkboard.
+- [x] Homepage fully converted: Hero, intro, marquee, QuickLinks,
+      FacilitiesPreview, NewsAchievements (→ framed Notice Board), StatsCounter,
+      SchoolEvents, Testimonials.
+
+**Next (after homepage review):**
+- [ ] Convert remaining 16 pages: about, academics, admissions, alumni,
+      facilities, student-life, gallery, contact, prospectus, holiday-homework,
+      transfer-certificates, for-parents, articles, academic-calendar,
+      mandatory-public-disclosure + their component dirs (about/, academics/,
+      admissions/).
+- [ ] Check contact form / any inputs under the chalk cursor.
+- [ ] Production licensing note: Gaegu is OFL (safe, self-hosted via next/font).
+
+---
+
 ## Completed in this clone
 
 - [x] Copy NKPS monorepo into project root (apps/website, apps/cms, apps/erp,

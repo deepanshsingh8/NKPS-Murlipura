@@ -3,7 +3,6 @@
 import { motion } from "framer-motion";
 import { Award, BookOpen, Monitor, Trophy } from "lucide-react";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
-import { GlassCard } from "@nkps/shared/components/GlassCard";
 import { staggerContainer, fadeUp } from "@nkps/shared/lib/animations";
 import type { SectionCard } from "@nkps/shared/types";
 
@@ -30,11 +29,12 @@ export function WhyChooseUs({ cards }: WhyChooseUsProps = {}) {
 
   if (allFeatures.length === 0) return null;
   return (
-    <section className="section-padding bg-cream-50">
+    <section className="section-padding">
       <div className="page-container">
         <SectionHeading
           title="Why Choose Us?"
           subtitle="What sets NK Public School apart from the rest"
+          light
         />
 
         <motion.div
@@ -45,16 +45,20 @@ export function WhyChooseUs({ cards }: WhyChooseUsProps = {}) {
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mt-12"
         >
           {allFeatures.map((feature) => (
-            <motion.div key={feature.id} variants={fadeUp}>
-              <GlassCard className="p-8 text-center" hover>
-                <div className="bg-blue-600/10 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto">
-                  <feature.icon className="w-8 h-8 text-blue-600" />
-                </div>
-                <h3 className="font-heading text-lg font-semibold text-navy-900 mt-4">
-                  {feature.title}
-                </h3>
-                <p className="text-gray-600 text-sm mt-2">{feature.desc}</p>
-              </GlassCard>
+            <motion.div
+              key={feature.id}
+              variants={fadeUp}
+              whileHover={{ y: -4 }}
+              transition={{ type: "spring", stiffness: 300, damping: 20 }}
+              className="p-8 text-center rounded-2xl bg-white/[0.04] border border-chalk/20 hover:border-gold-500/40 hover:bg-white/[0.06] transition-all duration-300"
+            >
+              <div className="bg-gold-500/10 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto">
+                <feature.icon className="w-8 h-8 text-chalk-gold" />
+              </div>
+              <h3 className="font-heading text-lg font-semibold text-chalk mt-4">
+                {feature.title}
+              </h3>
+              <p className="text-chalk-dim text-sm mt-2">{feature.desc}</p>
             </motion.div>
           ))}
         </motion.div>

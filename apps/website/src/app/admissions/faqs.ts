@@ -15,7 +15,7 @@ export const ADMISSIONS_FAQS = [
   },
   {
     q: "Is NK Public School CBSE affiliated?",
-    a: `Yes. NK Public School is a CBSE affiliated co-educational school in Jaipur, affiliation number ${SCHOOL.affiliationNumber}. We offer classes from Nursery to Class XII following the CBSE curriculum.`,
+    a: `Yes. NK Public School, Murlipura is a CBSE co-educational school in Jaipur${SCHOOL.affiliationNumber ? `, affiliation number ${SCHOOL.affiliationNumber}` : " (CBSE affiliation number available from the school office on request)"}. We offer classes from Nursery to Class XII following the CBSE curriculum.`,
   },
   {
     q: "Does the school provide bus transport?",

@@ -71,8 +71,8 @@ export function Navbar() {
             />
             <span
               className={cn(
-                "font-heading text-lg font-bold transition-colors duration-500 hidden sm:inline",
-                "text-white"
+                "chalk-heading text-xl transition-colors duration-500 hidden sm:inline",
+                "text-chalk"
               )}
             >
               NK Public School
@@ -94,7 +94,7 @@ export function Navbar() {
                   key={link.href}
                   href={link.href}
                   className={cn(
-                    "group relative px-4 py-2 text-sm font-medium rounded-full transition-all duration-300",
+                    "group relative px-4 py-2 font-chalk text-base rounded-full transition-all duration-300",
                     isActive
                       ? "bg-white/20 text-white"
                       : "text-white/70 hover:text-white"
@@ -192,7 +192,7 @@ export function Navbar() {
                         href={link.href}
                         onClick={() => setMobileOpen(false)}
                         className={cn(
-                          "text-lg sm:text-xl font-heading font-semibold transition-colors duration-200",
+                          "text-2xl sm:text-3xl font-chalk transition-colors duration-200",
                           isActive
                             ? "text-gold-400"
                             : "text-white/70 hover:text-white"
@@ -250,33 +250,39 @@ export function Navbar() {
                   </a>
                 </div>
                 <div className="flex items-center gap-5 text-white/40">
-                  <Link
-                    href={SCHOOL.social.facebook}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Facebook"
-                    className="hover:text-gold-400 transition-colors"
-                  >
-                    <FacebookIcon className="h-4 w-4" />
-                  </Link>
-                  <Link
-                    href={SCHOOL.social.instagram}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Instagram"
-                    className="hover:text-gold-400 transition-colors"
-                  >
-                    <InstagramIcon className="h-4 w-4" />
-                  </Link>
-                  <Link
-                    href={SCHOOL.social.youtube}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="YouTube"
-                    className="hover:text-gold-400 transition-colors"
-                  >
-                    <YoutubeIcon className="h-4 w-4" />
-                  </Link>
+                  {SCHOOL.social.facebook && (
+                    <Link
+                      href={SCHOOL.social.facebook}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Facebook"
+                      className="hover:text-gold-400 transition-colors"
+                    >
+                      <FacebookIcon className="h-4 w-4" />
+                    </Link>
+                  )}
+                  {SCHOOL.social.instagram && (
+                    <Link
+                      href={SCHOOL.social.instagram}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Instagram"
+                      className="hover:text-gold-400 transition-colors"
+                    >
+                      <InstagramIcon className="h-4 w-4" />
+                    </Link>
+                  )}
+                  {SCHOOL.social.youtube && (
+                    <Link
+                      href={SCHOOL.social.youtube}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="YouTube"
+                      className="hover:text-gold-400 transition-colors"
+                    >
+                      <YoutubeIcon className="h-4 w-4" />
+                    </Link>
+                  )}
                 </div>
                 {/* Thumb-friendly bottom close — top-right X is hard to reach one-handed */}
                 <button

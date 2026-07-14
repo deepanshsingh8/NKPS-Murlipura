@@ -109,6 +109,7 @@ export function FacilitiesContent({ heroImage, cards }: FacilitiesContentProps) 
             <SectionHeading
               title="Campus Facilities"
               subtitle="Modern amenities designed to enhance every aspect of student life"
+              light
             />
           </AnimatedSection>
 
@@ -130,7 +131,7 @@ export function FacilitiesContent({ heroImage, cards }: FacilitiesContentProps) 
                 >
                   <div
                     className={cn(
-                      "flex overflow-hidden rounded-3xl bg-white shadow-md transition-shadow duration-500 hover:shadow-xl",
+                      "flex overflow-hidden rounded-3xl bg-white shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)] transition-shadow duration-500 hover:shadow-xl",
                       "flex-col sm:flex-row",
                       index % 2 === 1 && "sm:flex-row-reverse"
                     )}

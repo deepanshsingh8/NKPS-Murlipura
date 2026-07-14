@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS site_media (
 -- Section Cards
 CREATE TABLE IF NOT EXISTS section_cards (
   id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
-  section text NOT NULL CHECK (section IN ('hero_slider', 'testimonials', 'latest_updates', 'facilities_preview', 'leadership', 'legacy_timeline', 'why_choose_us', 'activities', 'annual_events', 'campus_facilities')),
+  section text NOT NULL CHECK (section IN ('hero_slider', 'testimonials', 'latest_updates', 'facilities_preview', 'leadership', 'legacy_timeline', 'why_choose_us', 'activities', 'annual_events', 'campus_facilities', 'accolades', 'student_achievements', 'alumni', 'sports_indoor', 'sports_outdoor')),
   title text,
   subtitle text,
   description text,
@@ -170,6 +170,31 @@ CREATE TABLE IF NOT EXISTS disclosure_board_results (
   sort_order integer DEFAULT 0,
   updated_at timestamptz DEFAULT now(),
   UNIQUE(exam_class, academic_year)
+);
+
+-- Prospectus Documents (CMS-managed list of downloadable prospectus PDFs)
+CREATE TABLE IF NOT EXISTS prospectus_documents (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  title text NOT NULL,
+  file_url text NOT NULL,
+  file_name text,
+  sort_order integer DEFAULT 0,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Holiday Homework (CMS-managed, per-class, per-session downloadable PDFs)
+CREATE TABLE IF NOT EXISTS holiday_homework (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  title text NOT NULL,
+  class_grade text NOT NULL,
+  session text NOT NULL,
+  academic_year text NOT NULL,
+  file_url text NOT NULL,
+  file_name text,
+  sort_order integer DEFAULT 0,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 -- Gallery Events (event-based photo categorization)
@@ -1238,6 +1263,34 @@ CREATE POLICY "Authenticated users can insert disclosure_documents"
 CREATE POLICY "Authenticated users can delete disclosure_documents"
   ON disclosure_documents FOR DELETE USING (auth.role() = 'authenticated');
 
+ALTER TABLE prospectus_documents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public can read prospectus_documents"
+  ON prospectus_documents FOR SELECT USING (true);
+
+CREATE POLICY "Authenticated users can update prospectus_documents"
+  ON prospectus_documents FOR UPDATE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can insert prospectus_documents"
+  ON prospectus_documents FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can delete prospectus_documents"
+  ON prospectus_documents FOR DELETE USING (auth.role() = 'authenticated');
+
+ALTER TABLE holiday_homework ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Public can read holiday_homework"
+  ON holiday_homework FOR SELECT USING (true);
+
+CREATE POLICY "Authenticated users can update holiday_homework"
+  ON holiday_homework FOR UPDATE USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can insert holiday_homework"
+  ON holiday_homework FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can delete holiday_homework"
+  ON holiday_homework FOR DELETE USING (auth.role() = 'authenticated');
+
 -- Disclosure Board Results
 ALTER TABLE disclosure_board_results ENABLE ROW LEVEL SECURITY;
 
@@ -1870,6 +1923,16 @@ CREATE POLICY "Teachers can insert notifications"
 --   DELETE: Allow authenticated users
 
 -- Bucket: "disclosure-documents" (Public)
+--   SELECT: Allow public access
+--   INSERT: Allow authenticated users
+--   DELETE: Allow authenticated users
+
+-- Bucket: "prospectus" (Public)
+--   SELECT: Allow public access
+--   INSERT: Allow authenticated users
+--   DELETE: Allow authenticated users
+
+-- Bucket: "holiday-homework" (Public)
 --   SELECT: Allow public access
 --   INSERT: Allow authenticated users
 --   DELETE: Allow authenticated users

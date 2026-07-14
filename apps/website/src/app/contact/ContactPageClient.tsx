@@ -107,6 +107,7 @@ export function ContactPageClient() {
             <SectionHeading
               title="Get in Touch"
               subtitle="Reach out to us through any of the following channels"
+              light
             />
           </AnimatedSection>
 
@@ -121,7 +122,7 @@ export function ContactPageClient() {
               <motion.div
                 key={card.title}
                 variants={fadeUp}
-                className="group relative overflow-hidden rounded-2xl border border-white/60 bg-white/80 p-8 text-center shadow-lg backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+                className="group relative overflow-hidden rounded-2xl border border-chalk/20 bg-white/[0.04] p-8 text-center shadow-lg backdrop-blur-sm transition-all duration-300 hover:-translate-y-1 hover:border-gold-500/40 hover:shadow-xl"
               >
                 {/* Subtle gradient accent at top */}
                 <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-gold-500 to-gold-400" />
@@ -129,13 +130,13 @@ export function ContactPageClient() {
                 <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-gold-500 to-gold-400 shadow-lg shadow-gold-500/25 transition-transform duration-300 group-hover:scale-110">
                   <card.icon className="h-7 w-7 text-white" />
                 </div>
-                <p className="text-xs font-medium uppercase tracking-widest text-gold-600">
+                <p className="text-xs font-medium uppercase tracking-widest text-chalk-gold">
                   {card.subtitle}
                 </p>
-                <h3 className="mt-1 font-heading text-lg font-bold text-navy-900">
+                <h3 className="mt-1 font-heading text-lg font-bold text-chalk">
                   {card.title}
                 </h3>
-                <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                <p className="mt-3 text-sm leading-relaxed text-chalk-dim">
                   {card.value}
                 </p>
               </motion.div>
@@ -144,15 +145,16 @@ export function ContactPageClient() {
         </div>
       </section>
 
-      <SectionDivider />
+      <SectionDivider color="fill-board" />
 
       {/* Contact Form — Split Layout */}
-      <section className="bg-cream-50 py-20 px-6">
+      <section className="py-20 px-6">
         <div className="mx-auto max-w-6xl">
           <AnimatedSection>
             <SectionHeading
               title="Send Us a Message"
               subtitle="Fill out the form below and we will get back to you shortly"
+              light
             />
           </AnimatedSection>
 
@@ -402,7 +404,7 @@ export function ContactPageClient() {
         </div>
       </section>
 
-      <SectionDivider flip />
+      <SectionDivider flip color="fill-board" />
 
       {/* Google Maps */}
       <section className="py-20 px-6">
@@ -411,6 +413,7 @@ export function ContactPageClient() {
             <SectionHeading
               title="Find Us"
               subtitle="Visit our campus in Arya Nagar, Murlipura"
+              light
             />
           </AnimatedSection>
 
@@ -431,15 +434,16 @@ export function ContactPageClient() {
         </div>
       </section>
 
-      <SectionDivider />
+      <SectionDivider color="fill-board" />
 
       {/* FAQ */}
-      <section className="bg-cream-50 py-20 px-6">
+      <section className="py-20 px-6">
         <div className="mx-auto max-w-3xl">
           <AnimatedSection>
             <SectionHeading
               title="Frequently Asked Questions"
               subtitle="Find quick answers to common queries about our school"
+              light
             />
           </AnimatedSection>
 

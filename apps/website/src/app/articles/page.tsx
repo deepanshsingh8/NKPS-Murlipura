@@ -43,19 +43,19 @@ export default async function ArticlesIndexPage() {
         subtitle="Updates, announcements, and stories from NK Public School"
       />
 
-      <SectionDivider />
+      <SectionDivider color="fill-board" />
 
       <section className="section-padding">
         <div className="page-container">
           {articles.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="rounded-full bg-cream-100 p-6">
-                <Newspaper className="h-10 w-10 text-navy-800/30" />
+              <div className="rounded-full bg-white/[0.06] p-6">
+                <Newspaper className="h-10 w-10 text-chalk-faint" />
               </div>
-              <h2 className="mt-5 text-xl font-heading font-semibold text-navy-900">
+              <h2 className="mt-5 text-xl font-heading font-semibold text-chalk">
                 No articles yet
               </h2>
-              <p className="mt-2 text-sm text-navy-800/60 max-w-sm">
+              <p className="mt-2 text-sm text-chalk-faint max-w-sm">
                 Check back soon for the latest news and announcements from the school.
               </p>
             </div>
@@ -65,7 +65,7 @@ export default async function ArticlesIndexPage() {
                 <Link
                   key={article.id}
                   href={`/articles/${article.slug}`}
-                  className="group rounded-3xl overflow-hidden bg-white border border-gray-100/80 shadow-sm hover:shadow-xl hover:shadow-gold-500/8 hover:border-gold-500/20 transition-all duration-500"
+                  className="group rounded-3xl overflow-hidden bg-white border border-black/5 shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)] hover:shadow-[0_20px_40px_-16px_rgba(0,0,0,0.7)] hover:border-gold-500/20 transition-all duration-500"
                 >
                   <div className="relative h-52 w-full overflow-hidden bg-navy-100">
                     {article.cover_image_url ? (

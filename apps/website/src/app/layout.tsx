@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Playfair_Display } from "next/font/google";
+import { Inter, Playfair_Display, Caveat } from "next/font/google";
 import { GoogleAnalytics } from "@next/third-parties/google";
 import { Analytics } from "@vercel/analytics/next";
 import { Toaster } from "@nkps/shared/components/ui/sonner";
@@ -17,6 +17,14 @@ const inter = Inter({
 const playfair = Playfair_Display({
   variable: "--font-playfair",
   subsets: ["latin"],
+  display: "swap",
+});
+
+// Chalk / handwriting display face for the blackboard theme.
+const caveat = Caveat({
+  variable: "--font-chalk-hand",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -92,7 +100,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${playfair.variable}`}>
+    <html lang="en" className={`${inter.variable} ${playfair.variable} ${gaegu.variable}`}>
       <body className="min-h-screen flex flex-col antialiased">
         <JsonLd data={schoolJsonLd} />
         <LayoutShell>

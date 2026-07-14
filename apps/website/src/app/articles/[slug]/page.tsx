@@ -175,26 +175,28 @@ export default async function ArticleDetailPage({ params }: PageProps) {
       {/* Body */}
       <article className="section-padding">
         <div className="mx-auto max-w-3xl px-6">
-          {article.excerpt && (
-            <p className="text-lg text-gray-700 font-medium leading-relaxed mb-8 pb-8 border-b border-gray-100">
-              {article.excerpt}
-            </p>
-          )}
+          <div className="bg-paper rounded-2xl shadow-[0_16px_30px_-14px_rgba(0,0,0,0.55)] p-6 sm:p-10">
+            {article.excerpt && (
+              <p className="text-lg text-gray-700 font-medium leading-relaxed mb-8 pb-8 border-b border-gray-200">
+                {article.excerpt}
+              </p>
+            )}
 
-          <div className="article-prose">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {article.content}
-            </ReactMarkdown>
-          </div>
+            <div className="article-prose">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {article.content}
+              </ReactMarkdown>
+            </div>
 
-          <div className="mt-12 pt-8 border-t border-gray-100">
-            <Link
-              href="/articles"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-navy-900 hover:text-gold-600 transition-colors"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to all articles
-            </Link>
+            <div className="mt-12 pt-8 border-t border-gray-200">
+              <Link
+                href="/articles"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-navy-900 hover:text-gold-600 transition-colors"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to all articles
+              </Link>
+            </div>
           </div>
         </div>
       </article>

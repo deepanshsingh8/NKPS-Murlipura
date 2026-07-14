@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Phone, Mail, ArrowRight, GraduationCap, ClipboardList, FileText, Users, CheckCircle } from "lucide-react";
+import { Phone, Mail, ArrowRight, GraduationCap, ClipboardList, FileText, Users, CheckCircle, Download } from "lucide-react";
 import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { PageTransition } from "@nkps/shared/components/PageTransition";
@@ -68,6 +68,7 @@ export function AdmissionsPageClient() {
               label="How to Apply"
               title="Admission Process"
               subtitle="A simple four-step journey to becoming part of our family"
+              light
             />
           </AnimatedSection>
 
@@ -93,11 +94,11 @@ export function AdmissionsPageClient() {
                     {step.number}
                   </span>
                 </div>
-                <step.icon className="mt-4 h-5 w-5 text-gold-600 transition-transform duration-300 group-hover:scale-110" />
-                <h3 className="mt-2 font-heading text-lg font-semibold text-navy-900">
+                <step.icon className="mt-4 h-5 w-5 text-chalk-gold transition-transform duration-300 group-hover:scale-110" />
+                <h3 className="mt-2 font-heading text-lg font-semibold text-chalk">
                   {step.title}
                 </h3>
-                <p className="mt-1 text-sm leading-relaxed text-gray-600">
+                <p className="mt-1 text-sm leading-relaxed text-chalk-dim">
                   {step.description}
                 </p>
               </motion.div>
@@ -126,12 +127,12 @@ export function AdmissionsPageClient() {
                 </div>
                 <div className="pb-10 pt-2">
                   <div className="flex items-center gap-2">
-                    <step.icon className="h-4 w-4 text-gold-600" />
-                    <h3 className="font-heading text-lg font-semibold text-navy-900">
+                    <step.icon className="h-4 w-4 text-chalk-gold" />
+                    <h3 className="font-heading text-lg font-semibold text-chalk">
                       {step.title}
                     </h3>
                   </div>
-                  <p className="mt-1 text-gray-600">{step.description}</p>
+                  <p className="mt-1 text-chalk-dim">{step.description}</p>
                 </div>
               </motion.div>
             ))}
@@ -139,16 +140,17 @@ export function AdmissionsPageClient() {
         </div>
       </section>
 
-      <SectionDivider color="fill-cream-50" />
+      <SectionDivider color="fill-board" />
 
       {/* Eligibility */}
-      <section className="bg-cream-50 py-20 px-6">
+      <section className="py-20 px-6">
         <div className="mx-auto max-w-5xl">
           <AnimatedSection>
             <SectionHeading
               label="Requirements"
               title="Eligibility"
               subtitle="Age criteria and requirements for admission"
+              light
             />
           </AnimatedSection>
 
@@ -163,17 +165,17 @@ export function AdmissionsPageClient() {
               <motion.div
                 key={item.grade}
                 variants={fadeUp}
-                className="group rounded-2xl border border-gray-200 bg-white p-6 transition-shadow duration-300 hover:shadow-xl hover:shadow-navy-900/5"
+                className="group rounded-2xl border border-chalk/20 bg-white/[0.04] p-6 transition-colors duration-300 hover:border-gold-500/40"
               >
                 <div className="flex items-start gap-4">
                   <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gold-500/10">
-                    <GraduationCap className="h-6 w-6 text-gold-600" />
+                    <GraduationCap className="h-6 w-6 text-chalk-gold" />
                   </div>
                   <div>
-                    <h3 className="font-heading text-lg font-bold text-navy-900">
+                    <h3 className="font-heading text-lg font-bold text-chalk">
                       {item.grade}
                     </h3>
-                    <p className="mt-1 text-sm leading-relaxed text-gray-600">
+                    <p className="mt-1 text-sm leading-relaxed text-chalk-dim">
                       {item.requirement}
                     </p>
                   </div>
@@ -184,12 +186,11 @@ export function AdmissionsPageClient() {
         </div>
       </section>
 
-      <SectionDivider flip color="fill-cream-50" />
+      <SectionDivider flip color="fill-board" />
 
       {/* Fee Structure */}
       <section className="relative py-20 px-6 overflow-hidden">
         {/* Decorative background */}
-        <div className="absolute inset-0 bg-gradient-to-b from-white via-cream-50/30 to-white" />
         <div className="absolute top-10 right-0 h-72 w-72 rounded-full bg-gold-500/5 blur-3xl" />
         <div className="absolute bottom-10 left-0 h-72 w-72 rounded-full bg-gold-500/5 blur-3xl" />
 
@@ -198,25 +199,26 @@ export function AdmissionsPageClient() {
             <SectionHeading
               title="Fee Structure"
               subtitle="Get in touch with us for complete fee details"
+              light
             />
           </AnimatedSection>
 
           <AnimatedSection delay={0.2}>
-            <div className="mx-auto mt-12 max-w-xl rounded-2xl border border-gold-500/20 bg-white/60 p-10 shadow-xl shadow-gold-500/5 backdrop-blur-md">
-              <FileText className="mx-auto h-10 w-10 text-gold-500" />
-              <p className="mt-4 text-lg text-gray-600">
+            <div className="mx-auto mt-12 max-w-xl rounded-2xl border border-chalk/20 bg-white/[0.04] p-10">
+              <FileText className="mx-auto h-10 w-10 text-chalk-gold" />
+              <p className="mt-4 text-lg text-chalk-dim">
                 Please contact the school office for detailed fee information and payment schedule.
               </p>
               <div className="mt-8 space-y-3">
-                <div className="flex items-center justify-center gap-3 text-gray-700">
+                <div className="flex items-center justify-center gap-3 text-chalk-dim">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gold-500/10">
-                    <Phone className="h-4 w-4 text-gold-600" />
+                    <Phone className="h-4 w-4 text-chalk-gold" />
                   </div>
                   <span className="font-medium">{SCHOOL.phone.join(", ")}</span>
                 </div>
-                <div className="flex items-center justify-center gap-3 text-gray-700">
+                <div className="flex items-center justify-center gap-3 text-chalk-dim">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gold-500/10">
-                    <Mail className="h-4 w-4 text-gold-600" />
+                    <Mail className="h-4 w-4 text-chalk-gold" />
                   </div>
                   <span className="font-medium">{SCHOOL.email[0]}</span>
                 </div>
@@ -232,16 +234,17 @@ export function AdmissionsPageClient() {
         </div>
       </section>
 
-      <SectionDivider color="fill-cream-50" />
+      <SectionDivider color="fill-board" />
 
       {/* Admissions FAQ */}
-      <section className="bg-cream-50 py-20 px-6">
+      <section className="py-20 px-6">
         <div className="mx-auto max-w-3xl">
           <AnimatedSection>
             <SectionHeading
               label="Common Questions"
               title="Admissions FAQ"
               subtitle="Everything parents ask about joining NK Public School"
+              light
             />
           </AnimatedSection>
 
@@ -252,9 +255,9 @@ export function AdmissionsPageClient() {
                   <AccordionItem
                     key={index}
                     value={`adm-faq-${index}`}
-                    className="mb-4 overflow-hidden rounded-xl border border-gray-200 bg-white px-2 shadow-sm transition-shadow hover:shadow-md"
+                    className="worksheet mb-4 overflow-hidden rounded-xl px-2"
                   >
-                    <AccordionTrigger className="px-4 py-5 text-left font-heading text-base font-semibold text-navy-900 hover:text-gold-600 [&[data-state=open]]:text-gold-600">
+                    <AccordionTrigger className="px-4 py-5 text-left font-heading text-base font-semibold text-navy-900 hover:text-gold-700 [&[data-state=open]]:text-gold-700">
                       {faq.q}
                     </AccordionTrigger>
                     <AccordionContent className="px-4 pb-5 text-sm leading-relaxed text-gray-600">
@@ -268,7 +271,7 @@ export function AdmissionsPageClient() {
         </div>
       </section>
 
-      <SectionDivider flip color="fill-cream-50" />
+      <SectionDivider flip color="fill-board" />
 
       {/* CTA Banner */}
       <section className="relative bg-navy-900 py-20 px-6 overflow-hidden">
@@ -296,6 +299,12 @@ export function AdmissionsPageClient() {
                 className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-8 py-3.5 font-semibold text-white transition-colors hover:bg-white/10"
               >
                 <Phone className="h-4 w-4" /> Call Us
+              </Link>
+              <Link
+                href="/prospectus"
+                className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-8 py-3.5 font-semibold text-white transition-colors hover:bg-white/10"
+              >
+                <Download className="h-4 w-4" /> Download Prospectus
               </Link>
             </div>
           </AnimatedSection>

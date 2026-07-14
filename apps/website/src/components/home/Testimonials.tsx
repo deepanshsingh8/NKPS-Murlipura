@@ -42,17 +42,18 @@ export function Testimonials({ cards }: TestimonialsProps = {}) {
   if (activeTestimonials.length === 0) return null;
 
   return (
-    <section className="bg-white section-padding relative overflow-hidden">
+    <section className="section-padding relative overflow-hidden">
       <div className="page-container relative z-10">
         <SectionHeading
           label="Testimonials"
           title="What Parents Say"
           subtitle="Hear from our school community"
+          light
         />
 
         <div className="mt-12 md:mt-16 max-w-3xl mx-auto">
           {/* Quote card — premium with glow border */}
-          <div className="relative bg-cream-50 rounded-3xl p-8 md:p-12 border border-gold-500/10 shadow-lg shadow-gold-500/[0.04] hover:shadow-xl hover:shadow-gold-500/[0.08] transition-shadow duration-700">
+          <div className="relative bg-paper rounded-3xl p-8 md:p-12 border border-black/5 shadow-[0_22px_50px_-20px_rgba(0,0,0,0.6)] transition-shadow duration-700">
             {/* Quote icon — with pulse glow */}
             <div className="absolute -top-5 left-8 md:left-12 w-10 h-10 rounded-full bg-gradient-to-br from-gold-500 to-gold-400 flex items-center justify-center shadow-lg shadow-gold-500/30" style={{ animation: "pulse-gold 3s ease-in-out infinite" }}>
               <Quote className="w-5 h-5 text-navy-900" />
@@ -118,7 +119,7 @@ export function Testimonials({ cards }: TestimonialsProps = {}) {
                     "w-2.5 h-2.5 rounded-full transition-all duration-300",
                     i === active
                       ? "bg-gold-500 scale-125"
-                      : "bg-gray-300 hover:bg-gray-400"
+                      : "bg-chalk/30 hover:bg-chalk/50"
                   )}
                 />
               </button>

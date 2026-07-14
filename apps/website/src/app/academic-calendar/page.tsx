@@ -88,14 +88,14 @@ export default async function AcademicCalendarPage() {
         subtitle="Upcoming events, holidays, exams and meetings"
       />
 
-      <section className="section-padding bg-cream-50">
+      <section className="section-padding">
         <div className="page-container max-w-5xl">
           {monthKeys.length === 0 ? (
-            <div className="rounded-3xl border border-gray-100 bg-white p-12 text-center">
-              <h2 className="font-heading text-2xl font-semibold text-navy-900">
+            <div className="rounded-3xl border border-chalk/20 bg-white/[0.04] p-12 text-center">
+              <h2 className="font-heading text-2xl font-semibold text-chalk">
                 No upcoming events
               </h2>
-              <p className="mt-2 text-gray-500">
+              <p className="mt-2 text-chalk-faint">
                 The school calendar will be updated soon. Please check back later.
               </p>
             </div>
@@ -103,7 +103,7 @@ export default async function AcademicCalendarPage() {
             <div className="space-y-12">
               {monthKeys.map((month) => (
                 <div key={month}>
-                  <h2 className="font-heading text-2xl md:text-3xl font-semibold text-navy-900 mb-6">
+                  <h2 className="font-heading text-2xl md:text-3xl font-semibold text-chalk mb-6">
                     {month}
                   </h2>
                   <div className="space-y-3">
@@ -113,16 +113,16 @@ export default async function AcademicCalendarPage() {
                       return (
                         <div
                           key={ev.id}
-                          className="flex gap-4 rounded-2xl border border-gray-100 bg-white p-4 sm:p-5 hover:border-gold-500/30 hover:shadow-sm transition-all"
+                          className="flex gap-4 rounded-2xl border border-chalk/20 bg-white/[0.04] p-4 sm:p-5 hover:border-gold-500/40 hover:bg-white/[0.06] transition-all"
                         >
-                          <div className="flex-shrink-0 w-16 sm:w-20 text-center rounded-xl bg-cream-50 border border-gray-100 py-2">
-                            <div className="text-[10px] uppercase tracking-wider text-gray-500">
+                          <div className="flex-shrink-0 w-16 sm:w-20 text-center rounded-xl bg-white/[0.06] border border-chalk/15 py-2">
+                            <div className="text-[10px] uppercase tracking-wider text-chalk-faint">
                               {day.weekday}
                             </div>
-                            <div className="font-heading text-2xl sm:text-3xl font-bold text-navy-900 leading-tight">
+                            <div className="font-heading text-2xl sm:text-3xl font-bold text-chalk leading-tight">
                               {day.day}
                             </div>
-                            <div className="text-[11px] uppercase tracking-wider text-gray-500">
+                            <div className="text-[11px] uppercase tracking-wider text-chalk-faint">
                               {day.month}
                             </div>
                           </div>
@@ -134,16 +134,16 @@ export default async function AcademicCalendarPage() {
                                 {EVENT_TYPE_LABELS[ev.event_type]}
                               </span>
                               {endLabel && (
-                                <span className="text-xs text-gray-500">
+                                <span className="text-xs text-chalk-faint">
                                   through {endLabel}
                                 </span>
                               )}
                             </div>
-                            <h3 className="font-heading text-lg font-semibold text-navy-900">
+                            <h3 className="font-heading text-lg font-semibold text-chalk">
                               {ev.title}
                             </h3>
                             {ev.description && (
-                              <p className="mt-1 text-sm text-gray-600 leading-relaxed">
+                              <p className="mt-1 text-sm text-chalk-dim leading-relaxed">
                                 {ev.description}
                               </p>
                             )}

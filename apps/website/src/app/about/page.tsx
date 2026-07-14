@@ -1,6 +1,7 @@
 import { Metadata } from "next";
 import Image from "next/image";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { VisionMission } from "@/components/about/VisionMission";
 import { LegacyTimeline } from "@/components/about/LegacyTimeline";
 import { FounderTribute } from "@/components/about/FounderTribute";
 import { LeadershipGrid } from "@/components/about/LeadershipGrid";
@@ -45,6 +46,8 @@ export default async function AboutPage() {
         subtitle="Shaping Futures, Building Character"
       />
 
+      <VisionMission />
+
       {/* Hero Image Section */}
       <div className="relative h-[50vh] w-full overflow-hidden">
         <Image
@@ -66,17 +69,17 @@ export default async function AboutPage() {
         </div>
       </div>
 
-      <SectionDivider color="fill-white" />
+      <SectionDivider color="fill-board" />
 
       <LegacyTimeline cards={timelineCards} />
       <FounderTribute photoUrl={founderPhoto} />
 
-      <SectionDivider color="fill-cream-50" />
+      <SectionDivider color="fill-board" />
 
       <LeadershipGrid cards={leadershipCards} />
       <WhyChooseUs cards={whyChooseCards} />
 
-      <SectionDivider flip color="fill-navy-900" />
+      <SectionDivider flip color="fill-board-deep" />
 
       <AchievementsCounter />
     </PageTransition>

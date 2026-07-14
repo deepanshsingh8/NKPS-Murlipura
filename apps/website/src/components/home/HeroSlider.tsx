@@ -2,18 +2,20 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion, useTransform } from "framer-motion";
-import { ArrowRight, Users, CalendarDays, GraduationCap, Building2 } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, GraduationCap, Building2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import { cn } from "@nkps/shared/lib/utils";
 import { useMouseMotion } from "@nkps/shared/hooks/useMousePosition";
 import type { SectionCard } from "@nkps/shared/types";
 
+// Campus-level facts only (no group-wide marketing figures). TODO(content):
+// add a verified campus student count here once the school confirms it.
 const stats = [
-  { number: "20,000+", label: "Students", icon: Users },
-  { number: "40+", label: "Years", icon: CalendarDays },
-  { number: "300+", label: "Faculty", icon: GraduationCap },
-  { number: "6", label: "Institutes", icon: Building2 },
+  { number: "Since 1985", label: "Founding Campus", icon: CalendarDays },
+  { number: "40+", label: "Years of Legacy", icon: BookOpen },
+  { number: "Nursery–XII", label: "Co-educational", icon: GraduationCap },
+  { number: "CBSE", label: "Affiliated", icon: Building2 },
 ];
 
 const INTERVAL = 7000;
@@ -73,8 +75,8 @@ function AnimatedHeading({
 
   return (
     <h1
-      className="font-heading text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold leading-[1.08] text-white"
-      style={{ letterSpacing: "-0.03em" }}
+      className="chalk-heading text-5xl md:text-6xl lg:text-7xl xl:text-8xl leading-[1.02] text-white"
+      style={{ letterSpacing: "0" }}
     >
       {lines.map((line, lineIdx) => {
         const prevChars = lines

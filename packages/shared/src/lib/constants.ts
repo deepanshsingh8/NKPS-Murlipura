@@ -4,6 +4,10 @@ export const SCHOOL = {
   tagline: "A Relentless Quest for Excellence",
   description:
     "NK Public School Murlipura, the founding campus of the NKPS group, has been nurturing young minds in Jaipur since 1985. We offer holistic education from Nursery to Class XII with Science and Commerce streams at the senior-secondary level.",
+  mission:
+    "To be a centre of excellence in education which, in keeping with the rich heritage of India, will stress the simultaneous development of body, mind and spirit, and endeavour to create compassionate, responsible and innovative global citizens who are committed to the development of India.",
+  vision:
+    "To prepare dynamic and caring citizens of tomorrow to meet the challenges of a global society while retaining their traditional values.",
   founded: 1985,
   founder: {
     name: "Late Shri R.K. Choudhary",
@@ -51,17 +55,25 @@ export const SCHOOL = {
         "A relentless quest for excellence, an insatiable thirst for knowledge and a limitless craving for the latest are the hallmarks of NKPS. Freedom can only be effectively exercised when guided by discipline.",
     },
   ],
+  // Homepage "By the Numbers" band. Only campus-verifiable facts are shown so
+  // nothing renders as a hollow "0+". TODO(content): once the school confirms
+  // the Murlipura campus student and faculty head-counts, swap one of the
+  // fact cards below back to a "Students"/"Faculty" counter.
   stats: [
-    { label: "Students", value: 0, suffix: "+" },
     { label: "Years of Excellence", value: 40, suffix: "+" },
-    { label: "Dedicated Faculty", value: 0, suffix: "+" },
+    { label: "Class Levels (Nursery–XII)", value: 15, suffix: "" },
     { label: "Streams (XI–XII)", value: 2, suffix: "" },
+    { label: "Educating Since", value: 1985, suffix: "" },
   ],
+  // About-page achievements band. Values below are drawn from the school's own
+  // published results/awards (see _reference/scraped/murlipura-content.md §8).
+  // TODO(content): confirm alumni-network size and latest board pass-% with the
+  // school, then add those cards.
   achievementStats: [
-    { label: "Alumni Network", value: 0, suffix: "+" },
     { label: "Years of Legacy", value: 40, suffix: "+" },
-    { label: "Board Toppers", value: 0, suffix: "+" },
-    { label: "Board Results", value: 0, suffix: "%" },
+    { label: "Perfect Scorers · 2021", value: 6, suffix: "" },
+    { label: "National Gold Medallists", value: 3, suffix: "" },
+    { label: "Educating Since", value: 1985, suffix: "" },
   ],
 } as const;
 
@@ -74,8 +86,31 @@ export const NAV_LINKS = [
   { label: "Facilities", href: "/facilities" },
   { label: "Gallery", href: "/gallery" },
   { label: "Articles", href: "/articles" },
+  { label: "Alumni", href: "/alumni" },
   { label: "Contact", href: "/contact" },
 ] as const;
+
+// Class list (Nursery → XII) used to tag and order holiday-homework documents.
+// Kept in one place so the CMS pickers and the public grouping stay in sync.
+export const HOLIDAY_HOMEWORK_CLASSES = [
+  "Nursery",
+  "LKG",
+  "UKG",
+  "I",
+  "II",
+  "III",
+  "IV",
+  "V",
+  "VI",
+  "VII",
+  "VIII",
+  "IX",
+  "X",
+  "XI",
+  "XII",
+] as const;
+
+export const HOLIDAY_HOMEWORK_SESSIONS = ["Summer", "Winter"] as const;
 
 export const STAFF = {
   pgt: [] as { name: string; subject: string }[],

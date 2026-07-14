@@ -285,12 +285,12 @@ export function GalleryPageClient() {
     <PageTransition>
       <PageHeader title="Gallery" subtitle="Glimpses of Life at NK Public School" />
 
-      <SectionDivider />
+      <SectionDivider color="fill-board" />
 
       <section className="py-20 px-6">
         <div className="mx-auto max-w-6xl">
           <AnimatedSection>
-            <SectionHeading title="Photo Gallery" />
+            <SectionHeading title="Photo Gallery" light />
           </AnimatedSection>
 
           {/* View Mode Toggle */}
@@ -301,8 +301,8 @@ export function GalleryPageClient() {
                 className={cn(
                   "px-5 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
                   viewMode === "categories"
-                    ? "bg-navy-900 text-white shadow-lg shadow-navy-900/20"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    ? "bg-gold-500 text-navy-900 shadow-lg shadow-gold-500/20"
+                    : "bg-white/[0.06] text-chalk-dim hover:text-chalk hover:bg-white/[0.1]"
                 )}
               >
                 <Filter className="h-4 w-4" />
@@ -313,8 +313,8 @@ export function GalleryPageClient() {
                 className={cn(
                   "px-5 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center gap-2",
                   viewMode === "events"
-                    ? "bg-navy-900 text-white shadow-lg shadow-navy-900/20"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    ? "bg-gold-500 text-navy-900 shadow-lg shadow-gold-500/20"
+                    : "bg-white/[0.06] text-chalk-dim hover:text-chalk hover:bg-white/[0.1]"
                 )}
               >
                 <Calendar className="h-4 w-4" />
@@ -337,8 +337,8 @@ export function GalleryPageClient() {
                     className={cn(
                       "rounded-full px-4 py-2 sm:px-6 sm:py-2.5 text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center gap-2",
                       activeCategory === category
-                        ? "bg-gradient-to-r from-navy-900 to-navy-800 text-white shadow-lg shadow-navy-900/25 scale-105"
-                        : "border-2 border-navy-900/10 bg-white text-navy-900 hover:border-navy-900/30 hover:bg-cream-50 hover:shadow-md"
+                        ? "bg-gold-500 text-navy-900 shadow-lg shadow-gold-500/25 scale-105"
+                        : "border-2 border-chalk/20 bg-white/[0.06] text-chalk-dim hover:text-chalk hover:border-gold-500/40 hover:bg-white/[0.1]"
                     )}
                   >
                     {category}
@@ -346,8 +346,8 @@ export function GalleryPageClient() {
                       className={cn(
                         "inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold min-w-[1.5rem]",
                         activeCategory === category
-                          ? "bg-gold-500 text-navy-900"
-                          : "bg-cream-100 text-navy-800"
+                          ? "bg-navy-900/15 text-navy-900"
+                          : "bg-white/10 text-chalk-dim"
                       )}
                     >
                       {getCategoryCount(category)}
@@ -372,7 +372,7 @@ export function GalleryPageClient() {
                     exit={{ opacity: 0, scale: 0.9 }}
                     transition={{ duration: 0.3 }}
                     className={cn(
-                      "group relative mb-4 break-inside-avoid overflow-hidden rounded-2xl bg-navy-100 cursor-pointer",
+                      "group relative mb-4 break-inside-avoid overflow-hidden rounded-2xl bg-navy-100 cursor-pointer shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)]",
                       aspectPatterns[index % 3]
                     )}
                     onClick={() => setLightboxImage(image)}
@@ -426,7 +426,7 @@ export function GalleryPageClient() {
                         "rounded-full px-5 py-2 text-sm font-medium transition-all duration-300",
                         selectedYear === "all"
                           ? "bg-gradient-to-r from-gold-500 to-gold-400 text-navy-900 shadow-md shadow-gold-500/20"
-                          : "border-2 border-navy-900/10 bg-white text-navy-900 hover:border-gold-500/30 hover:bg-cream-50"
+                          : "border-2 border-chalk/20 bg-white/[0.06] text-chalk-dim hover:text-chalk hover:border-gold-500/40 hover:bg-white/[0.1]"
                       )}
                     >
                       All Years
@@ -439,7 +439,7 @@ export function GalleryPageClient() {
                           "rounded-full px-5 py-2 text-sm font-medium transition-all duration-300",
                           selectedYear === year
                             ? "bg-gradient-to-r from-gold-500 to-gold-400 text-navy-900 shadow-md shadow-gold-500/20"
-                            : "border-2 border-navy-900/10 bg-white text-navy-900 hover:border-gold-500/30 hover:bg-cream-50"
+                            : "border-2 border-chalk/20 bg-white/[0.06] text-chalk-dim hover:text-chalk hover:border-gold-500/40 hover:bg-white/[0.1]"
                         )}
                       >
                         {year}
@@ -452,8 +452,8 @@ export function GalleryPageClient() {
               {/* Event Cards */}
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-20">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-navy-900/20 border-t-navy-900" />
-                  <p className="mt-4 text-sm text-navy-800/50">Loading events...</p>
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-chalk/20 border-t-chalk" />
+                  <p className="mt-4 text-sm text-chalk-faint">Loading events...</p>
                 </div>
               ) : filteredEvents.length > 0 ? (
                 <motion.div

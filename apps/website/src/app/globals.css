@@ -15,7 +15,23 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter);
   --font-heading: var(--font-playfair);
+  --font-chalk: var(--font-gaegu);
   --font-mono: var(--font-geist-mono);
+
+  /* ── Chalkboard theme (public website) ── */
+  --color-board: #0C3A29;       /* deep forest chalkboard surface */
+  --color-board-2: #0E4230;     /* lifted board panel */
+  --color-board-deep: #061D13;  /* vignette / topbar / footer */
+  --color-chalk: #F2EFE4;       /* warm chalk white (body + display) */
+  --color-chalk-dim: #C3CEC4;   /* faded chalk (secondary text) */
+  --color-chalk-faint: #8FA494; /* dusty chalk (muted labels) */
+  --color-chalk-gold: #E8C25F;  /* gold chalk accent */
+  --color-chalk-rose: #E79AA4;  /* pink chalk */
+  --color-chalk-sky: #9EC9D8;   /* blue chalk */
+  --color-frame: #7A5230;       /* wooden board frame */
+  --color-frame-hi: #9C6C42;
+  --color-frame-lo: #4F3319;
+  --color-paper: #FBF7EC;       /* worksheet paper card */
 
   /* Forest palette — primary dark surfaces (token name kept for backward compatibility) */
   --color-navy-950: #021A0F;
@@ -79,6 +95,7 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 
   --animate-marquee: marquee 30s linear infinite;
+  --animate-marquee-vertical: marquee-vertical 40s linear infinite;
 }
 
 :root {
@@ -151,6 +168,182 @@
   .gold-underline::after {
     content: "";
     @apply absolute bottom-0 left-1/2 -translate-x-1/2 w-16 h-1 bg-gold-500 rounded-full;
+  }
+
+  /* ══════════════════════════════════════════════════════════
+     CHALKBOARD THEME (public website)
+     Scoped under .site-chalk so admin/erp/portal routes in this
+     app keep their light theme untouched.
+     ══════════════════════════════════════════════════════════ */
+
+  /* Base board surface + chalk grain + faint eraser smudges */
+  .site-chalk {
+    color: var(--color-chalk);
+    background-color: var(--color-board);
+    background-image:
+      radial-gradient(130% 80% at 15% -5%, rgba(255, 255, 255, 0.05), transparent 55%),
+      radial-gradient(120% 120% at 100% 100%, var(--color-board-deep), transparent 60%),
+      radial-gradient(ellipse 45% 16% at 25% 30%, rgba(255, 255, 255, 0.03), transparent 70%),
+      radial-gradient(ellipse 42% 18% at 82% 60%, rgba(255, 255, 255, 0.028), transparent 70%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    background-attachment: fixed, fixed, fixed, fixed, fixed;
+  }
+  /* All headings on the public site render in chalk display type */
+  .site-chalk :is(h1, h2, h3, h4, h5, h6) {
+    font-family: var(--font-chalk), "Comic Sans MS", cursive;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+
+  /* Chalk display heading helper (use where an element isn't a heading tag) */
+  .chalk-heading {
+    font-family: var(--font-chalk), "Comic Sans MS", cursive;
+    font-weight: 700;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 0 22px rgba(242, 239, 228, 0.08);
+  }
+
+  /* Hand-drawn wavy gold underline under a heading */
+  .chalk-underline {
+    position: relative;
+  }
+  .chalk-underline::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -0.5rem;
+    width: clamp(56px, 40%, 180px);
+    height: 12px;
+    background: var(--color-chalk-gold);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='12'%3E%3Cpath d='M3 6 C 40 1 90 11 130 5 S 172 4 178 7' stroke='%23000' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='12'%3E%3Cpath d='M3 6 C 40 1 90 11 130 5 S 172 4 178 7' stroke='%23000' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    filter: drop-shadow(0 0 2px rgba(232, 194, 95, 0.4));
+  }
+  .chalk-underline.is-center::after {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* Wooden-framed chalkboard (notice board) */
+  .chalk-frame {
+    position: relative;
+    padding: 16px;
+    border-radius: 14px;
+    background: linear-gradient(160deg, var(--color-frame-hi), var(--color-frame) 30%, var(--color-frame-lo));
+    box-shadow:
+      0 24px 60px -24px rgba(6, 29, 19, 0.8),
+      inset 0 2px 3px rgba(255, 255, 255, 0.25),
+      inset 0 -3px 6px rgba(0, 0, 0, 0.4);
+  }
+  .chalk-frame::after {
+    content: "";
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    bottom: -10px;
+    height: 15px;
+    border-radius: 4px;
+    background: linear-gradient(180deg, var(--color-frame-hi), var(--color-frame-lo));
+    box-shadow: 0 8px 14px -6px rgba(0, 0, 0, 0.6);
+  }
+  .chalk-inboard {
+    border-radius: 6px;
+    background:
+      radial-gradient(120% 100% at 100% 100%, var(--color-board-deep), transparent 60%),
+      var(--color-board-2);
+    box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Subtle chalk-outlined card with hand-drawn wobble corners */
+  .chalk-card {
+    border: 2px solid rgba(242, 239, 228, 0.26);
+    border-radius: 10px 8px 11px 7px / 8px 11px 7px 10px;
+    background: rgba(255, 255, 255, 0.015);
+    transition: border-color 0.25s, transform 0.25s, background 0.25s;
+  }
+  .chalk-card:hover {
+    border-color: var(--color-chalk-gold);
+    transform: translateY(-3px) rotate(-0.4deg);
+    background: rgba(232, 194, 95, 0.05);
+  }
+
+  /* Light "worksheet" paper card for dense reading, taped to the board */
+  .worksheet {
+    position: relative;
+    background: var(--color-paper);
+    color: #22302A;
+    border-radius: 4px;
+    box-shadow: 0 16px 30px -14px rgba(0, 0, 0, 0.55);
+    background-image: repeating-linear-gradient(var(--color-paper) 0 27px, #E7DCC4 27px 28px);
+  }
+  .worksheet :is(h1, h2, h3, h4, h5, h6) { color: #14402C; }
+  .worksheet.is-taped::before {
+    content: "";
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-4deg);
+    width: 74px;
+    height: 22px;
+    background: rgba(232, 194, 95, 0.55);
+    border: 1px dashed rgba(0, 0, 0, 0.15);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+  }
+
+  /* A real photo pinned/taped to the board (polaroid feel) */
+  .photo-pin {
+    position: relative;
+    background: #F7F4EC;
+    padding: 8px 8px 10px;
+    border-radius: 3px;
+    box-shadow: 0 18px 34px -16px rgba(0, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+  .photo-pin > * { border-radius: 2px; overflow: hidden; display: block; }
+  .photo-pin.is-taped::before {
+    content: "";
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-5deg);
+    width: 66px;
+    height: 20px;
+    background: rgba(158, 201, 216, 0.5);
+    border: 1px dashed rgba(0, 0, 0, 0.12);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.18);
+    z-index: 2;
+  }
+
+  /* Chalk buttons */
+  .btn-chalk {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: var(--font-chalk), "Comic Sans MS", cursive;
+    font-weight: 700;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0.65rem 1.4rem;
+    border: 2px solid var(--color-chalk);
+    color: var(--color-chalk);
+    background: transparent;
+    border-radius: 13px 10px 12px 11px / 10px 12px 11px 13px;
+    transition: background 0.2s, color 0.2s, filter 0.2s;
+    cursor: pointer;
+  }
+  .btn-chalk:hover { background: var(--color-chalk); color: #10261B; }
+  .btn-chalk-gold {
+    border-color: var(--color-chalk-gold);
+    background: var(--color-chalk-gold);
+    color: #10261B;
+    box-shadow: 0 4px 0 #B9922F;
+  }
+  .btn-chalk-gold:hover { background: var(--color-chalk-gold); color: #10261B; filter: brightness(1.05); }
+
+  /* Dashed chalk divider */
+  .chalk-divider {
+    border: none;
+    border-top: 1px dashed rgba(242, 239, 228, 0.18);
   }
 
   /* ── Liquid Glass Effect ── */
@@ -360,6 +553,17 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Chalk cursor: hide the native cursor while the custom chalk tip is shown,
+   but always hand the caret back over text-entry fields. */
+html.chalk-cursor-active,
+html.chalk-cursor-active * {
+  cursor: none !important;
+}
+html.chalk-cursor-active :is(input, textarea, select, [contenteditable]),
+html.chalk-cursor-text :is(input, textarea, select, [contenteditable]) {
+  cursor: auto !important;
+}
+
 /* Custom scrollbar — sleek */
 ::-webkit-scrollbar {
   width: 6px;
@@ -378,6 +582,11 @@ html {
 @keyframes marquee {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
+}
+
+@keyframes marquee-vertical {
+  from { transform: translateY(0); }
+  to { transform: translateY(-50%); }
 }
 
 @keyframes float {

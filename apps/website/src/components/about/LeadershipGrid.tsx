@@ -3,7 +3,6 @@
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
-import { GlassCard } from "@nkps/shared/components/GlassCard";
 import { staggerContainer, fadeUp } from "@nkps/shared/lib/animations";
 import type { SectionCard } from "@nkps/shared/types";
 
@@ -38,7 +37,7 @@ export function LeadershipGrid({ cards }: LeadershipGridProps = {}) {
   return (
     <section className="section-padding">
       <div className="page-container">
-        <SectionHeading title="Our Leadership" />
+        <SectionHeading title="Our Leadership" light />
 
         <motion.div
           variants={staggerContainer}
@@ -50,8 +49,13 @@ export function LeadershipGrid({ cards }: LeadershipGridProps = {}) {
           {allLeaders.map((leader) => {
             const photo = leader.photo;
             return (
-              <motion.div key={leader.id} variants={fadeUp}>
-                <GlassCard className="p-8 text-center" hover>
+              <motion.div
+                key={leader.id}
+                variants={fadeUp}
+                whileHover={{ y: -4 }}
+                transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                className="p-8 text-center rounded-2xl bg-white shadow-[0_14px_28px_-14px_rgba(0,0,0,0.55)] hover:shadow-[0_20px_40px_-16px_rgba(0,0,0,0.7)] transition-shadow duration-500"
+              >
                   {/* Avatar */}
                   <div className="w-28 h-28 rounded-full mx-auto mb-4 overflow-hidden border-3 border-gold-500/20">
                     {photo ? (
@@ -82,7 +86,6 @@ export function LeadershipGrid({ cards }: LeadershipGridProps = {}) {
                       &ldquo;{leader.message}&rdquo;
                     </p>
                   )}
-                </GlassCard>
               </motion.div>
             );
           })}
