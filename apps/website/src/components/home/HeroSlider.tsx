@@ -75,8 +75,8 @@ function AnimatedHeading({
 
   return (
     <h1
-      className="chalk-heading text-5xl md:text-6xl lg:text-7xl xl:text-8xl leading-[1.02] text-white"
-      style={{ letterSpacing: "0" }}
+      className="font-heading font-bold text-5xl md:text-6xl lg:text-7xl xl:text-8xl leading-[1.05] text-white"
+      style={{ letterSpacing: "-0.02em" }}
     >
       {lines.map((line, lineIdx) => {
         const prevChars = lines
@@ -377,7 +377,7 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
               >
                 <div className="liquid-glass border border-white/15 px-6 py-3.5 rounded-xl gold-glow-sm">
                   <p className="text-lg md:text-xl lg:text-2xl font-light text-white/90 tracking-tight">
-                    CBSE Affiliated&ensp;&middot;&ensp;Est. 1985&ensp;&middot;&ensp;6 Campuses
+                    CBSE Affiliated&ensp;&middot;&ensp;Est. 1985&ensp;&middot;&ensp;Nursery&ndash;XII
                   </p>
                 </div>
               </FadeIn>

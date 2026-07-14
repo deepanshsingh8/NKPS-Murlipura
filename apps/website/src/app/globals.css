@@ -15,7 +15,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-inter);
   --font-heading: var(--font-playfair);
-  --font-chalk: var(--font-chalk-hand);
   --font-mono: var(--font-geist-mono);
 
   /* ── Chalkboard theme (public website) ── */
@@ -198,19 +197,14 @@
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
     background-attachment: fixed;
   }
-  /* Only large display headings use the chalk hand — keeps small UI headings
-     crisp (Playfair) so the theme reads elegant, not childish. */
-  .site-chalk :is(h1, h2) {
-    font-family: var(--font-chalk), "Segoe Script", cursive;
-    font-weight: 700;
-    letter-spacing: 0.005em;
-  }
+  /* Typography stays on the default faces (Playfair headings, Inter body) —
+     the chalkboard look comes from surface, colour and accents, not a
+     handwriting font. */
 
   /* Chalk display heading helper (use where an element isn't a heading tag) */
   .chalk-heading {
-    font-family: var(--font-chalk), "Comic Sans MS", cursive;
+    font-family: var(--font-heading);
     font-weight: 700;
-    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 0 22px rgba(242, 239, 228, 0.08);
   }
 
   /* Hand-drawn wavy gold underline under a heading */
@@ -330,9 +324,9 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    font-family: var(--font-chalk), "Comic Sans MS", cursive;
+    font-family: var(--font-heading);
     font-weight: 700;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     line-height: 1;
     padding: 0.65rem 1.4rem;
     border: 2px solid var(--color-chalk);

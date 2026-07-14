@@ -71,7 +71,7 @@ export function Navbar() {
             />
             <span
               className={cn(
-                "chalk-heading text-xl transition-colors duration-500 hidden sm:inline",
+                "font-heading text-lg font-bold transition-colors duration-500 hidden sm:inline",
                 "text-chalk"
               )}
             >
@@ -94,7 +94,7 @@ export function Navbar() {
                   key={link.href}
                   href={link.href}
                   className={cn(
-                    "group relative px-4 py-2 font-chalk text-base rounded-full transition-all duration-300",
+                    "group relative px-4 py-2 text-sm font-medium rounded-full transition-all duration-300",
                     isActive
                       ? "bg-white/20 text-white"
                       : "text-white/70 hover:text-white"
@@ -192,7 +192,7 @@ export function Navbar() {
                         href={link.href}
                         onClick={() => setMobileOpen(false)}
                         className={cn(
-                          "text-2xl sm:text-3xl font-chalk transition-colors duration-200",
+                          "text-lg sm:text-xl font-heading font-semibold transition-colors duration-200",
                           isActive
                             ? "text-gold-400"
                             : "text-white/70 hover:text-white"
