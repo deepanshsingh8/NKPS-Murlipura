@@ -3,14 +3,16 @@
 import { useEffect, useRef } from "react";
 
 /**
- * Click-and-drag chalk writing. Hold the left mouse button and drag to lay
+ * Click-and-drag chalk writing. Hold the right mouse button and drag to lay
  * down a grainy chalk stroke on the board; each bit of the stroke stays fully
  * visible for HOLD_MS, then fades over FADE_MS — like real chalk that someone
  * slowly wipes away.
  *
  * The canvas is pointer-events-none so the page stays fully usable: a plain
  * click writes nothing (needs drag movement), links/buttons keep working, and
- * text-entry fields are skipped so you can still type/select in them.
+ * text-entry fields are skipped so you can still type/select in them. The
+ * right-click context menu is suppressed outside text fields so a right-drag
+ * draws cleanly; right-click still opens the menu inside inputs/textareas.
  * Desktop-only (fine pointer). Strokes are stored in document coordinates so
  * they scroll with the page.
  */
@@ -131,7 +133,7 @@ export function ChalkWriting() {
       el instanceof Element && el.closest("input,textarea,select,[contenteditable]");
 
     const onDown = (e: MouseEvent) => {
-      if (e.button !== 0 || isText(e.target)) return;
+      if (e.button !== 2 || isText(e.target)) return;
       drawing = true;
       last = null;
       addPoint(e.clientX + window.scrollX, e.clientY + window.scrollY);
@@ -146,11 +148,17 @@ export function ChalkWriting() {
       drawing = false;
       last = null;
     };
+    // Suppress the browser context menu outside text fields so a right-drag
+    // draws cleanly; keep it inside inputs/textareas for normal editing.
+    const onContextMenu = (e: MouseEvent) => {
+      if (!isText(e.target)) e.preventDefault();
+    };
 
     window.addEventListener("mousedown", onDown);
     window.addEventListener("mousemove", onMove, { passive: true });
     window.addEventListener("mouseup", onUp);
     window.addEventListener("blur", onUp);
+    window.addEventListener("contextmenu", onContextMenu);
 
     return () => {
       window.removeEventListener("resize", size);
@@ -158,6 +166,7 @@ export function ChalkWriting() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       window.removeEventListener("blur", onUp);
+      window.removeEventListener("contextmenu", onContextMenu);
     };
   }, []);
 
