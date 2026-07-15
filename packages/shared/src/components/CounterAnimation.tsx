@@ -9,15 +9,21 @@ interface CounterAnimationProps {
   suffix?: string;
   label: string;
   light?: boolean;
+  /**
+   * When set, this string is shown verbatim instead of the count-up animation.
+   * Use for values that read as an identifier rather than a quantity — e.g. a
+   * founding year like "1985", which would otherwise roll 0 → 1985.
+   */
+  display?: string;
 }
 
-export function CounterAnimation({ end, suffix = "", label, light }: CounterAnimationProps) {
+export function CounterAnimation({ end, suffix = "", label, light, display }: CounterAnimationProps) {
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useInView(ref, { once: true, margin: "-100px" });
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    if (!isInView) return;
+    if (!isInView || display != null) return;
 
     const duration = 2000;
     const startTime = performance.now();
@@ -46,8 +52,7 @@ export function CounterAnimation({ end, suffix = "", label, light }: CounterAnim
           light ? "text-white" : "text-navy-900"
         )}
       >
-        {count}
-        {suffix}
+        {display ?? `${count}${suffix}`}
       </div>
       <div
         className={cn(

@@ -42,6 +42,8 @@ const activityIconMap: Record<string, React.ComponentType<{ className?: string }
 interface StudentLifePageProps {
   activityCards?: SectionCard[];
   eventCards?: SectionCard[];
+  sportsIndoorCards?: SectionCard[];
+  sportsOutdoorCards?: SectionCard[];
 }
 
 const sports = [
@@ -56,7 +58,16 @@ const sports = [
 export function StudentLifeContent({
   activityCards,
   eventCards,
+  sportsIndoorCards,
+  sportsOutdoorCards,
 }: StudentLifePageProps = {}) {
+  // CMS-managed Indoor/Outdoor sports (title-only cards). When an editor has
+  // added any, they replace the curated fallback list below, grouped by type.
+  const sportsGroups = [
+    { label: "Indoor", names: (sportsIndoorCards ?? []).map((c) => c.title || "").filter(Boolean) },
+    { label: "Outdoor", names: (sportsOutdoorCards ?? []).map((c) => c.title || "").filter(Boolean) },
+  ].filter((g) => g.names.length > 0);
+  const hasCmsSports = sportsGroups.length > 0;
   // Single source of truth: section_cards. Defaults are seeded as is_default
   // rows (migration 057) for both `activities` and `annual_events`.
   const activities = (activityCards ?? []).map((c, i) => ({
@@ -156,26 +167,58 @@ export function StudentLifeContent({
             </p>
           </AnimatedSection>
 
-          <motion.div
-            variants={staggerContainer}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, margin: "-60px" }}
-            className="mt-10 flex flex-wrap items-center justify-center gap-4"
-          >
-            {sports.map((sport) => (
-              <motion.div
-                key={sport.name}
-                variants={fadeUp}
-                className="group flex cursor-default items-center gap-2.5 rounded-full border border-chalk/20 bg-white/[0.04] px-6 py-3 shadow-sm transition-all duration-300 hover:border-gold-500/40 hover:bg-white/[0.06]"
-              >
-                <sport.icon className="h-4.5 w-4.5 text-chalk-dim transition-colors duration-300 group-hover:text-chalk-gold" />
-                <span className="text-sm font-semibold text-chalk">
-                  {sport.name}
-                </span>
-              </motion.div>
-            ))}
-          </motion.div>
+          {hasCmsSports ? (
+            <div className="mt-10 space-y-8">
+              {sportsGroups.map((group) => (
+                <div key={group.label}>
+                  <h3 className="mb-4 text-center font-heading text-sm font-semibold uppercase tracking-wider text-chalk-gold">
+                    {group.label}
+                  </h3>
+                  <motion.div
+                    variants={staggerContainer}
+                    initial="hidden"
+                    whileInView="visible"
+                    viewport={{ once: true, margin: "-60px" }}
+                    className="flex flex-wrap items-center justify-center gap-4"
+                  >
+                    {group.names.map((name) => (
+                      <motion.div
+                        key={name}
+                        variants={fadeUp}
+                        className="group flex cursor-default items-center gap-2.5 rounded-full border border-chalk/20 bg-white/[0.04] px-6 py-3 shadow-sm transition-all duration-300 hover:border-gold-500/40 hover:bg-white/[0.06]"
+                      >
+                        <CircleDot className="h-4.5 w-4.5 text-chalk-dim transition-colors duration-300 group-hover:text-chalk-gold" />
+                        <span className="text-sm font-semibold text-chalk">
+                          {name}
+                        </span>
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <motion.div
+              variants={staggerContainer}
+              initial="hidden"
+              whileInView="visible"
+              viewport={{ once: true, margin: "-60px" }}
+              className="mt-10 flex flex-wrap items-center justify-center gap-4"
+            >
+              {sports.map((sport) => (
+                <motion.div
+                  key={sport.name}
+                  variants={fadeUp}
+                  className="group flex cursor-default items-center gap-2.5 rounded-full border border-chalk/20 bg-white/[0.04] px-6 py-3 shadow-sm transition-all duration-300 hover:border-gold-500/40 hover:bg-white/[0.06]"
+                >
+                  <sport.icon className="h-4.5 w-4.5 text-chalk-dim transition-colors duration-300 group-hover:text-chalk-gold" />
+                  <span className="text-sm font-semibold text-chalk">
+                    {sport.name}
+                  </span>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
         </div>
       </section>
 

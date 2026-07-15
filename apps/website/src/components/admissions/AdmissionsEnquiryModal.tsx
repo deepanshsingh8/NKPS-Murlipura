@@ -6,9 +6,22 @@ import { X, Send, GraduationCap } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
+import { z } from "zod";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
-import { contactFormSchema, type ContactFormData } from "@nkps/shared/lib/validations";
+import { contactFormSchema } from "@nkps/shared/lib/validations";
+
+// The shared contact schema requires a 10+ char message, but this pop-up is a
+// low-friction lead-capture prompt — name/phone/email should be enough. Message
+// is optional here; if left blank (or too short) we synthesize a sensible one
+// on submit so the server's min-length validation still passes.
+const enquirySchema = contactFormSchema.extend({
+  message: z.string().optional(),
+});
+type EnquiryData = z.infer<typeof enquirySchema>;
+
+const DEFAULT_ENQUIRY_MESSAGE =
+  "Admissions enquiry submitted via the website. Please contact me with admission details.";
 
 /**
  * Admissions enquiry pop-up shown on the /admissions page. It opens
@@ -30,8 +43,8 @@ export function AdmissionsEnquiryModal() {
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<ContactFormData>({
-    resolver: zodResolver(contactFormSchema),
+  } = useForm<EnquiryData>({
+    resolver: zodResolver(enquirySchema),
     defaultValues: { subject: "Admissions" },
   });
 
@@ -62,12 +75,14 @@ export function AdmissionsEnquiryModal() {
     };
   }, [open, close]);
 
-  const onSubmit = async (data: ContactFormData) => {
+  const onSubmit = async (data: EnquiryData) => {
+    const typed = data.message?.trim();
+    const message = typed && typed.length >= 10 ? typed : DEFAULT_ENQUIRY_MESSAGE;
     try {
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, subject: "Admissions" }),
+        body: JSON.stringify({ ...data, subject: "Admissions", message }),
       });
 
       if (!res.ok) {
@@ -195,7 +210,7 @@ export function AdmissionsEnquiryModal() {
 
               <div className="space-y-1.5">
                 <Label htmlFor="enq-message" className="text-sm font-medium text-navy-900">
-                  Your Enquiry
+                  Your Enquiry <span className="font-normal text-gray-400">(optional)</span>
                 </Label>
                 <textarea
                   id="enq-message"
