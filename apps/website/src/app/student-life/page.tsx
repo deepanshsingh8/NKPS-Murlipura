@@ -14,10 +14,13 @@ export const metadata: Metadata = buildMetadata({
 export const revalidate = 60;
 
 export default async function StudentLifePage() {
-  const [activityCards, eventCards] = await Promise.all([
-    getSectionCards("activities"),
-    getSectionCards("annual_events"),
-  ]);
+  const [activityCards, eventCards, sportsIndoorCards, sportsOutdoorCards] =
+    await Promise.all([
+      getSectionCards("activities"),
+      getSectionCards("annual_events"),
+      getSectionCards("sports_indoor"),
+      getSectionCards("sports_outdoor"),
+    ]);
 
   return (
     <>
@@ -27,7 +30,12 @@ export default async function StudentLifePage() {
           { name: "Student Life", path: "/student-life" },
         ])}
       />
-      <StudentLifeContent activityCards={activityCards} eventCards={eventCards} />
+      <StudentLifeContent
+        activityCards={activityCards}
+        eventCards={eventCards}
+        sportsIndoorCards={sportsIndoorCards}
+        sportsOutdoorCards={sportsOutdoorCards}
+      />
     </>
   );
 }

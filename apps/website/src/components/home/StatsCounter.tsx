@@ -66,6 +66,7 @@ export function StatsCounter({ backgroundImage }: StatsCounterProps = {}) {
                     end={stat.value}
                     suffix={stat.suffix}
                     label={stat.label}
+                    display={"display" in stat ? stat.display : undefined}
                     light
                   />
                 </div>

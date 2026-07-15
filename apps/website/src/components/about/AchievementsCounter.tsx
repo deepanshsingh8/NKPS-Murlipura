@@ -17,6 +17,7 @@ export function AchievementsCounter() {
               end={stat.value}
               suffix={stat.suffix}
               label={stat.label}
+              display={"display" in stat ? stat.display : undefined}
               light
             />
           ))}

@@ -903,8 +903,9 @@ export default function AdminSiteMediaPage() {
   const visibleFields = dialogSection
     ? [...SECTION_FIELD_MAP[dialogSection].required, ...SECTION_FIELD_MAP[dialogSection].optional]
     : [];
-  // Sections where image is optional
-  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements"];
+  // Sections where image is optional. `accolades` ships imageless defaults and
+  // renders an icon fallback on the homepage, so an image must not be forced.
+  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements", "accolades"];
   const isImageRequired = !editing && !imageOptionalSections.includes(dialogSection);
 
   return (

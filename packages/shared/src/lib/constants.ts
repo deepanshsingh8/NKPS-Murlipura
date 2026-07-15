@@ -63,7 +63,9 @@ export const SCHOOL = {
     { label: "Years of Excellence", value: 40, suffix: "+" },
     { label: "Class Levels (Nursery–XII)", value: 15, suffix: "" },
     { label: "Streams (XI–XII)", value: 2, suffix: "" },
-    { label: "Educating Since", value: 1985, suffix: "" },
+    // A year is an identifier, not a quantity — `display` shows it verbatim so
+    // it doesn't count-up 0 → 1985.
+    { label: "Educating Since", value: 1985, suffix: "", display: "1985" },
   ],
   // About-page achievements band. Values below are drawn from the school's own
   // published results/awards (see _reference/scraped/murlipura-content.md §8).
@@ -73,7 +75,9 @@ export const SCHOOL = {
     { label: "Years of Legacy", value: 40, suffix: "+" },
     { label: "Perfect Scorers · 2021", value: 6, suffix: "" },
     { label: "National Gold Medallists", value: 3, suffix: "" },
-    { label: "Educating Since", value: 1985, suffix: "" },
+    // A year is an identifier, not a quantity — `display` shows it verbatim so
+    // it doesn't count-up 0 → 1985.
+    { label: "Educating Since", value: 1985, suffix: "", display: "1985" },
   ],
 } as const;
 
