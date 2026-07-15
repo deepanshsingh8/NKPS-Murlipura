@@ -44,3 +44,8 @@ yarn-error.log*
 next-env.d.ts
 .claude/
 
+
+# Local scrape source for the one-time live-content seed — images live in
+# Supabase storage (gallery bucket); the PII inventory stays local, not in git.
+_reference/scraped/assets/live/
+_reference/scraped/live-inventory.md
