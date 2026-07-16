@@ -10,6 +10,7 @@ import { createServerClient } from "@supabase/ssr";
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isLogin = pathname === "/login";
+  const isChangePassword = pathname === "/change-password";
 
   let supabaseResponse = NextResponse.next({ request });
 
@@ -44,30 +45,52 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && isLogin) {
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, must_change_password")
+      .eq("id", user.id)
+      .single();
+    const mustChangePassword = profile?.must_change_password ?? false;
+
+    // Forced password change: a user still on a temporary password must set a
+    // new one before using the CMS. Without this gate, verifyAdminOrEditor
+    // fails closed on every admin API and the content pages render as
+    // misleadingly "empty". Mirrors the ERP flow (@nkps/shared updateSession).
+    // /login stays reachable so the user can always sign out.
+    if (mustChangePassword && !isChangePassword && !isLogin) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/change-password";
+      return NextResponse.redirect(url);
+    }
+
+    // Password already set — don't let anyone linger on the change-password page.
+    if (!mustChangePassword && isChangePassword) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
+
     // Bounce to dashboard only if the caller can actually use the CMS:
     // admin/staff always; teachers only if they hold any editor capability.
     // Students/parents stay on the login page so they can sign out and re-enter
     // through the correct app.
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
-    let allowed = profile?.role === "admin" || profile?.role === "staff";
-    if (!allowed && profile?.role === "teacher") {
-      const { data: perm } = await supabase
-        .from("editor_permissions")
-        .select("feature_key")
-        .eq("editor_id", user.id)
-        .limit(1)
-        .maybeSingle();
-      allowed = !!perm;
-    }
-    if (allowed) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/";
-      return NextResponse.redirect(url);
+    if (isLogin) {
+      let allowed = profile?.role === "admin" || profile?.role === "staff";
+      if (!allowed && profile?.role === "teacher") {
+        const { data: perm } = await supabase
+          .from("editor_permissions")
+          .select("feature_key")
+          .eq("editor_id", user.id)
+          .limit(1)
+          .maybeSingle();
+        allowed = !!perm;
+      }
+      if (allowed) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/";
+        return NextResponse.redirect(url);
+      }
     }
   }
 
