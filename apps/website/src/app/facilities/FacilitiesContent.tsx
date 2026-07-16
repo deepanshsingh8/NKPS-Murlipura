@@ -32,6 +32,15 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   Bus,
 };
 
+// On-brand gradient treatments for cards that have no uploaded photo yet.
+// Cycled by card index so adjacent cards never look identical.
+const graphicGradients = [
+  "from-navy-900 via-navy-800 to-blue-700",
+  "from-blue-800 via-navy-800 to-navy-900",
+  "from-navy-800 via-blue-700 to-navy-900",
+  "from-blue-700 via-navy-800 to-navy-950",
+];
+
 const highlights = [
   {
     title: "CCTV Surveillance",
@@ -72,7 +81,9 @@ export function FacilitiesContent({ heroImage, cards }: FacilitiesContentProps) 
     title: c.title || "",
     description: c.description || "",
     icon: c.icon || "Monitor",
-    image: c.image_url || "/images/news/n1.jpg",
+    // Keep null when no photo is set so we render the branded graphic instead
+    // of falling every card back to the same placeholder image.
+    image: c.image_url || null,
   }));
   return (
     <PageTransition>
@@ -138,13 +149,30 @@ export function FacilitiesContent({ heroImage, cards }: FacilitiesContentProps) 
                   >
                     {/* Image */}
                     <div className="relative h-56 w-full shrink-0 overflow-hidden sm:h-auto sm:w-2/5">
-                      <Image
-                        src={image}
-                        alt={facility.title}
-                        fill
-                        className="object-cover transition-transform duration-700 group-hover:scale-110"
-                      />
-                      <div className="absolute inset-0 bg-navy-950/20 transition-opacity duration-500 group-hover:opacity-0" />
+                      {image ? (
+                        <>
+                          <Image
+                            src={image}
+                            alt={facility.title}
+                            fill
+                            className="object-cover transition-transform duration-700 group-hover:scale-110"
+                          />
+                          <div className="absolute inset-0 bg-navy-950/20 transition-opacity duration-500 group-hover:opacity-0" />
+                        </>
+                      ) : (
+                        /* Branded graphic fallback — used until a photo is uploaded */
+                        <div
+                          className={cn(
+                            "absolute inset-0 bg-gradient-to-br",
+                            graphicGradients[index % graphicGradients.length]
+                          )}
+                        >
+                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(212,168,67,0.18),transparent_65%)]" />
+                          {Icon && (
+                            <Icon className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 text-white/10 transition-transform duration-700 group-hover:scale-110" />
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Content */}

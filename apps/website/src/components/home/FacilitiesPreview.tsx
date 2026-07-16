@@ -19,6 +19,15 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   BookOpen,
 };
 
+// On-brand gradient treatments for cards that have no uploaded photo yet.
+// Cycled by card index so adjacent cards never look identical.
+const graphicGradients = [
+  "from-navy-900 via-navy-800 to-blue-700",
+  "from-blue-800 via-navy-800 to-navy-900",
+  "from-navy-800 via-blue-700 to-navy-900",
+  "from-blue-700 via-navy-800 to-navy-950",
+];
+
 export function FacilitiesPreview({ cards }: FacilitiesPreviewProps = {}) {
   // Single source of truth: section_cards. Defaults are seeded as is_default
   // rows (migration 054).
@@ -27,7 +36,9 @@ export function FacilitiesPreview({ cards }: FacilitiesPreviewProps = {}) {
     title: c.title || "",
     description: c.description || "",
     icon: c.icon || "Monitor",
-    image: c.image_url || "/images/news/n1.jpg",
+    // Keep null when no photo is set so we render the branded graphic instead
+    // of falling every card back to the same placeholder image.
+    image: c.image_url || null,
   }));
 
   if (preview.length === 0) return null;
@@ -49,7 +60,7 @@ export function FacilitiesPreview({ cards }: FacilitiesPreviewProps = {}) {
           viewport={{ once: true, margin: "-100px" }}
           className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mt-12"
         >
-          {preview.map((facility) => {
+          {preview.map((facility, index) => {
             const Icon = iconMap[facility.icon] || Monitor;
             return (
               <motion.div
@@ -61,14 +72,29 @@ export function FacilitiesPreview({ cards }: FacilitiesPreviewProps = {}) {
                   aria-label={`Learn more about ${facility.title}`}
                   className="group relative block aspect-[3/4] rounded-3xl overflow-hidden shadow-lg shadow-black/10 hover:shadow-2xl hover:shadow-black/20 transition-shadow duration-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-500 focus-visible:ring-offset-2"
                 >
-                  {/* Background image */}
-                  <Image
-                    src={facility.image}
-                    alt={`${facility.title} at NK Public School, Murlipura — Arya Nagar, Jaipur`}
-                    fill
-                    sizes="(min-width: 1024px) 25vw, 50vw"
-                    className="object-cover transition-transform duration-[800ms] ease-out group-hover:scale-[1.12]"
-                  />
+                  {facility.image ? (
+                    /* Background image */
+                    <Image
+                      src={facility.image}
+                      alt={`${facility.title} at NK Public School, Murlipura — Arya Nagar, Jaipur`}
+                      fill
+                      sizes="(min-width: 1024px) 25vw, 50vw"
+                      className="object-cover transition-transform duration-[800ms] ease-out group-hover:scale-[1.12]"
+                    />
+                  ) : (
+                    /* Branded graphic fallback — used until a photo is uploaded */
+                    <div
+                      className={`absolute inset-0 bg-gradient-to-br ${graphicGradients[index % graphicGradients.length]}`}
+                    >
+                      {/* Soft radial gold glow */}
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(212,168,67,0.18),transparent_65%)]" />
+                      {/* Large watermark icon */}
+                      <Icon
+                        className="absolute left-1/2 top-[38%] -translate-x-1/2 -translate-y-1/2 w-24 h-24 text-white/10 transition-transform duration-[800ms] ease-out group-hover:scale-110"
+                        aria-hidden
+                      />
+                    </div>
+                  )}
 
                   {/* Gradient overlay — richer transition */}
                   <div className="absolute inset-0 bg-gradient-to-t from-navy-950/85 via-navy-950/20 to-transparent transition-all duration-700 group-hover:from-navy-950/95 group-hover:via-navy-950/40" />
