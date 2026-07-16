@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion, useTransform } from "framer-motion";
 import { ArrowRight, BookOpen, CalendarDays, GraduationCap, Building2 } from "lucide-react";
 import Link from "next/link";
@@ -82,30 +82,47 @@ function AnimatedHeading({
         const prevChars = lines
           .slice(0, lineIdx)
           .reduce((sum, l) => sum + l.length, 0);
+        const isGoldLine = lineIdx === lines.length - 1;
+        // Group characters into whole words. Each word is an inline-block that
+        // never breaks internally (whitespace-nowrap); the real spaces between
+        // words are the only wrap opportunities \u2014 so the heading breaks between
+        // words, never mid-word.
+        const words = line.split(" ");
+        let charOffset = 0;
         return (
           <span key={lineIdx} className="block">
-            {line.split("").map((char, charIdx) => {
-              const globalIdx = prevChars + charIdx;
-              const isGoldLine = lineIdx === lines.length - 1;
+            {words.map((word, wordIdx) => {
+              const wordStart = charOffset;
+              charOffset += word.length + 1; // +1 for the removed space
               return (
-                <span
-                  key={`${slideKey}-${lineIdx}-${charIdx}`}
-                  className={cn(
-                    "inline-block transition-all",
-                    isGoldLine ? "text-gold-400" : "text-white"
-                  )}
-                  style={{
-                    opacity: animate ? 1 : 0,
-                    transform: animate
-                      ? "translateX(0)"
-                      : "translateX(-18px)",
-                    transitionDuration: "500ms",
-                    transitionDelay: `${200 + globalIdx * CHAR_DELAY}ms`,
-                    transitionTimingFunction: "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-                  }}
-                >
-                  {char === " " ? "\u00A0" : char}
-                </span>
+                <React.Fragment key={wordIdx}>
+                  <span className="inline-block whitespace-nowrap">
+                    {word.split("").map((char, charIdx) => {
+                      const globalIdx = prevChars + wordStart + charIdx;
+                      return (
+                        <span
+                          key={`${slideKey}-${lineIdx}-${wordStart}-${charIdx}`}
+                          className={cn(
+                            "inline-block transition-all",
+                            isGoldLine ? "text-gold-400" : "text-white"
+                          )}
+                          style={{
+                            opacity: animate ? 1 : 0,
+                            transform: animate
+                              ? "translateX(0)"
+                              : "translateX(-18px)",
+                            transitionDuration: "500ms",
+                            transitionDelay: `${200 + globalIdx * CHAR_DELAY}ms`,
+                            transitionTimingFunction: "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                          }}
+                        >
+                          {char}
+                        </span>
+                      );
+                    })}
+                  </span>
+                  {wordIdx < words.length - 1 ? " " : null}
+                </React.Fragment>
               );
             })}
           </span>
