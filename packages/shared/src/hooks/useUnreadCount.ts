@@ -7,20 +7,25 @@ type UseUnreadCountOptions = {
   contact?: boolean;
   registrations?: boolean;
   feeChangeRequests?: boolean;
+  transportChanges?: boolean;
 };
 
 export function useUnreadCount({
   contact = false,
   registrations = false,
   feeChangeRequests = false,
+  transportChanges = false,
 }: UseUnreadCountOptions = {}) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingRegistrationCount, setPendingRegistrationCount] = useState(0);
   const [pendingFeeChangeRequestCount, setPendingFeeChangeRequestCount] =
     useState(0);
+  const [pendingTransportChangeCount, setPendingTransportChangeCount] =
+    useState(0);
 
   useEffect(() => {
-    if (!contact && !registrations && !feeChangeRequests) return;
+    if (!contact && !registrations && !feeChangeRequests && !transportChanges)
+      return;
     let mounted = true;
 
     const fetchCounts = async () => {
@@ -62,6 +67,19 @@ export function useUnreadCount({
           );
         }
 
+        if (transportChanges) {
+          tasks.push(
+            adminFetch("/api/transport/changes/pending-count").then(
+              async (res) => {
+                if (mounted && res.ok) {
+                  const data = await res.json();
+                  setPendingTransportChangeCount(data.count ?? 0);
+                }
+              }
+            )
+          );
+        }
+
         await Promise.all(tasks);
       } catch {
         // Silently fail — badges just won't show
@@ -75,11 +93,12 @@ export function useUnreadCount({
       mounted = false;
       clearInterval(interval);
     };
-  }, [contact, registrations, feeChangeRequests]);
+  }, [contact, registrations, feeChangeRequests, transportChanges]);
 
   return {
     unreadCount,
     pendingRegistrationCount,
     pendingFeeChangeRequestCount,
+    pendingTransportChangeCount,
   };
 }

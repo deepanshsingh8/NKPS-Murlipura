@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { createPortalUser } from "@nkps/shared/lib/create-portal-user";
-import { mirrorStaffToTeacher } from "@/lib/staff-teacher-sync";
+import { mirrorStaffToTeacher, promoteStaffToTeacher } from "@/lib/staff-teacher-sync";
+import { staffPortalRole } from "@nkps/shared/lib/staff-roles";
 import { staffCreateSchema, staffUpdateSchema } from "@nkps/shared/lib/validations";
 import { extractStoragePath } from "@nkps/shared/lib/storage-paths";
 
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
       date_of_birth,
       address,
       qualifications,
+      license_number,
     } = parsed.data;
 
     const { data, error: insertError } = await admin
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
         date_of_birth: date_of_birth || null,
         address: address || null,
         qualifications: qualifications || null,
+        license_number: license_number || null,
       })
       .select()
       .single();
@@ -63,15 +66,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const portalRole = staffPortalRole(category);
+
+    // Teaching staff are ERP teachers regardless of whether they ever get a
+    // login, so create (or reuse) their linked teachers record on add — that's
+    // what makes them assignable to classes/timetable/attendance. This is
+    // decoupled from the email/login step below so an emailless teacher still
+    // becomes a usable teacher record without needing the manual convert action.
+    let teacherId: string | undefined;
+    if (portalRole === "teacher") {
+      const promo = await promoteStaffToTeacher(admin, data.id);
+      if (!("error" in promo)) teacherId = promo.teacher_id;
+    }
+
+    // Auto-provision a login only when there's an email, with the role their
+    // category maps to: teaching → 'teacher' (linked to the record above),
+    // office → 'staff', drivers/peons → no login. See lib/staff-roles.
     let userCreated = false;
     if (email?.trim()) {
-      const result = await createPortalUser({
-        email: email.trim(),
-        fullName: name.trim(),
-        role: "teacher",
-        phone: phone || null,
-      });
-      userCreated = result.success;
+      if (portalRole === "teacher" && teacherId) {
+        const result = await createPortalUser({
+          email: email.trim(),
+          fullName: name.trim(),
+          role: "teacher",
+          phone: phone || null,
+          teacherId,
+        });
+        userCreated = result.success;
+      } else if (portalRole === "staff") {
+        const result = await createPortalUser({
+          email: email.trim(),
+          fullName: name.trim(),
+          role: "staff",
+          phone: phone || null,
+        });
+        userCreated = result.success;
+      }
     }
 
     return NextResponse.json({ success: true, data, userCreated });

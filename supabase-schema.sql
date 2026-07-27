@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS transfer_certificates (
   academic_year text NOT NULL,
   upload_date date DEFAULT current_date,
   created_at timestamptz DEFAULT now(),
-  student_id uuid, -- FK to students(id) added after `students` table is created (see section 2d)
+  student_id uuid REFERENCES students(id) ON DELETE SET NULL,
   tc_number text,
   issue_date date,
   last_attended_date date,
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS site_media (
 -- Section Cards
 CREATE TABLE IF NOT EXISTS section_cards (
   id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
-  section text NOT NULL CHECK (section IN ('hero_slider', 'testimonials', 'latest_updates', 'facilities_preview', 'leadership', 'legacy_timeline', 'why_choose_us', 'activities', 'annual_events', 'campus_facilities', 'accolades', 'student_achievements', 'alumni', 'sports_indoor', 'sports_outdoor')),
+  section text NOT NULL CHECK (section IN ('hero_slider', 'testimonials', 'facilities_preview', 'leadership', 'legacy_timeline', 'why_choose_us', 'activities', 'annual_events', 'campus_facilities', 'accolades', 'alumni', 'student_achievements', 'sports_indoor', 'sports_outdoor')),
   title text,
   subtitle text,
   description text,
@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS staff_members (
   date_of_birth date,
   address text,
   qualifications text,
+  license_number text,
   is_active boolean DEFAULT true,
   sort_order integer DEFAULT 0,
   created_at timestamptz DEFAULT now(),
@@ -170,31 +171,6 @@ CREATE TABLE IF NOT EXISTS disclosure_board_results (
   sort_order integer DEFAULT 0,
   updated_at timestamptz DEFAULT now(),
   UNIQUE(exam_class, academic_year)
-);
-
--- Prospectus Documents (CMS-managed list of downloadable prospectus PDFs)
-CREATE TABLE IF NOT EXISTS prospectus_documents (
-  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
-  title text NOT NULL,
-  file_url text NOT NULL,
-  file_name text,
-  sort_order integer DEFAULT 0,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-
--- Holiday Homework (CMS-managed, per-class, per-session downloadable PDFs)
-CREATE TABLE IF NOT EXISTS holiday_homework (
-  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
-  title text NOT NULL,
-  class_grade text NOT NULL,
-  session text NOT NULL,
-  academic_year text NOT NULL,
-  file_url text NOT NULL,
-  file_name text,
-  sort_order integer DEFAULT 0,
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
 );
 
 -- Gallery Events (event-based photo categorization)
@@ -289,15 +265,6 @@ CREATE TABLE students (
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
-
--- Back-fill the transfer_certificates.student_id FK now that `students` exists.
--- (The column itself is declared in section 1 above without the FK to avoid a
--- forward reference when running the schema top-to-bottom on a fresh DB.)
-ALTER TABLE transfer_certificates
-  DROP CONSTRAINT IF EXISTS transfer_certificates_student_id_fkey;
-ALTER TABLE transfer_certificates
-  ADD CONSTRAINT transfer_certificates_student_id_fkey
-  FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE SET NULL;
 
 -- 2e. Parents
 CREATE TABLE parents (
@@ -400,8 +367,30 @@ CREATE INDEX IF NOT EXISTS idx_student_subjects_student ON student_subjects(stud
 CREATE INDEX IF NOT EXISTS idx_student_subjects_class_subject ON student_subjects(class_subject_id);
 
 ALTER TABLE student_subjects ENABLE ROW LEVEL SECURITY;
--- student_subjects policies are defined after the helper functions in section 4
--- (they reference public.get_user_role(), which doesn't exist yet at this point).
+
+CREATE POLICY "Public can read student_subjects"
+  ON student_subjects FOR SELECT USING (true);
+
+CREATE POLICY "Admins can insert student_subjects"
+  ON student_subjects FOR INSERT
+  WITH CHECK (public.get_user_role() = 'admin');
+
+CREATE POLICY "Admins can update student_subjects"
+  ON student_subjects FOR UPDATE
+  USING (public.get_user_role() = 'admin');
+
+CREATE POLICY "Admins can delete student_subjects"
+  ON student_subjects FOR DELETE
+  USING (public.get_user_role() = 'admin');
+
+CREATE POLICY "Teachers can read student_subjects for their classes"
+  ON student_subjects FOR SELECT
+  USING (
+    public.get_user_role() = 'teacher'
+    AND class_subject_id IN (
+      SELECT id FROM class_subjects WHERE teacher_id = auth.uid()
+    )
+  );
 
 -- 2l. Student Parents (many-to-many)
 CREATE TABLE student_parents (
@@ -626,10 +615,12 @@ CREATE TABLE fee_change_requests (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   target_table text NOT NULL
     CHECK (target_table IN ('fee_payments')),
-  target_id uuid NOT NULL,
+  -- Migration 070: nullable for action='insert' (no target row yet).
+  target_id uuid,
   action text NOT NULL
-    CHECK (action IN ('update', 'delete')),
-  current_snapshot jsonb NOT NULL,
+    CHECK (action IN ('insert', 'update', 'delete')),
+  -- Migration 070: nullable for action='insert' (no prior row to snapshot).
+  current_snapshot jsonb,
   proposed_changes jsonb NOT NULL DEFAULT '{}'::jsonb,
   reason text NOT NULL
     CHECK (char_length(reason) >= 5),
@@ -644,6 +635,15 @@ CREATE TABLE fee_change_requests (
     (status = 'pending' AND reviewed_by IS NULL AND reviewed_at IS NULL)
     OR (status IN ('approved', 'rejected', 'cancelled')
         AND reviewed_at IS NOT NULL)
+  ),
+  -- Migration 070: an INSERT has no target/snapshot; update/delete require both.
+  CONSTRAINT chk_change_request_target CHECK (
+    (action = 'insert'
+      AND target_id IS NULL
+      AND current_snapshot IS NULL)
+    OR (action IN ('update', 'delete')
+      AND target_id IS NOT NULL
+      AND current_snapshot IS NOT NULL)
   )
 );
 
@@ -653,10 +653,12 @@ CREATE TABLE fee_change_requests (
 CREATE TABLE fee_change_audit_log (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   target_table text NOT NULL,
-  target_id uuid NOT NULL,
+  -- Migration 070: nullable for an applied INSERT (new id is in after_snapshot).
+  target_id uuid,
   action text NOT NULL
-    CHECK (action IN ('update', 'delete')),
-  before_snapshot jsonb NOT NULL,
+    CHECK (action IN ('insert', 'update', 'delete')),
+  -- Migration 070: nullable for an applied INSERT (no prior row).
+  before_snapshot jsonb,
   after_snapshot jsonb,
   performed_by uuid NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
   performed_at timestamptz NOT NULL DEFAULT now(),
@@ -681,6 +683,11 @@ CREATE INDEX idx_students_alumni ON students(is_alumni) WHERE is_alumni = true;
 -- Teachers
 CREATE INDEX idx_teachers_employee_id ON teachers(employee_id);
 CREATE INDEX idx_teachers_is_active ON teachers(is_active);
+-- One teacher row per staff member (migration 083); guards promoteStaffToTeacher
+-- against concurrent double-insert.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_staff_member_id_unique
+  ON teachers(staff_member_id)
+  WHERE staff_member_id IS NOT NULL;
 
 -- Parents
 CREATE INDEX idx_parents_email ON parents(email);
@@ -691,9 +698,11 @@ CREATE INDEX idx_student_parents_student_id ON student_parents(student_id);
 CREATE INDEX idx_student_parents_parent_id ON student_parents(parent_id);
 
 -- Profiles
-CREATE INDEX idx_profiles_teacher_id ON profiles(teacher_id) WHERE teacher_id IS NOT NULL;
-CREATE INDEX idx_profiles_student_id ON profiles(student_id) WHERE student_id IS NOT NULL;
-CREATE INDEX idx_profiles_parent_id ON profiles(parent_id) WHERE parent_id IS NOT NULL;
+-- UNIQUE partial indexes (migration 068): enforce 1:1 between an auth account
+-- and a domain record — one student/parent/teacher cannot be claimed twice.
+CREATE UNIQUE INDEX idx_profiles_teacher_id ON profiles(teacher_id) WHERE teacher_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_profiles_student_id ON profiles(student_id) WHERE student_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_profiles_parent_id ON profiles(parent_id) WHERE parent_id IS NOT NULL;
 CREATE INDEX idx_profiles_role ON profiles(role);
 
 -- Classes
@@ -747,11 +756,20 @@ CREATE INDEX idx_stream_subjects_subject_id ON stream_subjects(subject_id);
 -- Timetable
 CREATE INDEX idx_timetable_class_day ON timetable_periods(class_id, day_of_week);
 CREATE INDEX idx_timetable_teacher_id ON timetable_periods(teacher_id);
--- A teacher cannot be in two places at the same slot. Partial because
--- teacher_id is nullable (e.g. break/free period rows).
-CREATE UNIQUE INDEX IF NOT EXISTS idx_timetable_teacher_slot_unique
-  ON timetable_periods (teacher_id, day_of_week, period_number)
-  WHERE teacher_id IS NOT NULL;
+-- Migration 071: a teacher cannot be in two periods that OVERLAP IN TIME on the
+-- same weekday. Classes are staggered, so this is a time-range exclusion rather
+-- than a (teacher, day, period_number) unique index. Breaks/free rows exempt.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+-- start_time < end_time excludes degenerate rows: tsrange() errors when the
+-- lower bound exceeds the upper, so a bad row (end <= start) would otherwise
+-- break the constraint build. Such rows can't overlap anything anyway.
+ALTER TABLE timetable_periods
+  ADD CONSTRAINT timetable_teacher_no_overlap
+  EXCLUDE USING gist (
+    teacher_id WITH =,
+    day_of_week WITH =,
+    tsrange('2000-01-01'::date + start_time, '2000-01-01'::date + end_time) WITH &&
+  ) WHERE (teacher_id IS NOT NULL AND is_break IS NOT TRUE AND start_time < end_time);
 
 -- Calendar Events
 CREATE INDEX idx_calendar_events_dates ON calendar_events(start_date, end_date);
@@ -821,43 +839,13 @@ RETURNS SETOF UUID AS $$
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
 -- Per-feature editor capability check (used by RLS policies that need feature-scoped gating).
--- LANGUAGE plpgsql so the reference to `editor_permissions` is resolved at call time —
--- that table is created later in the schema (see migration-009 / editor_permissions section).
 CREATE OR REPLACE FUNCTION public.has_editor_feature(p_feature text)
 RETURNS BOOLEAN AS $$
-BEGIN
-  RETURN EXISTS (
+  SELECT EXISTS (
     SELECT 1 FROM public.editor_permissions
     WHERE editor_id = auth.uid() AND feature_key = p_feature
   );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
-
--- student_subjects RLS policies (deferred from section 2k — they reference
--- public.get_user_role(), which is defined above in this section).
-CREATE POLICY "Public can read student_subjects"
-  ON student_subjects FOR SELECT USING (true);
-
-CREATE POLICY "Admins can insert student_subjects"
-  ON student_subjects FOR INSERT
-  WITH CHECK (public.get_user_role() = 'admin');
-
-CREATE POLICY "Admins can update student_subjects"
-  ON student_subjects FOR UPDATE
-  USING (public.get_user_role() = 'admin');
-
-CREATE POLICY "Admins can delete student_subjects"
-  ON student_subjects FOR DELETE
-  USING (public.get_user_role() = 'admin');
-
-CREATE POLICY "Teachers can read student_subjects for their classes"
-  ON student_subjects FOR SELECT
-  USING (
-    public.get_user_role() = 'teacher'
-    AND class_subject_id IN (
-      SELECT id FROM class_subjects WHERE teacher_id = auth.uid()
-    )
-  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
 
 -- Auto-create profile on user signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
@@ -867,7 +855,10 @@ BEGIN
   VALUES (
     new.id, new.email,
     COALESCE(new.raw_user_meta_data->>'full_name', new.email),
-    COALESCE(new.raw_user_meta_data->>'role', 'student')
+    -- Role is NEVER taken from client metadata (would allow self-registration
+    -- as admin if public signup is enabled). Admin-creation paths set the real
+    -- role afterward via the service-role client. (migration 061)
+    'student'
   );
   RETURN new;
 END;
@@ -876,6 +867,63 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- Guard: a regular authenticated user (parent/student/teacher editing their own
+-- profile row) must not change privileged columns. Service role and admins
+-- bypass. Prevents the self-promote-to-admin escalation. (migration 061)
+CREATE OR REPLACE FUNCTION public.guard_profile_privileged_cols()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF auth.role() = 'service_role' OR public.get_user_role() = 'admin' THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.role                  IS DISTINCT FROM OLD.role
+     OR NEW.is_active             IS DISTINCT FROM OLD.is_active
+     OR NEW.must_change_password  IS DISTINCT FROM OLD.must_change_password
+     OR NEW.teacher_id            IS DISTINCT FROM OLD.teacher_id
+     OR NEW.student_id            IS DISTINCT FROM OLD.student_id
+     OR NEW.parent_id             IS DISTINCT FROM OLD.parent_id THEN
+    RAISE EXCEPTION 'Not allowed to modify privileged profile columns';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Enforce role ↔ link consistency (migration 068). Composes with the guard
+-- above: that one decides WHO may change role/link columns; this one decides
+-- WHAT combinations are valid once changed. Applies to everyone incl. the
+-- service role — a server path that sets role='parent' without a parent_id
+-- should fail loudly. role='student' may keep a NULL student_id (self-claim).
+CREATE OR REPLACE FUNCTION public.enforce_profile_role_link()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'UPDATE'
+     AND NEW.role       IS NOT DISTINCT FROM OLD.role
+     AND NEW.teacher_id IS NOT DISTINCT FROM OLD.teacher_id
+     AND NEW.student_id IS NOT DISTINCT FROM OLD.student_id
+     AND NEW.parent_id  IS NOT DISTINCT FROM OLD.parent_id THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.role = 'teacher' AND NEW.teacher_id IS NULL THEN
+    RAISE EXCEPTION 'profile %: role=teacher requires teacher_id (use the linking service)', NEW.id;
+  END IF;
+  IF NEW.role = 'parent' AND NEW.parent_id IS NULL THEN
+    RAISE EXCEPTION 'profile %: role=parent requires parent_id (use the linking service)', NEW.id;
+  END IF;
+  IF NEW.student_id IS NOT NULL AND NEW.role <> 'student' THEN
+    RAISE EXCEPTION 'profile %: student_id set but role=% (must be student)', NEW.id, NEW.role;
+  END IF;
+  IF NEW.parent_id IS NOT NULL AND NEW.role <> 'parent' THEN
+    RAISE EXCEPTION 'profile %: parent_id set but role=% (must be parent)', NEW.id, NEW.role;
+  END IF;
+  IF NEW.teacher_id IS NOT NULL AND NEW.role NOT IN ('teacher', 'admin') THEN
+    RAISE EXCEPTION 'profile %: teacher_id set but role=% (must be teacher or admin)', NEW.id, NEW.role;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 -- Auto-update updated_at timestamps
 CREATE OR REPLACE FUNCTION public.set_updated_at()
@@ -1112,16 +1160,14 @@ ALTER TABLE payment_orders
   ADD CONSTRAINT payment_orders_amount_positive CHECK (amount > 0);
 
 -- Audit / filter indexes (migration 031).
--- Only indexes on tables that exist at this point in the schema. Indexes on
--- tables created later (class_test_results, non_scholastic_assessments,
--- student_remarks, class_tests) are deferred to a guarded DO block below.
 CREATE INDEX IF NOT EXISTS idx_results_entered_by ON results(entered_by);
+CREATE INDEX IF NOT EXISTS idx_class_test_results_entered_by ON class_test_results(entered_by);
+CREATE INDEX IF NOT EXISTS idx_non_scholastic_assessments_entered_by ON non_scholastic_assessments(entered_by);
+CREATE INDEX IF NOT EXISTS idx_student_remarks_author_id ON student_remarks(author_id);
+CREATE INDEX IF NOT EXISTS idx_class_tests_created_by ON class_tests(created_by);
 CREATE INDEX IF NOT EXISTS idx_results_is_published ON results(is_published) WHERE is_published = true;
+CREATE INDEX IF NOT EXISTS idx_class_tests_is_published ON class_tests(is_published) WHERE is_published = true;
 CREATE INDEX IF NOT EXISTS idx_payment_orders_expires_at ON payment_orders(expires_at);
-
--- (Indexes on tables defined later in the schema —
--- class_test_results, non_scholastic_assessments, student_remarks, class_tests —
--- are created at the end of the file, after those tables exist.)
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -1131,21 +1177,31 @@ CREATE INDEX IF NOT EXISTS idx_payment_orders_expires_at ON payment_orders(expir
 -- Gallery Images: public read, authenticated write
 ALTER TABLE gallery_images ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public can view gallery images"
+-- Public SELECT limited to non-private images (migration 060): standalone
+-- images, or images whose linked gallery_event is public. Admin/editor views
+-- use the service-role client and bypass RLS.
+CREATE POLICY "Public can view public gallery images"
   ON gallery_images FOR SELECT
-  USING (true);
+  USING (
+    gallery_event_id IS NULL
+    OR EXISTS (
+      SELECT 1 FROM gallery_events e
+      WHERE e.id = gallery_images.gallery_event_id AND e.is_public = true
+    )
+  );
 
-CREATE POLICY "Authenticated users can insert gallery images"
-  ON gallery_images FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert gallery images"
+  ON gallery_images FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can update gallery images"
-  ON gallery_images FOR UPDATE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update gallery images"
+  ON gallery_images FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete gallery images"
-  ON gallery_images FOR DELETE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete gallery images"
+  ON gallery_images FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Transfer Certificates: authenticated-only reads, server-mediated public
 -- lookup. Public anonymous SELECTs return zero rows. Public users find
@@ -1157,24 +1213,25 @@ CREATE POLICY "Authenticated users can view transfer certificates"
   ON transfer_certificates FOR SELECT
   USING (auth.role() = 'authenticated');
 
-CREATE POLICY "Authenticated users can insert transfer certificates"
-  ON transfer_certificates FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert transfer certificates"
+  ON transfer_certificates FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete transfer certificates"
-  ON transfer_certificates FOR DELETE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete transfer certificates"
+  ON transfer_certificates FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Contact Submissions: authenticated read/write (submitted via service role key)
 ALTER TABLE contact_submissions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Authenticated users can view contact submissions"
-  ON contact_submissions FOR SELECT
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can view contact submissions"
+  ON contact_submissions FOR SELECT TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can update contact submissions"
-  ON contact_submissions FOR UPDATE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update contact submissions"
+  ON contact_submissions FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
 CREATE POLICY "Service role can insert contact submissions"
   ON contact_submissions FOR INSERT
@@ -1187,13 +1244,14 @@ CREATE POLICY "Public can read site_media"
   ON site_media FOR SELECT
   USING (true);
 
-CREATE POLICY "Authenticated users can update site_media"
-  ON site_media FOR UPDATE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update site_media"
+  ON site_media FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can insert site_media"
-  ON site_media FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert site_media"
+  ON site_media FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
 -- Section Cards
 ALTER TABLE section_cards ENABLE ROW LEVEL SECURITY;
@@ -1202,17 +1260,18 @@ CREATE POLICY "Public can read section_cards"
   ON section_cards FOR SELECT
   USING (true);
 
-CREATE POLICY "Authenticated users can insert section_cards"
-  ON section_cards FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert section_cards"
+  ON section_cards FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can update section_cards"
-  ON section_cards FOR UPDATE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update section_cards"
+  ON section_cards FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete section_cards"
-  ON section_cards FOR DELETE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete section_cards"
+  ON section_cards FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Staff Members
 ALTER TABLE staff_members ENABLE ROW LEVEL SECURITY;
@@ -1221,17 +1280,18 @@ CREATE POLICY "Public can view staff members"
   ON staff_members FOR SELECT
   USING (true);
 
-CREATE POLICY "Authenticated users can insert staff members"
-  ON staff_members FOR INSERT
-  WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert staff members"
+  ON staff_members FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can update staff members"
-  ON staff_members FOR UPDATE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update staff members"
+  ON staff_members FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete staff members"
-  ON staff_members FOR DELETE
-  USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete staff members"
+  ON staff_members FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Disclosure Items
 ALTER TABLE disclosure_items ENABLE ROW LEVEL SECURITY;
@@ -1239,14 +1299,18 @@ ALTER TABLE disclosure_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read disclosure_items"
   ON disclosure_items FOR SELECT USING (true);
 
-CREATE POLICY "Authenticated users can update disclosure_items"
-  ON disclosure_items FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update disclosure_items"
+  ON disclosure_items FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can insert disclosure_items"
-  ON disclosure_items FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert disclosure_items"
+  ON disclosure_items FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete disclosure_items"
-  ON disclosure_items FOR DELETE USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete disclosure_items"
+  ON disclosure_items FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Disclosure Documents
 ALTER TABLE disclosure_documents ENABLE ROW LEVEL SECURITY;
@@ -1254,42 +1318,18 @@ ALTER TABLE disclosure_documents ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read disclosure_documents"
   ON disclosure_documents FOR SELECT USING (true);
 
-CREATE POLICY "Authenticated users can update disclosure_documents"
-  ON disclosure_documents FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update disclosure_documents"
+  ON disclosure_documents FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can insert disclosure_documents"
-  ON disclosure_documents FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert disclosure_documents"
+  ON disclosure_documents FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete disclosure_documents"
-  ON disclosure_documents FOR DELETE USING (auth.role() = 'authenticated');
-
-ALTER TABLE prospectus_documents ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Public can read prospectus_documents"
-  ON prospectus_documents FOR SELECT USING (true);
-
-CREATE POLICY "Authenticated users can update prospectus_documents"
-  ON prospectus_documents FOR UPDATE USING (auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated users can insert prospectus_documents"
-  ON prospectus_documents FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated users can delete prospectus_documents"
-  ON prospectus_documents FOR DELETE USING (auth.role() = 'authenticated');
-
-ALTER TABLE holiday_homework ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Public can read holiday_homework"
-  ON holiday_homework FOR SELECT USING (true);
-
-CREATE POLICY "Authenticated users can update holiday_homework"
-  ON holiday_homework FOR UPDATE USING (auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated users can insert holiday_homework"
-  ON holiday_homework FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated users can delete holiday_homework"
-  ON holiday_homework FOR DELETE USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete disclosure_documents"
+  ON disclosure_documents FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Disclosure Board Results
 ALTER TABLE disclosure_board_results ENABLE ROW LEVEL SECURITY;
@@ -1297,14 +1337,18 @@ ALTER TABLE disclosure_board_results ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read disclosure_board_results"
   ON disclosure_board_results FOR SELECT USING (true);
 
-CREATE POLICY "Authenticated users can insert disclosure_board_results"
-  ON disclosure_board_results FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+CREATE POLICY "Staff can insert disclosure_board_results"
+  ON disclosure_board_results FOR INSERT TO authenticated
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can update disclosure_board_results"
-  ON disclosure_board_results FOR UPDATE USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can update disclosure_board_results"
+  ON disclosure_board_results FOR UPDATE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'))
+  WITH CHECK (public.get_user_role() IN ('admin', 'staff'));
 
-CREATE POLICY "Authenticated users can delete disclosure_board_results"
-  ON disclosure_board_results FOR DELETE USING (auth.role() = 'authenticated');
+CREATE POLICY "Staff can delete disclosure_board_results"
+  ON disclosure_board_results FOR DELETE TO authenticated
+  USING (public.get_user_role() IN ('admin', 'staff'));
 
 -- Gallery Events
 ALTER TABLE gallery_events ENABLE ROW LEVEL SECURITY;
@@ -1343,9 +1387,25 @@ CREATE POLICY "Teachers can read student profiles in their classes"
     )
   );
 
+-- Self-update is gated two ways (migration 061): column-level GRANT below
+-- limits which columns the authenticated role may write, and the
+-- guard_profile_privileged_cols trigger rejects privileged-column changes.
 CREATE POLICY "Users can update own profile"
   ON profiles FOR UPDATE
-  USING (id = auth.uid());
+  USING (id = auth.uid())
+  WITH CHECK (id = auth.uid());
+
+CREATE TRIGGER guard_profile_privileged_cols
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.guard_profile_privileged_cols();
+
+-- Role↔link integrity (migration 068): fires on INSERT and on role/link changes.
+CREATE TRIGGER enforce_profile_role_link
+  BEFORE INSERT OR UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_role_link();
+
+REVOKE UPDATE ON public.profiles FROM authenticated;
+GRANT UPDATE (full_name, phone, avatar_url) ON public.profiles TO authenticated;
 
 CREATE POLICY "Admins can insert profiles"
   ON profiles FOR INSERT
@@ -1883,59 +1943,145 @@ CREATE POLICY "Teachers can insert notifications"
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Section A — General Information
+INSERT INTO disclosure_items (section, field_key, label, value, sort_order) VALUES
+  ('general', 'school_name', 'Name of the School', 'NK Public School', 0),
+  ('general', 'affiliation_no', 'Affiliation No.', '1730446', 1),
+  ('general', 'school_code', 'School Code', '14399', 2),
+  ('general', 'address', 'Complete Address with Pin Code', 'Grand Sikar Road, Rajawas, Jaipur, Rajasthan – 302013', 3),
+  ('general', 'principal_name', 'Principal Name & Qualification', 'Mrs. Prema Kavia', 4),
+  ('general', 'school_email', 'School Email ID', 'nkps.rajawas@gmail.com', 5),
+  ('general', 'contact_details', 'Contact Details (Landline/Mobile)', '+91-9785500046, +91-9785500048', 6)
+ON CONFLICT (field_key) DO NOTHING;
 
 -- Section C — Result & Academics (text fields)
+INSERT INTO disclosure_items (section, field_key, label, value, sort_order) VALUES
+  ('result_academics', 'fee_structure', 'Fee Structure of the School', '', 0),
+  ('result_academics', 'academic_calendar', 'Annual Academic Calendar', '', 1),
+  ('result_academics', 'smc_list', 'List of School Management Committee (SMC)', '', 2),
+  ('result_academics', 'pta_members', 'List of Parents Teachers Association (PTA) Members', '', 3)
+ON CONFLICT (field_key) DO NOTHING;
 
 -- Section D — Staff (Teaching)
+INSERT INTO disclosure_items (section, field_key, label, value, sort_order) VALUES
+  ('staff', 'principal', 'Principal', 'Mrs. Prema Kavia', 0),
+  ('staff', 'total_teachers', 'Total No. of Teachers (PGT / TGT / PRT)', '100+ (PGT: 25+, TGT: 35+, PRT: 40+)', 1),
+  ('staff', 'teacher_section_ratio', 'Teacher-Section Ratio', '1:1.5', 2),
+  ('staff', 'special_educator', 'Details of Special Educator', '', 3),
+  ('staff', 'counsellor', 'Details of Counsellor and Wellness Teacher', '', 4)
+ON CONFLICT (field_key) DO NOTHING;
 
 -- Section E — School Infrastructure
+INSERT INTO disclosure_items (section, field_key, label, value, sort_order) VALUES
+  ('infrastructure', 'campus_area', 'Total Campus Area (in sq. mtrs.)', '20,000 sq. mtrs.', 0),
+  ('infrastructure', 'classrooms', 'Number and Size of Classrooms', '60+ Classrooms', 1),
+  ('infrastructure', 'labs', 'Number and Size of Laboratories (incl. Computer Labs)', '5 Labs (Physics, Chemistry, Biology, Computer, Math)', 2),
+  ('infrastructure', 'internet', 'Internet Facility', 'Yes', 3),
+  ('infrastructure', 'girls_toilets', 'Number of Girls'' Toilets', '', 4),
+  ('infrastructure', 'boys_toilets', 'Number of Boys'' Toilets', '', 5),
+  ('infrastructure', 'youtube_link', 'Link of YouTube Video of School Inspection', '', 6)
+ON CONFLICT (field_key) DO NOTHING;
 
 -- Section B — Documents
+INSERT INTO disclosure_documents (doc_key, label, sort_order) VALUES
+  ('affiliation_letter', 'Copies of Affiliation/Upgradation Letter and Recent Extension of Affiliation', 0),
+  ('society_registration', 'Copies of Societies/Trust/Company Registration/Renewal Certificate', 1),
+  ('noc', 'Copy of No Objection Certificate (NOC) Issued by the State Govt/UT', 2),
+  ('rte_recognition', 'Copy of Recognition Certificate under RTE Act, 2009, and Its Renewal', 3),
+  ('building_safety', 'Copy of Valid Building Safety Certificate (as per National Building Code)', 4),
+  ('fire_safety', 'Copy of Valid Fire Safety Certificate Issued by the Competent Authority', 5),
+  ('deo_certificate', 'Copy of DEO Certificate Submitted for Affiliation/Self-Certification by School', 6),
+  ('water_health_sanitation', 'Copy of Valid Water, Health and Sanitation Certificates', 7)
+ON CONFLICT (doc_key) DO NOTHING;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 8. Storage Buckets (create manually in Supabase Dashboard > Storage)
 -- ─────────────────────────────────────────────────────────────────────────────
+--
+-- Bucket access model after migration 061:
+--   gallery / site-media / staff-photos / avatars / disclosure-documents — PUBLIC
+--     read; WRITES are service-role only (uploads go through admin-gated
+--     signed-URL minting or the avatar API). Users may write only their own
+--     avatars/<uid>.<ext> object.
+--   transfer-certificates — PRIVATE (no public read). Downloads are served via
+--     short-lived signed URLs from the TC lookup/download routes only.
+--
+-- The policies below are version-controlled (migration 061). When provisioning
+-- a fresh project, do NOT also add the Dashboard "Allow authenticated users"
+-- quick-policies — they would re-open writes (RLS policies are OR-combined).
 
--- Bucket: "gallery" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   DELETE: Allow authenticated users
+DROP POLICY IF EXISTS "Service role manages content buckets" ON storage.objects;
+CREATE POLICY "Service role manages content buckets"
+  ON storage.objects FOR ALL
+  TO service_role
+  USING (
+    bucket_id IN ('gallery','transfer-certificates','site-media',
+                  'staff-photos','disclosure-documents','avatars')
+  )
+  WITH CHECK (
+    bucket_id IN ('gallery','transfer-certificates','site-media',
+                  'staff-photos','disclosure-documents','avatars')
+  );
 
--- Bucket: "transfer-certificates" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   DELETE: Allow authenticated users
+DROP POLICY IF EXISTS "Users manage own avatar object" ON storage.objects;
+CREATE POLICY "Users manage own avatar object"
+  ON storage.objects FOR ALL
+  TO authenticated
+  USING (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] IS NOT DISTINCT FROM auth.uid()::text
+  )
+  WITH CHECK (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] IS NOT DISTINCT FROM auth.uid()::text
+  );
 
--- Bucket: "avatars" (Public)
---   SELECT: Allow public access
---   INSERT/UPDATE/DELETE: Managed via service role (API route)
+DROP POLICY IF EXISTS "Public read of public content buckets" ON storage.objects;
+CREATE POLICY "Public read of public content buckets"
+  ON storage.objects FOR SELECT
+  USING (
+    bucket_id IN ('gallery','site-media','staff-photos','avatars',
+                  'disclosure-documents')
+  );
 
--- Bucket: "site-media" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   DELETE: Allow authenticated users
+-- NOTE: the transfer-certificates bucket is flipped to private MANUALLY in
+-- Supabase Studio (deliberate operational choice). The signed-URL TC routes work
+-- regardless of the bucket's public flag, so this is intentionally not automated.
 
--- Bucket: "staff-photos" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   UPDATE: Allow authenticated users
---   DELETE: Allow authenticated users
+-- Enforce allowed MIME types + size caps at the storage layer (the signed-URL
+-- flow lets the client choose content-type, so this is the real defense against
+-- storing HTML/SVG under an image/pdf extension → stored XSS). (migration 061)
+UPDATE storage.buckets
+  SET allowed_mime_types = ARRAY['image/jpeg','image/png','image/webp'],
+      file_size_limit = 5242880
+  WHERE id IN ('gallery','site-media','avatars');
+-- staff-photos also allows webp: the browser upload pipeline (compressImage)
+-- re-encodes cropped JPEGs to webp before upload, so a jpeg/png-only allowlist
+-- rejected every staff photo with "mime type image/webp is not supported".
+-- (migration 079)
+UPDATE storage.buckets
+  SET allowed_mime_types = ARRAY['image/jpeg','image/png','image/webp'],
+      file_size_limit = 2097152
+  WHERE id = 'staff-photos';
+UPDATE storage.buckets
+  SET allowed_mime_types = ARRAY['application/pdf'],
+      file_size_limit = 10485760
+  WHERE id IN ('transfer-certificates','disclosure-documents');
 
--- Bucket: "disclosure-documents" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   DELETE: Allow authenticated users
+-- Migration 076 — private bucket for transport change-request applications.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('transport-applications','transport-applications', false, 10485760,
+        ARRAY['application/pdf','image/jpeg','image/png'])
+ON CONFLICT (id) DO UPDATE
+  SET file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
 
--- Bucket: "prospectus" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   DELETE: Allow authenticated users
-
--- Bucket: "holiday-homework" (Public)
---   SELECT: Allow public access
---   INSERT: Allow authenticated users
---   DELETE: Allow authenticated users
+DROP POLICY IF EXISTS "Service role manages transport applications" ON storage.objects;
+CREATE POLICY "Service role manages transport applications"
+  ON storage.objects FOR ALL
+  TO service_role
+  USING (bucket_id = 'transport-applications')
+  WITH CHECK (bucket_id = 'transport-applications');
 
 -- ============================================
 -- EDITOR PERMISSIONS (per-feature access for editor role)
@@ -2002,17 +2148,29 @@ CREATE POLICY "Authenticated can read all articles"
   ON articles FOR SELECT TO authenticated
   USING (true);
 
-CREATE POLICY "Authenticated can insert articles"
+-- Writes are admin/staff only (migration 060). CMS writes go through the
+-- service-role client, which bypasses RLS; this policy blocks parent/student/
+-- teacher JWTs from mutating articles via the anon client.
+CREATE POLICY "Staff can insert articles"
   ON articles FOR INSERT TO authenticated
-  WITH CHECK (true);
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  );
 
-CREATE POLICY "Authenticated can update articles"
+CREATE POLICY "Staff can update articles"
   ON articles FOR UPDATE TO authenticated
-  USING (true) WITH CHECK (true);
+  USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  );
 
-CREATE POLICY "Authenticated can delete articles"
+CREATE POLICY "Staff can delete articles"
   ON articles FOR DELETE TO authenticated
-  USING (true);
+  USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  );
 
 -- ============================================
 -- STUDENT REMARKS (class teacher's overall comment per student per exam,
@@ -3611,6 +3769,14 @@ CREATE POLICY "Admins manage ptm_formats"
 
 -- Seed one default template so the "Download" flow works out of the box
 -- before an admin ever opens the Settings page.
+INSERT INTO ptm_formats (name, is_default, intro_text, closing_text)
+VALUES (
+  'Default PTM Format',
+  true,
+  'Dear Parent, this handout summarises your child''s recent performance. Please bring it to the upcoming parent-teacher meeting for reference and signature.',
+  'Thank you for your continued support. We look forward to discussing your child''s progress.'
+)
+ON CONFLICT (name) DO NOTHING;
 -- Migration 028: Supplementary Exam workflow (Phase 8).
 --
 -- Schools allow students who fail one or two subjects in a main exam to
@@ -3935,6 +4101,20 @@ ALTER TABLE fee_structures ADD CONSTRAINT fee_structures_late_fee_percent_range
 ALTER TABLE fee_structures DROP CONSTRAINT IF EXISTS fee_structures_late_fee_fixed_nonneg;
 ALTER TABLE fee_structures ADD CONSTRAINT fee_structures_late_fee_fixed_nonneg
   CHECK (late_fee_fixed_amount >= 0);
+
+-- Per-day late fee + optional cap (migration 080). late_fee_fixed_amount above
+-- is retained for historical rows but superseded by late_fee_per_day.
+ALTER TABLE fee_structures
+  ADD COLUMN IF NOT EXISTS late_fee_per_day numeric(10,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS late_fee_max numeric(10,2);
+
+ALTER TABLE fee_structures DROP CONSTRAINT IF EXISTS fee_structures_late_fee_per_day_nonneg;
+ALTER TABLE fee_structures ADD CONSTRAINT fee_structures_late_fee_per_day_nonneg
+  CHECK (late_fee_per_day >= 0);
+
+ALTER TABLE fee_structures DROP CONSTRAINT IF EXISTS fee_structures_late_fee_max_nonneg;
+ALTER TABLE fee_structures ADD CONSTRAINT fee_structures_late_fee_max_nonneg
+  CHECK (late_fee_max IS NULL OR late_fee_max >= 0);
 
 ALTER TABLE fee_payments
   ADD COLUMN IF NOT EXISTS waiver_amount numeric(10,2) NOT NULL DEFAULT 0,
@@ -4282,6 +4462,10 @@ UPDATE streams
  WHERE LOWER(name) = 'arts';
 
 -- Seed Math — Standard / Advanced
+INSERT INTO subjects (name, code, nickname, category, is_elective, is_active) VALUES
+  ('Mathematics — Standard', '241', 'Math (Std)', 'academic', false, true),
+  ('Mathematics — Advanced', '041', 'Math (Adv)', 'academic', false, true)
+ON CONFLICT DO NOTHING;
 
 -- Seed the four built-in timetable templates with 20-minute lunch
 DO $$
@@ -4386,11 +4570,65 @@ UPDATE subjects SET category = 'academic' WHERE category IS NULL;
 -- a "Reset text to default" action backed by default_snapshot.
 -- =============================================================================
 
+INSERT INTO section_cards (section, quote, name, role, initials, sort_order, is_active, is_default, default_snapshot)
+SELECT 'testimonials',
+  'NK Public School has provided my child with an excellent foundation in academics and extracurricular activities. The teachers are dedicated and the facilities are top-notch.',
+  'Mrs. Sharma', 'Parent of Class VIII student', 'S', 0, true, true,
+  jsonb_build_object(
+    'quote', 'NK Public School has provided my child with an excellent foundation in academics and extracurricular activities. The teachers are dedicated and the facilities are top-notch.',
+    'name', 'Mrs. Sharma', 'role', 'Parent of Class VIII student', 'initials', 'S')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='testimonials');
 
+INSERT INTO section_cards (section, quote, name, role, initials, sort_order, is_active, is_default, default_snapshot)
+SELECT 'testimonials',
+  'The school''s focus on discipline and holistic development has truly shaped my son''s character. We are grateful for the nurturing environment.',
+  'Mr. Patel', 'Parent of Class X student', 'P', 1, true, true,
+  jsonb_build_object(
+    'quote', 'The school''s focus on discipline and holistic development has truly shaped my son''s character. We are grateful for the nurturing environment.',
+    'name', 'Mr. Patel', 'role', 'Parent of Class X student', 'initials', 'P')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='testimonials');
 
+INSERT INTO section_cards (section, quote, name, role, initials, sort_order, is_active, is_default, default_snapshot)
+SELECT 'testimonials',
+  'From sports to arts, the school ensures every child discovers their talent. The COVID-19 response was also commendable — classes never stopped.',
+  'Mrs. Gupta', 'Parent of Class V student', 'G', 2, true, true,
+  jsonb_build_object(
+    'quote', 'From sports to arts, the school ensures every child discovers their talent. The COVID-19 response was also commendable — classes never stopped.',
+    'name', 'Mrs. Gupta', 'role', 'Parent of Class V student', 'initials', 'G')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='testimonials');
 
+INSERT INTO section_cards (section, name, designation, message, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'leadership', 'Dr. N.C. Lunayach', 'Managing Director',
+  'Education is the foundation of a brighter future. We strive to provide an environment where every child discovers their potential and grows into responsible citizens.',
+  COALESCE((SELECT current_url FROM site_media WHERE slot='leadership_managing_director'), '/images/staff/managing-director.jpg'),
+  0, true, true,
+  jsonb_build_object(
+    'name','Dr. N.C. Lunayach','designation','Managing Director',
+    'message','Education is the foundation of a brighter future. We strive to provide an environment where every child discovers their potential and grows into responsible citizens.',
+    'image_url','/images/staff/managing-director.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='leadership');
 
+INSERT INTO section_cards (section, name, designation, message, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'leadership', 'Mr. Kuldeep Singh', 'Director',
+  'Our institution stands on the pillars of discipline, knowledge and progressive growth. We are committed to creating a world-class educational experience for all students.',
+  COALESCE((SELECT current_url FROM site_media WHERE slot='leadership_director'), '/images/staff/director.jpg'),
+  1, true, true,
+  jsonb_build_object(
+    'name','Mr. Kuldeep Singh','designation','Director',
+    'message','Our institution stands on the pillars of discipline, knowledge and progressive growth. We are committed to creating a world-class educational experience for all students.',
+    'image_url','/images/staff/director.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='leadership');
 
+INSERT INTO section_cards (section, name, designation, message, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'leadership', 'Mrs. Prema Kavia', 'Principal',
+  'At NK Public School, we believe every child is unique. Our dedicated faculty ensures holistic development through academic excellence and co-curricular activities.',
+  COALESCE((SELECT current_url FROM site_media WHERE slot='leadership_principal'), '/images/staff/principal.jpg'),
+  2, true, true,
+  jsonb_build_object(
+    'name','Mrs. Prema Kavia','designation','Principal',
+    'message','At NK Public School, we believe every child is unique. Our dedicated faculty ensures holistic development through academic excellence and co-curricular activities.',
+    'image_url','/images/staff/principal.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='leadership');
 
 DELETE FROM site_media WHERE slot IN ('leadership_managing_director','leadership_director','leadership_principal');
 
@@ -4398,371 +4636,787 @@ DELETE FROM site_media WHERE slot IN ('leadership_managing_director','leadership
 -- Phase 2 default section_cards seed (mirrors migrations 052–058)
 -- =============================================================================
 
--- 052: latest_updates
-
-
-
-DELETE FROM site_media WHERE slot IN ('latest_update_1','latest_update_2','latest_update_3');
-
 -- 053: hero_slider
+INSERT INTO section_cards (section, title, subtitle, cta_text, cta_link, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'hero_slider', E'Best CBSE School\nin Jaipur', 'Empowering young minds with holistic education since 1985',
+  'Explore Admissions', '/admissions',
+  COALESCE((SELECT current_url FROM site_media WHERE slot='hero_slide_1'), '/images/hero/campus-1.jpg'),
+  0, true, true,
+  jsonb_build_object('title', E'Best CBSE School\nin Jaipur',
+    'subtitle','Empowering young minds with holistic education since 1985',
+    'cta_text','Explore Admissions','cta_link','/admissions','image_url','/images/hero/campus-1.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='hero_slider');
 
+INSERT INTO section_cards (section, title, subtitle, cta_text, cta_link, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'hero_slider', E'Excellence in\nCBSE Education', 'CBSE affiliated institution nurturing 20,000+ students across Jaipur',
+  'Learn More', '/about',
+  COALESCE((SELECT current_url FROM site_media WHERE slot='hero_slide_2'), '/images/hero/campus-2.avif'),
+  1, true, true,
+  jsonb_build_object('title', E'Excellence in\nCBSE Education',
+    'subtitle','CBSE affiliated institution nurturing 20,000+ students across Jaipur',
+    'cta_text','Learn More','cta_link','/about','image_url','/images/hero/campus-2.avif')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='hero_slider');
 
+INSERT INTO section_cards (section, title, subtitle, cta_text, cta_link, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'hero_slider', E'Leaders Are\nMade Here', 'Building character through discipline, education and human values',
+  'Discover More', '/academics',
+  COALESCE((SELECT current_url FROM site_media WHERE slot='hero_slide_3'), '/images/news/n5.jpg'),
+  2, true, true,
+  jsonb_build_object('title', E'Leaders Are\nMade Here',
+    'subtitle','Building character through discipline, education and human values',
+    'cta_text','Discover More','cta_link','/academics','image_url','/images/news/n5.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='hero_slider');
 
 DELETE FROM site_media WHERE slot IN ('hero_slide_1','hero_slide_2','hero_slide_3');
 
 -- 054: facilities_preview
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'facilities_preview', 'Smart Classrooms',
+  'Technology-enabled classrooms with projectors and digital learning aids for an interactive educational experience.',
+  'Monitor', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_preview_1'), '/images/news/n1.jpg'),
+  0, true, true,
+  jsonb_build_object('title','Smart Classrooms',
+    'description','Technology-enabled classrooms with projectors and digital learning aids for an interactive educational experience.',
+    'icon','Monitor','image_url','/images/news/n1.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='facilities_preview');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'facilities_preview', 'Science Laboratories',
+  'Well-equipped Physics, Chemistry and Biology labs providing hands-on learning opportunities for students.',
+  'FlaskConical', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_preview_2'), '/images/news/n2.jpg'),
+  1, true, true,
+  jsonb_build_object('title','Science Laboratories',
+    'description','Well-equipped Physics, Chemistry and Biology labs providing hands-on learning opportunities for students.',
+    'icon','FlaskConical','image_url','/images/news/n2.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='facilities_preview');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'facilities_preview', 'Computer Lab',
+  'Modern computer lab with high-speed internet and latest software for digital literacy and programming skills.',
+  'Laptop', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_preview_3'), '/images/news/n4.jpg'),
+  2, true, true,
+  jsonb_build_object('title','Computer Lab',
+    'description','Modern computer lab with high-speed internet and latest software for digital literacy and programming skills.',
+    'icon','Laptop','image_url','/images/news/n4.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='facilities_preview');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'facilities_preview', 'Library',
+  'A vast collection of over 10,000 books, periodicals and digital resources fostering a love for reading.',
+  'BookOpen', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_preview_4'), '/images/news/n6.jpg'),
+  3, true, true,
+  jsonb_build_object('title','Library',
+    'description','A vast collection of over 10,000 books, periodicals and digital resources fostering a love for reading.',
+    'icon','BookOpen','image_url','/images/news/n6.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='facilities_preview');
 
 DELETE FROM site_media WHERE slot IN ('facilities_preview_1','facilities_preview_2','facilities_preview_3','facilities_preview_4');
 
 -- 055: why_choose_us
+INSERT INTO section_cards (section, title, description, icon, sort_order, is_active, is_default, default_snapshot)
+SELECT 'why_choose_us', 'Experienced Faculty',
+  'Our faculty brings years of experience in delivering quality education across all subjects.',
+  'Award', 0, true, true,
+  jsonb_build_object('title','Experienced Faculty',
+    'description','Our faculty brings years of experience in delivering quality education across all subjects.',
+    'icon','Award')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='why_choose_us');
 
+INSERT INTO section_cards (section, title, description, icon, sort_order, is_active, is_default, default_snapshot)
+SELECT 'why_choose_us', 'Holistic Curriculum',
+  'Balanced approach combining academics with sports, arts, and character development.',
+  'BookOpen', 1, true, true,
+  jsonb_build_object('title','Holistic Curriculum',
+    'description','Balanced approach combining academics with sports, arts, and character development.',
+    'icon','BookOpen')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='why_choose_us');
 
+INSERT INTO section_cards (section, title, description, icon, sort_order, is_active, is_default, default_snapshot)
+SELECT 'why_choose_us', 'Smart Classrooms',
+  'Equipped with modern teaching technologies for interactive and engaging learning.',
+  'Monitor', 2, true, true,
+  jsonb_build_object('title','Smart Classrooms',
+    'description','Equipped with modern teaching technologies for interactive and engaging learning.',
+    'icon','Monitor')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='why_choose_us');
 
+INSERT INTO section_cards (section, title, description, icon, sort_order, is_active, is_default, default_snapshot)
+SELECT 'why_choose_us', '100% Board Results',
+  'We are proud of our consistent academic performance in CBSE board examinations.',
+  'Trophy', 3, true, true,
+  jsonb_build_object('title','100% Board Results',
+    'description','We are proud of our consistent academic performance in CBSE board examinations.',
+    'icon','Trophy')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='why_choose_us');
 
 -- 056: legacy_timeline
+INSERT INTO section_cards (section, year, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'legacy_timeline', '1985', 'Foundation',
+  'NK Public School established by Late Shri R.K. Choudhary with just 10 students.',
+  0, true, true,
+  jsonb_build_object('year','1985','title','Foundation',
+    'description','NK Public School established by Late Shri R.K. Choudhary with just 10 students.')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='legacy_timeline');
 
+INSERT INTO section_cards (section, year, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'legacy_timeline', '1990', 'CBSE Affiliation',
+  'Received affiliation from CBSE, marking a new chapter in academic excellence.',
+  1, true, true,
+  jsonb_build_object('year','1990','title','CBSE Affiliation',
+    'description','Received affiliation from CBSE, marking a new chapter in academic excellence.')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='legacy_timeline');
 
+INSERT INTO section_cards (section, year, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'legacy_timeline', '2000', 'Campus Expansion',
+  'New buildings, laboratories, and sports facilities added to serve growing student body.',
+  2, true, true,
+  jsonb_build_object('year','2000','title','Campus Expansion',
+    'description','New buildings, laboratories, and sports facilities added to serve growing student body.')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='legacy_timeline');
 
+INSERT INTO section_cards (section, year, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'legacy_timeline', '2010', 'Digital Era',
+  'Smart classrooms and computer labs introduced for technology-integrated learning.',
+  3, true, true,
+  jsonb_build_object('year','2010','title','Digital Era',
+    'description','Smart classrooms and computer labs introduced for technology-integrated learning.')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='legacy_timeline');
 
+INSERT INTO section_cards (section, year, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'legacy_timeline', '2024', '20000+ Students',
+  'Grown into one of Jaipur''s leading institutions with 6 educational institutes.',
+  4, true, true,
+  jsonb_build_object('year','2024','title','20000+ Students',
+    'description','Grown into one of Jaipur''s leading institutions with 6 educational institutes.')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='legacy_timeline');
 
 -- 057: activities + annual_events
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'activities', 'Music & Dance', 'Express creativity through classical and contemporary performances',
+  'Music', COALESCE((SELECT current_url FROM site_media WHERE slot='student_life_music_dance'), '/images/gallery/st1.jpg'),
+  0, true, true,
+  jsonb_build_object('title','Music & Dance','description','Express creativity through classical and contemporary performances',
+    'icon','Music','image_url','/images/gallery/st1.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='activities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'activities', 'Art & Craft', 'Develop artistic skills through painting, sculpture and design',
+  'Palette', COALESCE((SELECT current_url FROM site_media WHERE slot='student_life_art_craft'), '/images/gallery/st2.jpg'),
+  1, true, true,
+  jsonb_build_object('title','Art & Craft','description','Develop artistic skills through painting, sculpture and design',
+    'icon','Palette','image_url','/images/gallery/st2.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='activities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'activities', 'Debate & Elocution', 'Build confidence and critical thinking through public speaking',
+  'MessageSquare', COALESCE((SELECT current_url FROM site_media WHERE slot='student_life_debate'), '/images/gallery/st3.jpg'),
+  2, true, true,
+  jsonb_build_object('title','Debate & Elocution','description','Build confidence and critical thinking through public speaking',
+    'icon','MessageSquare','image_url','/images/gallery/st3.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='activities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'activities', 'Quiz Competitions', 'Sharpen knowledge and analytical skills in academic quizzes',
+  'Brain', COALESCE((SELECT current_url FROM site_media WHERE slot='student_life_quiz'), '/images/gallery/st4.jpg'),
+  3, true, true,
+  jsonb_build_object('title','Quiz Competitions','description','Sharpen knowledge and analytical skills in academic quizzes',
+    'icon','Brain','image_url','/images/gallery/st4.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='activities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'activities', 'Literary Club', 'Nurture love for reading and creative writing',
+  'BookOpen', COALESCE((SELECT current_url FROM site_media WHERE slot='student_life_literary'), '/images/gallery/st5.jpg'),
+  4, true, true,
+  jsonb_build_object('title','Literary Club','description','Nurture love for reading and creative writing',
+    'icon','BookOpen','image_url','/images/gallery/st5.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='activities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'activities', 'Science Club', 'Hands-on experiments and innovation projects',
+  'Cpu', COALESCE((SELECT current_url FROM site_media WHERE slot='student_life_science'), '/images/gallery/st6.jpg'),
+  5, true, true,
+  jsonb_build_object('title','Science Club','description','Hands-on experiments and innovation projects',
+    'icon','Cpu','image_url','/images/gallery/st6.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='activities');
 
+INSERT INTO section_cards (section, season, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'annual_events', 'Winter', 'Annual Day',
+  'A grand celebration of talent, culture and achievement featuring performances by students from all grades',
+  0, true, true,
+  jsonb_build_object('season','Winter','title','Annual Day',
+    'description','A grand celebration of talent, culture and achievement featuring performances by students from all grades')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='annual_events');
 
+INSERT INTO section_cards (section, season, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'annual_events', 'Monsoon', 'Sports Day (Chakravyuh)',
+  'Inter-house athletic competitions and team sports fostering sportsmanship and physical fitness',
+  1, true, true,
+  jsonb_build_object('season','Monsoon','title','Sports Day (Chakravyuh)',
+    'description','Inter-house athletic competitions and team sports fostering sportsmanship and physical fitness')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='annual_events');
 
+INSERT INTO section_cards (section, season, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'annual_events', 'Spring', 'Republic & Independence Day',
+  'Patriotic celebrations with cultural programmes, flag hoisting and community participation',
+  2, true, true,
+  jsonb_build_object('season','Spring','title','Republic & Independence Day',
+    'description','Patriotic celebrations with cultural programmes, flag hoisting and community participation')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='annual_events');
 
+INSERT INTO section_cards (section, season, title, description, sort_order, is_active, is_default, default_snapshot)
+SELECT 'annual_events', 'Autumn', 'Science Exhibition',
+  'Student-led innovations and project displays showcasing creativity and scientific temper',
+  3, true, true,
+  jsonb_build_object('season','Autumn','title','Science Exhibition',
+    'description','Student-led innovations and project displays showcasing creativity and scientific temper')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='annual_events');
 
 DELETE FROM site_media WHERE slot IN ('student_life_music_dance','student_life_art_craft','student_life_debate','student_life_quiz','student_life_literary','student_life_science');
 
 -- 058: campus_facilities (8 cards). First 4 read from facilities_preview cards
 -- (set by 054), then fall back to the original slot if 054 hasn't run yet.
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Smart Classrooms',
+  'Technology-enabled classrooms with projectors and digital learning aids for an interactive educational experience.',
+  'Monitor',
+  COALESCE(
+    (SELECT image_url FROM section_cards WHERE section='facilities_preview'),
+    (SELECT current_url FROM site_media WHERE slot='facilities_preview_1'),
+    '/images/news/n1.jpg'),
+  0, true, true,
+  jsonb_build_object('title','Smart Classrooms',
+    'description','Technology-enabled classrooms with projectors and digital learning aids for an interactive educational experience.',
+    'icon','Monitor','image_url','/images/news/n1.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Science Laboratories',
+  'Well-equipped Physics, Chemistry and Biology labs providing hands-on learning opportunities for students.',
+  'FlaskConical',
+  COALESCE(
+    (SELECT image_url FROM section_cards WHERE section='facilities_preview'),
+    (SELECT current_url FROM site_media WHERE slot='facilities_preview_2'),
+    '/images/news/n2.jpg'),
+  1, true, true,
+  jsonb_build_object('title','Science Laboratories',
+    'description','Well-equipped Physics, Chemistry and Biology labs providing hands-on learning opportunities for students.',
+    'icon','FlaskConical','image_url','/images/news/n2.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Computer Lab',
+  'Modern computer lab with high-speed internet and latest software for digital literacy and programming skills.',
+  'Laptop',
+  COALESCE(
+    (SELECT image_url FROM section_cards WHERE section='facilities_preview'),
+    (SELECT current_url FROM site_media WHERE slot='facilities_preview_3'),
+    '/images/news/n4.jpg'),
+  2, true, true,
+  jsonb_build_object('title','Computer Lab',
+    'description','Modern computer lab with high-speed internet and latest software for digital literacy and programming skills.',
+    'icon','Laptop','image_url','/images/news/n4.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Library',
+  'A vast collection of over 10,000 books, periodicals and digital resources fostering a love for reading.',
+  'BookOpen',
+  COALESCE(
+    (SELECT image_url FROM section_cards WHERE section='facilities_preview'),
+    (SELECT current_url FROM site_media WHERE slot='facilities_preview_4'),
+    '/images/news/n6.jpg'),
+  3, true, true,
+  jsonb_build_object('title','Library',
+    'description','A vast collection of over 10,000 books, periodicals and digital resources fostering a love for reading.',
+    'icon','BookOpen','image_url','/images/news/n6.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Sports Grounds',
+  'Expansive playgrounds with facilities for cricket, football, basketball, athletics and more.',
+  'Trophy', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_sports'), '/images/news/n7.jpg'),
+  4, true, true,
+  jsonb_build_object('title','Sports Grounds',
+    'description','Expansive playgrounds with facilities for cricket, football, basketball, athletics and more.',
+    'icon','Trophy','image_url','/images/news/n7.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Auditorium',
+  'State-of-the-art auditorium for cultural events, annual functions and academic seminars.',
+  'Theater', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_auditorium'), '/images/news/n3.jpg'),
+  5, true, true,
+  jsonb_build_object('title','Auditorium',
+    'description','State-of-the-art auditorium for cultural events, annual functions and academic seminars.',
+    'icon','Theater','image_url','/images/news/n3.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Indoor Games',
+  'Dedicated spaces for table tennis, chess, carrom and other indoor recreational activities.',
+  'Gamepad2', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_indoor_games'), '/images/news/n5.jpg'),
+  6, true, true,
+  jsonb_build_object('title','Indoor Games',
+    'description','Dedicated spaces for table tennis, chess, carrom and other indoor recreational activities.',
+    'icon','Gamepad2','image_url','/images/news/n5.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
+INSERT INTO section_cards (section, title, description, icon, image_url, sort_order, is_active, is_default, default_snapshot)
+SELECT 'campus_facilities', 'Transport',
+  'Safe and reliable school bus transport covering major routes across Jaipur city.',
+  'Bus', COALESCE((SELECT current_url FROM site_media WHERE slot='facilities_transport'), '/images/gallery/g10.jpg'),
+  7, true, true,
+  jsonb_build_object('title','Transport',
+    'description','Safe and reliable school bus transport covering major routes across Jaipur city.',
+    'icon','Bus','image_url','/images/gallery/g10.jpg')
+WHERE NOT EXISTS (SELECT 1 FROM section_cards WHERE section='campus_facilities');
 
 DELETE FROM site_media WHERE slot IN ('facilities_sports','facilities_auditorium','facilities_indoor_games','facilities_transport');
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Migration 050: Distance-based transport fare slabs
--- Replaces the flat `Transport` row in `fee_structures` with a per-academic-
--- year master of distance slabs. Each enrollment opting in points at a slab;
--- fee_payments gains a slab FK so transport receipts no longer need a fake
--- fee_structure row.
+-- Migration 074: Stop-based transport (fleet, routes, drivers, change workflow)
+-- Replaces the distance/slab model (migrations 050/053/055/063). The fee
+-- attaches to a bus STOP; every student boarding there pays that stop's flat
+-- monthly fee. Buses carry a driver (staff category busDriver) and serve a set
+-- of stops (bus_route_stops). transport_change_requests is the office/parent
+-- amendment workflow. Seed of the 188 stops + 2025-26 fees lives in migration 075.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS transport_fare_slabs (
+-- Stable stop registry (name = identity; priced per year in bus_stop_fees).
+CREATE TABLE IF NOT EXISTS bus_stops (
+  id          uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  name        text NOT NULL UNIQUE,
+  area        text,
+  lat         numeric(10,7),
+  lng         numeric(10,7),
+  is_active   boolean NOT NULL DEFAULT true,
+  sort_order  integer NOT NULL DEFAULT 0,
+  created_at  timestamptz DEFAULT now(),
+  updated_at  timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bus_stops_active ON bus_stops(is_active) WHERE is_active;
+
+-- Per-academic-year flat fee for a stop (re-priced yearly; stop is stable).
+CREATE TABLE IF NOT EXISTS bus_stop_fees (
   id                uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  bus_stop_id       uuid NOT NULL REFERENCES bus_stops(id) ON DELETE CASCADE,
   academic_year_id  uuid NOT NULL REFERENCES academic_years(id) ON DELETE CASCADE,
-  name              text NOT NULL,
-  distance_km_min   numeric(5,2),
-  distance_km_max   numeric(5,2),
   amount            numeric(10,2) NOT NULL CHECK (amount > 0),
   frequency         text NOT NULL DEFAULT 'monthly'
                     CHECK (frequency IN ('monthly','quarterly','annual','one_time')),
   is_active         boolean NOT NULL DEFAULT true,
-  sort_order        integer NOT NULL DEFAULT 0,
   created_at        timestamptz DEFAULT now(),
   updated_at        timestamptz DEFAULT now(),
-  UNIQUE (academic_year_id, name),
+  UNIQUE (bus_stop_id, academic_year_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bus_stop_fees_year ON bus_stop_fees(academic_year_id);
+CREATE INDEX IF NOT EXISTS idx_bus_stop_fees_stop ON bus_stop_fees(bus_stop_id);
+
+-- Vehicle registry (source of the Bus No. dropdown). Driver = busDriver staff.
+CREATE TABLE IF NOT EXISTS buses (
+  id                  uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  bus_number          text NOT NULL UNIQUE,
+  registration_number text,
+  capacity            integer CHECK (capacity IS NULL OR capacity > 0),
+  driver_id           uuid REFERENCES staff_members(id) ON DELETE SET NULL,
+  conductor_id        uuid REFERENCES staff_members(id) ON DELETE SET NULL,
+  is_active           boolean NOT NULL DEFAULT true,
+  notes               text,
+  created_at          timestamptz DEFAULT now(),
+  updated_at          timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_buses_active ON buses(is_active) WHERE is_active;
+CREATE INDEX IF NOT EXISTS idx_buses_driver ON buses(driver_id) WHERE driver_id IS NOT NULL;
+
+-- Route: which stops each bus serves (narrows the bus picker per stop).
+CREATE TABLE IF NOT EXISTS bus_route_stops (
+  id           uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  bus_id       uuid NOT NULL REFERENCES buses(id) ON DELETE CASCADE,
+  bus_stop_id  uuid NOT NULL REFERENCES bus_stops(id) ON DELETE CASCADE,
+  sort_order   integer,
+  created_at   timestamptz DEFAULT now(),
+  UNIQUE (bus_id, bus_stop_id)
+);
+CREATE INDEX IF NOT EXISTS idx_bus_route_stops_bus ON bus_route_stops(bus_id);
+CREATE INDEX IF NOT EXISTS idx_bus_route_stops_stop ON bus_route_stops(bus_stop_id);
+
+-- Enrollment transport assignment: stop drives the fee; direction = one-side
+-- facility (school-only) with a required custom amount.
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS bus_stop_id uuid REFERENCES bus_stops(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS bus_id uuid REFERENCES buses(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS transport_direction text NOT NULL DEFAULT 'both',
+  ADD COLUMN IF NOT EXISTS transport_fee_override numeric(10,2);
+
+ALTER TABLE student_enrollments DROP CONSTRAINT IF EXISTS chk_transport_direction;
+ALTER TABLE student_enrollments ADD CONSTRAINT chk_transport_direction
+  CHECK (transport_direction IN ('both','pickup_only','drop_only'));
+
+ALTER TABLE student_enrollments DROP CONSTRAINT IF EXISTS student_enrollments_bus_stop_required;
+ALTER TABLE student_enrollments ADD CONSTRAINT student_enrollments_bus_stop_required
+  CHECK (has_transport = false OR bus_stop_id IS NOT NULL);
+
+ALTER TABLE student_enrollments DROP CONSTRAINT IF EXISTS chk_one_side_fee_override;
+ALTER TABLE student_enrollments ADD CONSTRAINT chk_one_side_fee_override
+  CHECK (transport_direction = 'both' OR transport_fee_override IS NOT NULL);
+
+CREATE INDEX IF NOT EXISTS idx_enrollments_bus_stop_id
+  ON student_enrollments(bus_stop_id) WHERE bus_stop_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_enrollments_bus_id
+  ON student_enrollments(bus_id) WHERE bus_id IS NOT NULL;
+
+-- fee_payments: a transport receipt targets a bus_stop (XOR with fee_structure).
+ALTER TABLE fee_payments ALTER COLUMN fee_structure_id DROP NOT NULL;
+ALTER TABLE fee_payments ADD COLUMN IF NOT EXISTS bus_stop_id uuid REFERENCES bus_stops(id);
+CREATE INDEX IF NOT EXISTS idx_fee_payments_bus_stop_id
+  ON fee_payments(bus_stop_id) WHERE bus_stop_id IS NOT NULL;
+ALTER TABLE fee_payments DROP CONSTRAINT IF EXISTS fee_payments_target_xor;
+ALTER TABLE fee_payments ADD CONSTRAINT fee_payments_target_xor
   CHECK (
-    distance_km_min IS NULL
-    OR distance_km_max IS NULL
-    OR distance_km_max >= distance_km_min
+    (fee_structure_id IS NOT NULL AND bus_stop_id IS NULL)
+    OR (fee_structure_id IS NULL AND bus_stop_id IS NOT NULL)
+  );
+
+-- Amendment workflow (bus change / stop change / one-side / drop), office+parent.
+CREATE TABLE IF NOT EXISTS transport_change_requests (
+  id              uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  enrollment_id   uuid NOT NULL REFERENCES student_enrollments(id) ON DELETE CASCADE,
+  change_type     text NOT NULL
+                  CHECK (change_type IN ('bus_change','stop_change','direction_change','drop','resume')),
+  previous_bus_id  uuid REFERENCES buses(id) ON DELETE SET NULL,
+  amended_bus_id   uuid REFERENCES buses(id) ON DELETE SET NULL,
+  previous_stop_id uuid REFERENCES bus_stops(id) ON DELETE SET NULL,
+  amended_stop_id  uuid REFERENCES bus_stops(id) ON DELETE SET NULL,
+  direction       text CHECK (direction IS NULL OR direction IN ('both','pickup_only','drop_only')),
+  effective_from  date NOT NULL,
+  effective_to    date,
+  reason_code     text NOT NULL
+                  CHECK (reason_code IN (
+                    'house_shifting','rented_house_change','bus_point_temporary_change',
+                    'facility_dropped','one_side_facility','other')),
+  reason_note     text,
+  application_url text,
+  source          text NOT NULL CHECK (source IN ('office','parent')),
+  status          text NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending','approved','rejected','cancelled','applied')),
+  requested_by    uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  reviewed_by     uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  reviewed_at     timestamptz,
+  review_note     text,
+  created_at      timestamptz DEFAULT now(),
+  updated_at      timestamptz DEFAULT now(),
+  CONSTRAINT chk_tcr_window CHECK (effective_to IS NULL OR effective_to >= effective_from),
+  CONSTRAINT chk_tcr_reason_note CHECK (
+    reason_code <> 'other'
+    OR (reason_note IS NOT NULL AND length(btrim(reason_note)) >= 3)),
+  CONSTRAINT chk_tcr_direction_office CHECK (change_type <> 'direction_change' OR source = 'office')
+);
+CREATE INDEX IF NOT EXISTS idx_tcr_enrollment ON transport_change_requests(enrollment_id);
+CREATE INDEX IF NOT EXISTS idx_tcr_pending ON transport_change_requests(status) WHERE status = 'pending';
+
+-- updated_at triggers
+DROP TRIGGER IF EXISTS set_updated_at_bus_stops ON bus_stops;
+CREATE TRIGGER set_updated_at_bus_stops BEFORE UPDATE ON bus_stops
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS set_updated_at_bus_stop_fees ON bus_stop_fees;
+CREATE TRIGGER set_updated_at_bus_stop_fees BEFORE UPDATE ON bus_stop_fees
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS set_updated_at_buses ON buses;
+CREATE TRIGGER set_updated_at_buses BEFORE UPDATE ON buses
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+DROP TRIGGER IF EXISTS set_updated_at_transport_change_requests ON transport_change_requests;
+CREATE TRIGGER set_updated_at_transport_change_requests BEFORE UPDATE ON transport_change_requests
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- RLS: fleet/stop tables public-read + admin-write; change requests admin-full
+-- with parent/student read of their own child's rows.
+ALTER TABLE bus_stops ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bus_stop_fees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE buses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bus_route_stops ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transport_change_requests ENABLE ROW LEVEL SECURITY;
+
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['bus_stops','bus_stop_fees','buses','bus_route_stops'] LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Public can read %1$s" ON %1$s', t);
+    EXECUTE format('CREATE POLICY "Public can read %1$s" ON %1$s FOR SELECT USING (true)', t);
+    EXECUTE format('DROP POLICY IF EXISTS "Admins write %1$s" ON %1$s', t);
+    EXECUTE format($p$CREATE POLICY "Admins write %1$s" ON %1$s FOR ALL
+      USING (public.get_user_role() = 'admin')
+      WITH CHECK (public.get_user_role() = 'admin')$p$, t);
+  END LOOP;
+END $$;
+
+DROP POLICY IF EXISTS "Admins full access transport changes" ON transport_change_requests;
+CREATE POLICY "Admins full access transport changes"
+  ON transport_change_requests FOR ALL
+  USING (public.get_user_role() = 'admin')
+  WITH CHECK (public.get_user_role() = 'admin');
+
+DROP POLICY IF EXISTS "Parents read own child transport changes" ON transport_change_requests;
+CREATE POLICY "Parents read own child transport changes"
+  ON transport_change_requests FOR SELECT
+  USING (enrollment_id IN (
+    SELECT se.id FROM student_enrollments se
+    WHERE se.student_id IN (SELECT public.get_my_children_ids())));
+
+DROP POLICY IF EXISTS "Students read own transport changes" ON transport_change_requests;
+CREATE POLICY "Students read own transport changes"
+  ON transport_change_requests FOR SELECT
+  USING (enrollment_id IN (
+    SELECT se.id FROM student_enrollments se
+    WHERE se.student_id = public.get_my_student_id()));
+
+-- =============================================================================
+-- Migration 068 — Identity & cross-role linking integrity
+-- (UNIQUE link indexes + role↔link trigger are mirrored inline above, next to
+--  the profiles table/indexes and the guard_profile_privileged_cols trigger.)
+-- =============================================================================
+
+-- Deprecate the table-level relationship; student_parents.relationship is the
+-- authoritative per-link source of truth.
+COMMENT ON COLUMN public.parents.relationship IS
+  'DEPRECATED (migration 068). The authoritative relationship lives per-link in '
+  'student_parents.relationship. This column is retained only for backward '
+  'compatibility and must not be read by application code.';
+
+-- Link-health view: one row per cross-role linking anomaly. ERROR categories
+-- (orphaned_profile, role_link_mismatch, duplicate_*_claim) must be resolved;
+-- INFO categories are onboarding signals. Read via GET /api/admin/link-health.
+CREATE OR REPLACE VIEW public.profile_link_health AS
+  SELECT 'orphaned_profile'::text AS category,
+         p.id::text               AS subject_id,
+         COALESCE(p.full_name, p.email) AS subject_label,
+         ('role=' || p.role || ' but ' || p.role || '_id is NULL') AS detail
+  FROM public.profiles p
+  WHERE (p.role = 'teacher' AND p.teacher_id IS NULL)
+     OR (p.role = 'parent'  AND p.parent_id  IS NULL)
+  UNION ALL
+  SELECT 'unclaimed_student', p.id::text, COALESCE(p.full_name, p.email),
+         'role=student but student_id is NULL (awaiting self-link)'
+  FROM public.profiles p
+  WHERE p.role = 'student' AND p.student_id IS NULL
+  UNION ALL
+  SELECT 'role_link_mismatch', p.id::text, COALESCE(p.full_name, p.email),
+         'non-null link inconsistent with role=' || p.role
+  FROM public.profiles p
+  WHERE (p.student_id IS NOT NULL AND p.role <> 'student')
+     OR (p.parent_id  IS NOT NULL AND p.role <> 'parent')
+     OR (p.teacher_id IS NOT NULL AND p.role NOT IN ('teacher', 'admin'))
+  UNION ALL
+  SELECT 'duplicate_teacher_claim', p.teacher_id::text, t.full_name,
+         count(*) || ' accounts linked to this teacher record'
+  FROM public.profiles p JOIN public.teachers t ON t.id = p.teacher_id
+  WHERE p.teacher_id IS NOT NULL
+  GROUP BY p.teacher_id, t.full_name HAVING count(*) > 1
+  UNION ALL
+  SELECT 'duplicate_student_claim', p.student_id::text, s.full_name,
+         count(*) || ' accounts linked to this student record'
+  FROM public.profiles p JOIN public.students s ON s.id = p.student_id
+  WHERE p.student_id IS NOT NULL
+  GROUP BY p.student_id, s.full_name HAVING count(*) > 1
+  UNION ALL
+  SELECT 'duplicate_parent_claim', p.parent_id::text, pa.full_name,
+         count(*) || ' accounts linked to this parent record'
+  FROM public.profiles p JOIN public.parents pa ON pa.id = p.parent_id
+  WHERE p.parent_id IS NOT NULL
+  GROUP BY p.parent_id, pa.full_name HAVING count(*) > 1
+  UNION ALL
+  SELECT 'parent_without_children', pa.id::text, pa.full_name,
+         'active parent record has no student_parents links'
+  FROM public.parents pa
+  WHERE COALESCE(pa.is_active, true)
+    AND NOT EXISTS (SELECT 1 FROM public.student_parents sp WHERE sp.parent_id = pa.id)
+  UNION ALL
+  SELECT 'student_without_guardian_account', s.id::text, s.full_name,
+         'active student has no linked parent with a portal account'
+  FROM public.students s
+  WHERE COALESCE(s.is_active, true) AND NOT COALESCE(s.is_alumni, false)
+    AND NOT EXISTS (
+      SELECT 1 FROM public.student_parents sp
+      JOIN public.profiles p ON p.parent_id = sp.parent_id
+      WHERE sp.student_id = s.id
+    );
+
+COMMENT ON VIEW public.profile_link_health IS
+  'Cross-role linking anomalies. ERROR categories (orphaned_profile, '
+  'role_link_mismatch, duplicate_*_claim) must be resolved; INFO categories '
+  '(unclaimed_student, parent_without_children, student_without_guardian_account) '
+  'are onboarding signals. Read via GET /api/admin/link-health.';
+
+-- =============================================================================
+-- Migration 069 — Timetable ↔ class_subjects teacher-assignment drift
+-- class_subjects is the canonical teacher↔subject authority; this view surfaces
+-- timetable periods whose teacher differs, for reconciliation.
+-- =============================================================================
+CREATE OR REPLACE VIEW public.timetable_assignment_drift AS
+  SELECT tp.id              AS timetable_period_id,
+         tp.class_id,
+         c.name             AS class_name,
+         c.section          AS class_section,
+         tp.subject_id,
+         s.name             AS subject_name,
+         tp.day_of_week,
+         tp.period_number,
+         tp.teacher_id      AS timetable_teacher_id,
+         tt.full_name       AS timetable_teacher_name,
+         cs.teacher_id      AS canonical_teacher_id,
+         ct.full_name       AS canonical_teacher_name
+  FROM public.timetable_periods tp
+  JOIN public.class_subjects cs
+    ON cs.class_id = tp.class_id AND cs.subject_id = tp.subject_id
+  LEFT JOIN public.classes  c  ON c.id  = tp.class_id
+  LEFT JOIN public.subjects s  ON s.id  = tp.subject_id
+  LEFT JOIN public.teachers tt ON tt.id = tp.teacher_id
+  LEFT JOIN public.teachers ct ON ct.id = cs.teacher_id
+  WHERE tp.is_break IS NOT TRUE
+    AND tp.teacher_id IS DISTINCT FROM cs.teacher_id;
+
+COMMENT ON VIEW public.timetable_assignment_drift IS
+  'Timetable periods whose teacher differs from the canonical class_subjects '
+  'assignment for the same (class, subject). class_subjects is authoritative '
+  '(migration 069); rows here are drift to reconcile (or legitimate cover).';
+
+-- =============================================================================
+-- MIGRATION 072 — Student UDISE+ profile columns (General + Enrolment template)
+-- Mirrors scripts/migrations/erp/migration-072-student-profile-udise.sql
+-- =============================================================================
+
+ALTER TABLE students
+  -- ── General Profile ───────────────────────────────────────────────────
+  ADD COLUMN IF NOT EXISTS name_as_per_aadhar text,
+  ADD COLUMN IF NOT EXISTS jan_aadhar_number text,
+  ADD COLUMN IF NOT EXISTS mother_occupation text,
+  ADD COLUMN IF NOT EXISTS mother_qualification text,
+  ADD COLUMN IF NOT EXISTS mother_mobile text,
+  ADD COLUMN IF NOT EXISTS mother_annual_income numeric(12, 2),
+  ADD COLUMN IF NOT EXISTS father_occupation text,
+  ADD COLUMN IF NOT EXISTS father_qualification text,
+  ADD COLUMN IF NOT EXISTS father_mobile text,
+  ADD COLUMN IF NOT EXISTS father_annual_income numeric(12, 2),
+  ADD COLUMN IF NOT EXISTS guardian_name text,
+  ADD COLUMN IF NOT EXISTS guardian_relation text,
+  ADD COLUMN IF NOT EXISTS guardian_mobile text,
+  -- `address` (existing) is the Present Address; pincodes are separate so
+  -- the template's "Address + Pin Code" sub-fields round-trip losslessly.
+  ADD COLUMN IF NOT EXISTS present_pincode text,
+  ADD COLUMN IF NOT EXISTS permanent_address text,
+  ADD COLUMN IF NOT EXISTS permanent_pincode text,
+  ADD COLUMN IF NOT EXISTS mother_tongue text,
+  -- Distinct from `religion`: the template's Minority Group is a fixed
+  -- administrative list (incl. 'none'), not free-text religion.
+  ADD COLUMN IF NOT EXISTS minority_group text,
+  ADD COLUMN IF NOT EXISTS is_bpl boolean,
+  ADD COLUMN IF NOT EXISTS is_ews boolean,
+  ADD COLUMN IF NOT EXISTS is_cwsn boolean,
+  -- Free text "type (code)" — UDISE impairment codes vary by cycle.
+  ADD COLUMN IF NOT EXISTS cwsn_impairment_type text,
+  ADD COLUMN IF NOT EXISTS height_cm numeric(5, 1),
+  ADD COLUMN IF NOT EXISTS weight_kg numeric(5, 1),
+  -- ── Enrolment Profile ─────────────────────────────────────────────────
+  ADD COLUMN IF NOT EXISTS is_rte boolean,
+  ADD COLUMN IF NOT EXISTS medium_of_instruction text,
+  ADD COLUMN IF NOT EXISTS previous_school_address text,
+  ADD COLUMN IF NOT EXISTS previous_school_block text,
+  ADD COLUMN IF NOT EXISTS previous_school_district text,
+  ADD COLUMN IF NOT EXISTS previous_school_state text,
+  ADD COLUMN IF NOT EXISTS previous_school_udise_code text,
+  ADD COLUMN IF NOT EXISTS previous_school_reason_for_leaving text,
+  ADD COLUMN IF NOT EXISTS previous_class_studied text,
+  ADD COLUMN IF NOT EXISTS previous_school_board text,
+  -- Text, not numeric: board roll numbers can be alphanumeric.
+  ADD COLUMN IF NOT EXISTS board_roll_number text,
+  ADD COLUMN IF NOT EXISTS board_percentage numeric(5, 2),
+  -- Text: schools record this as "92%" or "180/210 days".
+  ADD COLUMN IF NOT EXISTS last_session_attendance text,
+  ADD COLUMN IF NOT EXISTS is_staff_ward boolean,
+  ADD COLUMN IF NOT EXISTS participates_ncc boolean,
+  ADD COLUMN IF NOT EXISTS participates_nss boolean,
+  ADD COLUMN IF NOT EXISTS participates_scouts boolean,
+  ADD COLUMN IF NOT EXISTS participates_competitions boolean,
+  ADD COLUMN IF NOT EXISTS distance_band text,
+  -- Template item 12 is ONE dropdown covering mother/father/legal guardian —
+  -- "completed highest education level" of whichever parent it applies to.
+  ADD COLUMN IF NOT EXISTS parent_highest_education text;
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_minority_group;
+ALTER TABLE students ADD CONSTRAINT chk_students_minority_group CHECK (
+  minority_group IS NULL
+  OR minority_group IN ('muslim', 'sikh', 'christian', 'jain', 'buddhist', 'parsi', 'none')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_medium;
+ALTER TABLE students ADD CONSTRAINT chk_students_medium CHECK (
+  medium_of_instruction IS NULL
+  OR medium_of_instruction IN ('english', 'hindi')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_distance_band;
+ALTER TABLE students ADD CONSTRAINT chk_students_distance_band CHECK (
+  distance_band IS NULL
+  OR distance_band IN ('1-3km', '3-5km', '5-10km', 'above-10km')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_parent_highest_education;
+ALTER TABLE students ADD CONSTRAINT chk_students_parent_highest_education CHECK (
+  parent_highest_education IS NULL
+  OR parent_highest_education IN (
+    'primary', 'upper_primary', 'secondary', 'senior_secondary',
+    'graduation', 'pg_or_more'
   )
 );
 
-CREATE INDEX IF NOT EXISTS idx_transport_slabs_year
-  ON transport_fare_slabs(academic_year_id);
-CREATE INDEX IF NOT EXISTS idx_transport_slabs_active
-  ON transport_fare_slabs(academic_year_id) WHERE is_active;
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_height_cm;
+ALTER TABLE students ADD CONSTRAINT chk_students_height_cm CHECK (
+  height_cm IS NULL OR (height_cm > 0 AND height_cm < 300)
+);
 
-DROP TRIGGER IF EXISTS set_updated_at_transport_fare_slabs ON transport_fare_slabs;
-CREATE TRIGGER set_updated_at_transport_fare_slabs
-  BEFORE UPDATE ON transport_fare_slabs
-  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_weight_kg;
+ALTER TABLE students ADD CONSTRAINT chk_students_weight_kg CHECK (
+  weight_kg IS NULL OR (weight_kg > 0 AND weight_kg < 500)
+);
 
-ALTER TABLE transport_fare_slabs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_board_percentage;
+ALTER TABLE students ADD CONSTRAINT chk_students_board_percentage CHECK (
+  board_percentage IS NULL OR (board_percentage >= 0 AND board_percentage <= 100)
+);
 
-DROP POLICY IF EXISTS "Public can read transport slabs" ON transport_fare_slabs;
-CREATE POLICY "Public can read transport slabs"
-  ON transport_fare_slabs FOR SELECT USING (true);
+-- Mirrors scripts/migrations/erp/migration-073-telephony-call-logs.sql
+-- Click-to-call audit trail. Teachers/admins ring a student's parent/guardian
+-- from the ERP via Exotel (masked bridge); every call is logged here. No raw
+-- numbers are stored — only contact_type + the student/actor FKs. The agent
+-- leg is read from profiles.phone at call time.
+CREATE TABLE IF NOT EXISTS call_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  actor_id uuid NOT NULL REFERENCES profiles(id) ON DELETE RESTRICT,
+  student_id uuid REFERENCES students(id) ON DELETE SET NULL,
+  contact_type text NOT NULL
+    CHECK (contact_type IN ('student', 'father', 'mother', 'guardian')),
+  exotel_sid text,
+  status text NOT NULL DEFAULT 'initiated'
+    CHECK (status IN (
+      'initiated', 'error', 'queued', 'in-progress',
+      'completed', 'failed', 'busy', 'no-answer', 'canceled'
+    )),
+  duration_seconds integer,
+  recording_url text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 
-DROP POLICY IF EXISTS "Admins can insert transport slabs" ON transport_fare_slabs;
-CREATE POLICY "Admins can insert transport slabs"
-  ON transport_fare_slabs FOR INSERT
-  WITH CHECK (public.get_user_role() = 'admin');
+CREATE INDEX IF NOT EXISTS idx_call_logs_actor
+  ON call_logs (actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_call_logs_student
+  ON call_logs (student_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_call_logs_exotel_sid
+  ON call_logs (exotel_sid)
+  WHERE exotel_sid IS NOT NULL;
 
-DROP POLICY IF EXISTS "Admins can update transport slabs" ON transport_fare_slabs;
-CREATE POLICY "Admins can update transport slabs"
-  ON transport_fare_slabs FOR UPDATE
+ALTER TABLE call_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins have full access to call_logs" ON call_logs;
+CREATE POLICY "Admins have full access to call_logs"
+  ON call_logs FOR ALL
   USING (public.get_user_role() = 'admin');
-
-DROP POLICY IF EXISTS "Admins can delete transport slabs" ON transport_fare_slabs;
-CREATE POLICY "Admins can delete transport slabs"
-  ON transport_fare_slabs FOR DELETE
-  USING (public.get_user_role() = 'admin');
-
-ALTER TABLE student_enrollments
-  ADD COLUMN IF NOT EXISTS transport_slab_id uuid
-    REFERENCES transport_fare_slabs(id) ON DELETE SET NULL;
-
-CREATE INDEX IF NOT EXISTS idx_enrollments_transport_slab_id
-  ON student_enrollments(transport_slab_id) WHERE transport_slab_id IS NOT NULL;
-
--- The student_enrollments CHECK is added LAST, after the backfill below
--- has assigned slabs and normalized orphans.
-ALTER TABLE student_enrollments
-  DROP CONSTRAINT IF EXISTS student_enrollments_transport_slab_required;
-
-ALTER TABLE fee_payments
-  ADD COLUMN IF NOT EXISTS transport_slab_id uuid
-    REFERENCES transport_fare_slabs(id);
-
-CREATE INDEX IF NOT EXISTS idx_fee_payments_transport_slab_id
-  ON fee_payments(transport_slab_id) WHERE transport_slab_id IS NOT NULL;
-
-ALTER TABLE fee_payments
-  ALTER COLUMN fee_structure_id DROP NOT NULL;
-
-ALTER TABLE fee_payments
-  DROP CONSTRAINT IF EXISTS fee_payments_target_xor;
-ALTER TABLE fee_payments
-  ADD CONSTRAINT fee_payments_target_xor
-  CHECK (
-    (fee_structure_id IS NOT NULL AND transport_slab_id IS NULL)
-    OR (fee_structure_id IS NULL AND transport_slab_id IS NOT NULL)
-  );
-
-DO $$
-DECLARE
-  rec record;
-  new_slab_id uuid;
-  orphan_count int;
-BEGIN
-  IF EXISTS (SELECT 1 FROM fee_structures WHERE fee_type = 'Transport') THEN
-    FOR rec IN
-      SELECT
-        academic_year_id,
-        amount,
-        frequency,
-        string_agg(DISTINCT class_name, ', ') AS class_list,
-        array_agg(DISTINCT id) AS source_structure_ids
-      FROM fee_structures
-      WHERE fee_type = 'Transport'
-      GROUP BY academic_year_id, amount, frequency
-    LOOP
-      INSERT INTO transport_fare_slabs
-        (academic_year_id, name, amount, frequency, sort_order)
-      VALUES (
-        rec.academic_year_id,
-        'Default — ' || rec.class_list,
-        rec.amount,
-        rec.frequency,
-        0
-      )
-      ON CONFLICT (academic_year_id, name) DO UPDATE
-        SET amount = EXCLUDED.amount
-      RETURNING id INTO new_slab_id;
-
-      UPDATE fee_payments
-        SET transport_slab_id = new_slab_id,
-            fee_structure_id  = NULL
-        WHERE fee_structure_id = ANY(rec.source_structure_ids);
-
-      UPDATE student_enrollments se
-        SET transport_slab_id = new_slab_id
-        FROM classes c, fee_structures fs
-        WHERE se.class_id = c.id
-          AND se.has_transport = true
-          AND se.transport_slab_id IS NULL
-          AND se.academic_year_id = rec.academic_year_id
-          AND fs.id = ANY(rec.source_structure_ids)
-          AND fs.class_name = c.name;
-    END LOOP;
-
-    DELETE FROM fee_structures WHERE fee_type = 'Transport';
-  END IF;
-
-  -- Normalize orphans: enrollments still flagged has_transport=true with no
-  -- slab mean the class had no Transport fee_structure to migrate from.
-  -- Flip them off so the school can re-opt them in after creating a slab.
-  SELECT COUNT(*) INTO orphan_count
-    FROM student_enrollments
-    WHERE has_transport = true AND transport_slab_id IS NULL;
-
-  IF orphan_count > 0 THEN
-    UPDATE student_enrollments
-      SET has_transport = false
-      WHERE has_transport = true AND transport_slab_id IS NULL;
-    RAISE NOTICE
-      'migration 050: cleared has_transport on % enrollment(s) with no matching Transport fee.',
-      orphan_count;
-  END IF;
-END $$;
-
-ALTER TABLE student_enrollments
-  ADD CONSTRAINT student_enrollments_transport_slab_required
-  CHECK (has_transport = false OR transport_slab_id IS NOT NULL);
-
--- ─── Migration 053: transport pickup geocoding + override audit ──────────────
--- Mirrors scripts/migrations/erp/migration-053-transport-pickup-audit.sql.
-
-ALTER TABLE student_enrollments
-  ADD COLUMN IF NOT EXISTS pickup_address text,
-  ADD COLUMN IF NOT EXISTS pickup_lat numeric(10, 7),
-  ADD COLUMN IF NOT EXISTS pickup_lng numeric(10, 7),
-  ADD COLUMN IF NOT EXISTS pickup_verified_at timestamptz,
-  ADD COLUMN IF NOT EXISTS pickup_verified_by uuid
-    REFERENCES profiles(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS pickup_verified_lat numeric(10, 7),
-  ADD COLUMN IF NOT EXISTS pickup_verified_lng numeric(10, 7),
-  ADD COLUMN IF NOT EXISTS transport_slab_suggested_id uuid
-    REFERENCES transport_fare_slabs(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS transport_slab_overridden_at timestamptz,
-  ADD COLUMN IF NOT EXISTS transport_slab_overridden_by uuid
-    REFERENCES profiles(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS transport_slab_override_reason text;
-
-ALTER TABLE student_enrollments
-  DROP CONSTRAINT IF EXISTS chk_pickup_coords_paired;
-ALTER TABLE student_enrollments
-  ADD CONSTRAINT chk_pickup_coords_paired CHECK (
-    (pickup_lat IS NULL AND pickup_lng IS NULL)
-    OR (pickup_lat IS NOT NULL AND pickup_lng IS NOT NULL)
-  );
-
-ALTER TABLE student_enrollments
-  DROP CONSTRAINT IF EXISTS chk_pickup_verified_coords_paired;
-ALTER TABLE student_enrollments
-  ADD CONSTRAINT chk_pickup_verified_coords_paired CHECK (
-    (pickup_verified_lat IS NULL AND pickup_verified_lng IS NULL)
-    OR (pickup_verified_lat IS NOT NULL AND pickup_verified_lng IS NOT NULL)
-  );
-
-ALTER TABLE student_enrollments
-  DROP CONSTRAINT IF EXISTS chk_override_reason_required;
-ALTER TABLE student_enrollments
-  ADD CONSTRAINT chk_override_reason_required CHECK (
-    transport_slab_overridden_at IS NULL
-    OR (transport_slab_override_reason IS NOT NULL
-        AND length(btrim(transport_slab_override_reason)) >= 3)
-  );
-
-CREATE INDEX IF NOT EXISTS idx_enrollments_pickup_unverified
-  ON student_enrollments(has_transport, pickup_verified_at)
-  WHERE has_transport = true AND pickup_verified_at IS NULL;
-
-CREATE INDEX IF NOT EXISTS idx_enrollments_slab_overridden
-  ON student_enrollments(transport_slab_overridden_at)
-  WHERE transport_slab_overridden_at IS NOT NULL;
-
--- ─── Migration 054: payment_method 'historical_unknown' for bulk imports ─────
--- Adds a new enum value so rows ingested from the previous ERP software
--- (where the payment channel was never recorded) can be tagged accurately
--- instead of being defaulted to 'cash' and skewing channel-mix reports.
-
-ALTER TABLE fee_payments DROP CONSTRAINT IF EXISTS fee_payments_payment_method_check;
-ALTER TABLE fee_payments ADD CONSTRAINT fee_payments_payment_method_check
-  CHECK (
-    payment_method IN (
-      'cash',
-      'online',
-      'cheque',
-      'bank_transfer',
-      'upi',
-      'gateway',
-      'waiver',
-      'historical_unknown'
-    )
-  );
-
--- ─── Migration 055: transport slab cascade cleanup ──────────────────────────
--- Mirrors scripts/migrations/erp/migration-055-transport-slab-cascade-cleanup.sql.
--- Opts students out of transport automatically when a slab is deleted or
--- deactivated, plus an RPC the admin UI can call to count affected students
--- before showing the delete confirm.
-
-CREATE OR REPLACE FUNCTION trg_clear_transport_on_slab_change()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    UPDATE student_enrollments
-      SET has_transport = false,
-          transport_slab_id = NULL,
-          transport_slab_suggested_id = NULL,
-          transport_slab_overridden_at = NULL,
-          transport_slab_overridden_by = NULL,
-          transport_slab_override_reason = NULL,
-          updated_at = now()
-    WHERE transport_slab_id = OLD.id;
-    RETURN OLD;
-  END IF;
-
-  IF TG_OP = 'UPDATE'
-     AND OLD.is_active = true
-     AND NEW.is_active = false THEN
-    UPDATE student_enrollments
-      SET has_transport = false,
-          transport_slab_id = NULL,
-          transport_slab_suggested_id = NULL,
-          transport_slab_overridden_at = NULL,
-          transport_slab_overridden_by = NULL,
-          transport_slab_override_reason = NULL,
-          updated_at = now()
-    WHERE transport_slab_id = NEW.id;
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS slab_before_delete_clear_enrollments ON transport_fare_slabs;
-CREATE TRIGGER slab_before_delete_clear_enrollments
-  BEFORE DELETE ON transport_fare_slabs
-  FOR EACH ROW
-  EXECUTE FUNCTION trg_clear_transport_on_slab_change();
-
-DROP TRIGGER IF EXISTS slab_after_deactivate_clear_enrollments ON transport_fare_slabs;
-CREATE TRIGGER slab_after_deactivate_clear_enrollments
-  AFTER UPDATE OF is_active ON transport_fare_slabs
-  FOR EACH ROW
-  WHEN (OLD.is_active IS DISTINCT FROM NEW.is_active)
-  EXECUTE FUNCTION trg_clear_transport_on_slab_change();
-
-CREATE OR REPLACE FUNCTION count_transport_slab_dependents(p_slab_id uuid)
-RETURNS integer
-LANGUAGE sql
-STABLE
-AS $$
-  SELECT COUNT(*)::integer
-    FROM student_enrollments
-   WHERE transport_slab_id = p_slab_id
-     AND has_transport = true;
-$$;
-
--- Deferred audit / filter indexes (migration 031). Defined here at the end
--- because their target tables are created later in the schema than the rest
--- of the section 3/4 indexes.
-CREATE INDEX IF NOT EXISTS idx_class_test_results_entered_by
-  ON class_test_results(entered_by);
-CREATE INDEX IF NOT EXISTS idx_non_scholastic_assessments_entered_by
-  ON non_scholastic_assessments(entered_by);
-CREATE INDEX IF NOT EXISTS idx_student_remarks_author_id
-  ON student_remarks(author_id);
-CREATE INDEX IF NOT EXISTS idx_class_tests_created_by
-  ON class_tests(created_by);
-CREATE INDEX IF NOT EXISTS idx_class_tests_is_published
-  ON class_tests(is_published) WHERE is_published = true;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { classTestMarksBulkSchema } from "@nkps/shared/lib/validations";
 import { computeGrade, resolveGradeScaleForClass } from "@/lib/grading";
 import {
@@ -152,9 +153,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     });
   }
 
+  // Editors (role 'staff') hold the `class_tests` permission but
+  // class_test_results has no RLS policy for their role, so the RLS-bound
+  // cookie client silently drops their writes. Execute the write/clear on the
+  // service-role client. All auth/permission/teacher-ownership checks above
+  // remain on the cookie client and are unchanged.
+  const admin = createAdminClient();
+
   let saved = 0;
   if (toUpsert.length > 0) {
-    const { error } = await supabase
+    const { error } = await admin
       .from("class_test_results")
       .upsert(toUpsert, { onConflict: "class_test_id,student_id" });
     if (error) {
@@ -169,7 +177,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   let cleared = 0;
   if (toDelete.length > 0) {
-    const { error, count } = await supabase
+    const { error, count } = await admin
       .from("class_test_results")
       .delete({ count: "exact" })
       .eq("class_test_id", id)

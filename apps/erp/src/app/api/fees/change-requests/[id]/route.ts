@@ -47,11 +47,14 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   }
 
   // Live target row — used by the UI to detect drift vs current_snapshot.
-  const { data: liveRow } = await admin
-    .from(req.target_table)
-    .select("*")
-    .eq("id", req.target_id)
-    .maybeSingle();
+  // An insert request has no target row, so there's nothing to load.
+  const { data: liveRow } = req.target_id
+    ? await admin
+        .from(req.target_table)
+        .select("*")
+        .eq("id", req.target_id)
+        .maybeSingle()
+    : { data: null };
 
   return NextResponse.json({
     request: {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { ptmNotesBulkSchema } from "@nkps/shared/lib/validations";
+import { getTeacherIdForUser, getTeacherStudentIds } from "@/lib/teacher-scope";
 
 // GET /api/ptm-notes?class_id=&exam_type_id=&student_id=
 // Returns ptm_notes matching the filters. RLS scopes visibility:
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, teacher_id")
     .eq("id", user.id)
     .single();
   if (!profile) {
@@ -103,6 +105,28 @@ export async function POST(request: Request) {
     );
   }
   const { exam_type_id, entries } = parsed.data;
+
+  // Explicit teacher-scope guard (defense-in-depth alongside the ptm_notes RLS
+  // WITH CHECK). A teacher may only write notes for students in their class
+  // scope; admins / staff-with-grant are not class-scoped. Returns a clean 403
+  // instead of letting RLS silently drop out-of-scope rows. (Phase 3)
+  if (profile.role === "teacher") {
+    const admin = createAdminClient();
+    const teacherId =
+      (profile.teacher_id as string | null) ??
+      (await getTeacherIdForUser(admin, user.id));
+    if (!teacherId) {
+      return NextResponse.json({ error: "No teacher record linked to this account" }, { status: 403 });
+    }
+    const inScope = await getTeacherStudentIds(admin, teacherId);
+    const outOfScope = entries.filter((e) => !inScope.has(e.student_id));
+    if (outOfScope.length > 0) {
+      return NextResponse.json(
+        { error: "You can only record PTM notes for students in your own classes." },
+        { status: 403 }
+      );
+    }
+  }
 
   const rows = entries.map((e) => ({
     student_id: e.student_id,

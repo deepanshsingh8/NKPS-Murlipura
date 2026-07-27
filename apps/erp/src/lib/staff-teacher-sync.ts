@@ -165,6 +165,19 @@ export async function promoteStaffToTeacher(
     .select("id")
     .single();
   if (insertErr || !teacherRow) {
+    // A concurrent provisioning action (auto-create-on-add + "Convert to
+    // teacher") can win the race between our select above and this insert.
+    // The partial unique index on teachers(staff_member_id) (migration 083)
+    // then rejects our insert with 23505 — recover by re-selecting the row the
+    // other action created so the operation stays idempotent. (Audit #31.)
+    if (insertErr?.code === "23505") {
+      const { data: raced } = await admin
+        .from("teachers")
+        .select("id")
+        .eq("staff_member_id", staffId)
+        .maybeSingle();
+      if (raced) return { teacher_id: raced.id as string, created: false };
+    }
     console.error("[staff-teacher-sync] create teacher:", insertErr);
     return { error: "Failed to create teacher record" };
   }

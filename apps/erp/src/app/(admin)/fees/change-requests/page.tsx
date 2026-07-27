@@ -27,9 +27,9 @@ type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 interface ChangeRequest {
   id: string;
   target_table: string;
-  target_id: string;
-  action: "update" | "delete";
-  current_snapshot: Record<string, unknown>;
+  target_id: string | null;
+  action: "insert" | "update" | "delete";
+  current_snapshot: Record<string, unknown> | null;
   proposed_changes: Record<string, unknown>;
   reason: string;
   status: RequestStatus;
@@ -82,10 +82,16 @@ function formatTimestamp(ts: string | null): string {
 }
 
 function summarizeProposedChanges(
-  action: "update" | "delete",
+  action: "insert" | "update" | "delete",
   proposed: Record<string, unknown>
 ): string {
   if (action === "delete") return "Delete this payment row";
+  if (action === "insert") {
+    const amt = proposed.waiver_amount;
+    return proposed.payment_method === "waiver"
+      ? `New waiver: ${formatValue(amt)}`
+      : "Insert a new payment row";
+  }
   const keys = Object.keys(proposed);
   if (keys.length === 0) return "—";
   if (keys.length === 1) {
@@ -381,13 +387,34 @@ export default function FeeChangeRequestsPage() {
                           key={k}
                           field={k}
                           current={
-                            (detailReq.current_snapshot as Record<string, unknown>)[k]
+                            (detailReq.current_snapshot as Record<string, unknown> | null)?.[k]
                           }
                           proposed={detailReq.proposed_changes[k]}
                         />
                       ))}
                     </div>
                   </div>
+                </div>
+              ) : detailReq.action === "insert" ? (
+                <div>
+                  <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">
+                    New record to be created
+                  </h3>
+                  <div className="rounded-md border bg-gray-50 dark:bg-muted/40 text-xs">
+                    {Object.entries(detailReq.proposed_changes).map(([k, v]) => (
+                      <div
+                        key={k}
+                        className="grid grid-cols-[1fr_1fr] border-b last:border-b-0"
+                      >
+                        <div className="px-3 py-2 border-r text-gray-500">{k}</div>
+                        <div className="px-3 py-2">{formatValue(v)}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Approving will create this waiver after re-checking it against
+                    the current dues.
+                  </p>
                 </div>
               ) : (
                 <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-900 dark:text-red-200">

@@ -1,16 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { buildGreenSheetData } from "@/lib/green-sheet";
-import { contentDispositionAttachment } from "@nkps/shared/lib/utils";
-
-function csvEscape(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
+import { contentDispositionAttachment, csvEscape } from "@nkps/shared/lib/utils";
 
 function safe(s: string): string {
   return s.replace(/[^\w\-]+/g, "_");
@@ -55,7 +47,9 @@ export async function GET(request: Request) {
     );
   }
 
-  const data = await buildGreenSheetData(supabase, classId, academicYearId);
+  // Build on the service-role client: the `results` table has no editor/staff
+  // SELECT policy, so a cookie-scoped read would return blank sheets. (Audit #29)
+  const data = await buildGreenSheetData(createAdminClient(), classId, academicYearId);
   if (!data) {
     return NextResponse.json(
       { error: "Class or academic year not found" },

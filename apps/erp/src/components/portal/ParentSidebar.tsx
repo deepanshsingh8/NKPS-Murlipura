@@ -9,6 +9,7 @@ import {
   Clock,
   IdCard,
   MessageSquare,
+  Bus,
 } from "lucide-react";
 import { PortalSidebar } from "./PortalSidebar";
 
@@ -42,6 +43,11 @@ const navLinks = [
     href: "/parent/fees",
     label: "Fees",
     icon: <CreditCard className="h-5 w-5 shrink-0" />,
+  },
+  {
+    href: "/parent/transport",
+    label: "Transport",
+    icon: <Bus className="h-5 w-5 shrink-0" />,
   },
   {
     href: "/parent/calendar",

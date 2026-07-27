@@ -52,12 +52,15 @@ export async function POST(request: Request) {
       return finalize({ success: true });
     }
 
-    // Derive the site origin from the request so the reset link always points
-    // at the same host the user is currently on (production, Vercel preview,
-    // localhost) — falling back to the configured ERP URL since /auth/confirm
-    // and the reset-password page both live on the ERP app.
+    // Build the reset link on the configured ERP URL ONLY. We must NOT use the
+    // request's Origin/Host headers here: those are attacker-controlled, and an
+    // attacker could request a reset for a victim while spoofing
+    // `Origin: https://evil.tld`, causing the genuine one-time recovery token
+    // to be emailed to the victim inside a link that points at the attacker's
+    // server (token-exfiltration → account takeover). /auth/confirm and the
+    // reset-password page both live on the ERP app, so getErpUrl() is correct.
     const { getErpUrl } = await import("@nkps/shared/lib/cross-app");
-    const origin = request.headers.get("origin") || getErpUrl();
+    const origin = getErpUrl();
 
     const supabase = createAdminClient();
 

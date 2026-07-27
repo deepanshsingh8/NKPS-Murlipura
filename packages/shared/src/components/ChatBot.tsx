@@ -119,7 +119,7 @@ export function ChatBot() {
         {
           role: "assistant",
           content:
-            "Sorry, I'm having trouble connecting. Please try again or contact the school at +91-9785500042.",
+            "Sorry, I'm having trouble connecting. Please try again or contact the school at +91-9785500046.",
         },
       ]);
     } finally {

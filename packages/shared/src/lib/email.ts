@@ -1,9 +1,24 @@
 import { Resend } from "resend";
 import { SCHOOL } from "@nkps/shared/lib/constants";
 
+/**
+ * Escape a string for safe interpolation into HTML email bodies. User-supplied
+ * fields (contact form, rejection reasons) must pass through this before being
+ * placed in markup, otherwise a submitter can inject arbitrary HTML/links that
+ * render in the recipient's mail client.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL =
-  process.env.FROM_EMAIL || `${SCHOOL.name} <noreply@nkpsmurlipura.com>`;
+  process.env.FROM_EMAIL || `${SCHOOL.name} <noreply@nkpublicschool.com>`;
 const REPLY_TO_EMAIL = process.env.REPLY_TO_EMAIL || SCHOOL.email[0];
 
 let cachedClient: Resend | null = null;
@@ -100,11 +115,14 @@ interface WelcomeEmailParams {
 }
 
 export function buildWelcomeEmail({ fullName, email, password, loginUrl, role }: WelcomeEmailParams): string {
-  const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+  const roleLabel = escapeHtml(role.charAt(0).toUpperCase() + role.slice(1));
+  const safeName = escapeHtml(fullName);
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(password);
   return emailWrapper(`
     <h2 style="margin:0 0 12px;font-size:22px;color:#1a2332;font-weight:700;">Welcome to the ${SCHOOL.shortName} Portal</h2>
     <p style="margin:0 0 20px;font-size:15px;color:#444;line-height:1.6;">
-      Hello <strong>${fullName}</strong>,
+      Hello <strong>${safeName}</strong>,
     </p>
     <p style="margin:0 0 24px;font-size:15px;color:#444;line-height:1.6;">
       An account has been created for you on the <strong>${SCHOOL.name}</strong> portal as a
@@ -116,9 +134,9 @@ export function buildWelcomeEmail({ fullName, email, password, loginUrl, role }:
       <tr>
         <td style="padding:20px 24px;">
           <p style="margin:0 0 6px;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Username (Email)</p>
-          <p style="margin:0 0 18px;font-size:15px;color:#1a2332;font-weight:600;word-break:break-all;">${email}</p>
+          <p style="margin:0 0 18px;font-size:15px;color:#1a2332;font-weight:600;word-break:break-all;">${safeEmail}</p>
           <p style="margin:0 0 6px;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">Temporary Password</p>
-          <p style="margin:0;font-size:16px;color:#1a2332;font-weight:700;font-family:'Courier New',monospace;letter-spacing:1px;background:#ffffff;border:1px dashed #d4a843;border-radius:6px;padding:10px 14px;display:inline-block;">${password}</p>
+          <p style="margin:0;font-size:16px;color:#1a2332;font-weight:700;font-family:'Courier New',monospace;letter-spacing:1px;background:#ffffff;border:1px dashed #d4a843;border-radius:6px;padding:10px 14px;display:inline-block;">${safePassword}</p>
         </td>
       </tr>
     </table>
@@ -187,7 +205,8 @@ export function buildPasswordResetEmail({
   resetLink,
   expiresInMinutes = 60,
 }: PasswordResetEmailParams): string {
-  const greetingName = fullName && fullName.trim().length > 0 ? fullName : "there";
+  const greetingName = escapeHtml(fullName && fullName.trim().length > 0 ? fullName : "there");
+  const safeEmail = escapeHtml(email);
   return emailWrapper(`
     <h2 style="margin:0 0 12px;font-size:22px;color:#1a2332;font-weight:700;">Reset your ${SCHOOL.shortName} portal password</h2>
     <p style="margin:0 0 20px;font-size:15px;color:#444;line-height:1.6;">
@@ -195,7 +214,7 @@ export function buildPasswordResetEmail({
     </p>
     <p style="margin:0 0 24px;font-size:15px;color:#444;line-height:1.6;">
       We received a request to reset the password for the ${SCHOOL.name} portal account associated with
-      <strong>${email}</strong>. Click the button below to choose a new password.
+      <strong>${safeEmail}</strong>. Click the button below to choose a new password.
     </p>
 
     <!-- CTA -->
@@ -254,8 +273,8 @@ export function buildRegistrationReceivedEmail({ fullName, role }: RegistrationR
   return emailWrapper(`
     <h2 style="margin:0 0 16px;font-size:20px;color:#1a2332;">Registration Received</h2>
     <p style="margin:0 0 24px;font-size:15px;color:#444;line-height:1.6;">
-      Hello <strong>${fullName}</strong>,<br>
-      Thank you for registering as a <strong>${role}</strong> on the ${SCHOOL.name} portal.
+      Hello <strong>${escapeHtml(fullName)}</strong>,<br>
+      Thank you for registering as a <strong>${escapeHtml(role)}</strong> on the ${SCHOOL.name} portal.
     </p>
     <div style="background-color:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:20px 24px;margin-bottom:24px;">
       <p style="margin:0;font-size:14px;color:#0369a1;line-height:1.6;">
@@ -280,14 +299,14 @@ export function buildRegistrationRejectedEmail({ fullName, reason }: Registratio
   const reasonBlock = reason
     ? `<div style="background-color:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
         <p style="margin:0 0 4px;font-size:13px;color:#888;">Reason</p>
-        <p style="margin:0;font-size:14px;color:#991b1b;line-height:1.5;">${reason}</p>
+        <p style="margin:0;font-size:14px;color:#991b1b;line-height:1.5;">${escapeHtml(reason)}</p>
       </div>`
     : "";
 
   return emailWrapper(`
     <h2 style="margin:0 0 16px;font-size:20px;color:#1a2332;">Registration Update</h2>
     <p style="margin:0 0 24px;font-size:15px;color:#444;line-height:1.6;">
-      Hello <strong>${fullName}</strong>,<br>
+      Hello <strong>${escapeHtml(fullName)}</strong>,<br>
       We regret to inform you that your registration request for the ${SCHOOL.name} portal was not approved at this time.
     </p>
     ${reasonBlock}
@@ -318,31 +337,38 @@ export function buildContactNotificationEmail({
   subject,
   message,
 }: ContactNotificationParams): string {
+  // Escape every user-supplied field before placing it in the HTML body.
+  const safeName = escapeHtml(fullName);
+  const safeEmail = escapeHtml(email);
+  const safeEmailHref = encodeURIComponent(email);
+  const safePhone = escapeHtml(phone);
+  const safeSubject = escapeHtml(subject);
+  const safeMessage = escapeHtml(message);
   return emailWrapper(`
     <h2 style="margin:0 0 16px;font-size:20px;color:#1a2332;">New Contact Form Submission</h2>
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
       <tr>
         <td style="padding:8px 0;font-size:13px;color:#888;width:80px;vertical-align:top;">Name</td>
-        <td style="padding:8px 0;font-size:15px;color:#1a2332;font-weight:600;">${fullName}</td>
+        <td style="padding:8px 0;font-size:15px;color:#1a2332;font-weight:600;">${safeName}</td>
       </tr>
       <tr>
         <td style="padding:8px 0;font-size:13px;color:#888;vertical-align:top;">Email</td>
         <td style="padding:8px 0;font-size:15px;color:#1a2332;">
-          <a href="mailto:${email}" style="color:#d4a843;">${email}</a>
+          <a href="mailto:${safeEmailHref}" style="color:#d4a843;">${safeEmail}</a>
         </td>
       </tr>
       <tr>
         <td style="padding:8px 0;font-size:13px;color:#888;vertical-align:top;">Phone</td>
-        <td style="padding:8px 0;font-size:15px;color:#1a2332;">${phone}</td>
+        <td style="padding:8px 0;font-size:15px;color:#1a2332;">${safePhone}</td>
       </tr>
       <tr>
         <td style="padding:8px 0;font-size:13px;color:#888;vertical-align:top;">Subject</td>
-        <td style="padding:8px 0;font-size:15px;color:#1a2332;font-weight:600;">${subject}</td>
+        <td style="padding:8px 0;font-size:15px;color:#1a2332;font-weight:600;">${safeSubject}</td>
       </tr>
     </table>
     <div style="background-color:#faf8f3;border:1px solid #e8e4d9;border-radius:8px;padding:20px 24px;margin-bottom:24px;">
       <p style="margin:0 0 8px;font-size:13px;color:#888;">Message</p>
-      <p style="margin:0;font-size:14px;color:#1a2332;line-height:1.6;white-space:pre-wrap;">${message}</p>
+      <p style="margin:0;font-size:14px;color:#1a2332;line-height:1.6;white-space:pre-wrap;">${safeMessage}</p>
     </div>
     <p style="margin:0;font-size:13px;color:#888;">
       This submission has been saved to the admin dashboard. You can view and manage all messages from the Contact section.

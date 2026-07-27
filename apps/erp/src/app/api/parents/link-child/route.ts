@@ -3,6 +3,11 @@ import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { createClient } from "@nkps/shared/lib/supabase/server";
 import { linkChildSchema } from "@nkps/shared/lib/validations";
 import { rateLimit, clientIp } from "@nkps/shared/lib/rate-limit";
+import {
+  ensureParentRecord,
+  linkProfileToParent,
+  linkParentToStudentRecord,
+} from "@/lib/identity/link";
 
 const MAX_CHILDREN_PER_PARENT = 10;
 
@@ -21,7 +26,7 @@ export async function POST(request: Request) {
     // Verify caller is a parent with a linked parent record
     const { data: profile } = await serverSupabase
       .from("profiles")
-      .select("role, parent_id")
+      .select("role, parent_id, full_name, email, phone")
       .eq("id", user.id)
       .single();
 
@@ -32,9 +37,44 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!profile.parent_id) {
+    // A verified parent should already have a linked `parents` row — migration
+    // 068 prevents creating role='parent' without parent_id. Defensive fallback
+    // for any pre-068 account that slipped through: provision + link via the
+    // canonical service (find-or-create by email handles the duplicate-email
+    // case that used to fail silently). The per-child relationship is captured
+    // below in student_parents.
+    let parentId = profile.parent_id as string | null;
+    if (!parentId) {
+      const heal = createAdminClient();
+      const parent = await ensureParentRecord(heal, {
+        email: profile.email,
+        fullName: profile.full_name,
+        phone: profile.phone,
+      });
+      if ("error" in parent) {
+        return NextResponse.json(
+          { error: "Parent profile not set up. Please contact the school administration." },
+          { status: 403 }
+        );
+      }
+      const linked = await linkProfileToParent(heal, user.id, parent.parentId);
+      if (!linked.ok) {
+        return NextResponse.json(
+          { error: "Parent profile not set up. Please contact the school administration." },
+          { status: 403 }
+        );
+      }
+      parentId = parent.parentId;
+    }
+
+    // Provisioning above either resolved a parent id or returned; this guard
+    // makes that invariant explicit (and narrows the type for the rest).
+    if (!parentId) {
       return NextResponse.json(
-        { error: "Parent profile not set up. Please contact the school administration." },
+        {
+          error:
+            "Parent profile not set up. Please contact the school administration.",
+        },
         { status: 403 }
       );
     }
@@ -45,7 +85,7 @@ export async function POST(request: Request) {
     // Generous enough that a parent linking a few siblings will never hit it.
     const parentLimit = rateLimit({
       name: "link-child:parent",
-      key: profile.parent_id,
+      key: parentId,
       max: 5,
       windowSeconds: 30 * 60,
     });
@@ -116,14 +156,17 @@ export async function POST(request: Request) {
     }
     if (student.date_of_birth !== date_of_birth) return verifyFailed;
 
-    // Check for existing link
+    // Already-linked is a no-op that must be reported as such — check it BEFORE
+    // the cap, otherwise a parent at the cap re-submitting a child they've
+    // already linked gets the misleading "maximum number of children" error
+    // (the cap count includes that existing link). linkParentToStudentRecord is
+    // idempotent, but its alreadyLinked signal only surfaces after the cap gate.
     const { data: existingLink } = await supabase
       .from("student_parents")
       .select("id")
       .eq("student_id", student.id)
-      .eq("parent_id", profile.parent_id)
-      .single();
-
+      .eq("parent_id", parentId)
+      .maybeSingle();
     if (existingLink) {
       return NextResponse.json(
         { error: "This child is already linked to your account" },
@@ -137,7 +180,7 @@ export async function POST(request: Request) {
     const { count: ownChildrenCount } = await supabase
       .from("student_parents")
       .select("id", { count: "exact", head: true })
-      .eq("parent_id", profile.parent_id);
+      .eq("parent_id", parentId);
     if ((ownChildrenCount ?? 0) >= MAX_CHILDREN_PER_PARENT) {
       return NextResponse.json(
         {
@@ -148,38 +191,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // Determine primary contact status
-    const { count } = await supabase
-      .from("student_parents")
-      .select("id", { count: "exact", head: true })
-      .eq("student_id", student.id);
-
-    const isPrimary = (count ?? 0) === 0;
-
-    // Create the junction record
-    const { error: insertError } = await supabase
-      .from("student_parents")
-      .insert({
-        student_id: student.id,
-        parent_id: profile.parent_id,
-        relationship,
-        is_primary_contact: isPrimary,
-      });
-
-    if (insertError) {
-      // Handle unique constraint violation (race condition)
-      if (insertError.code === "23505") {
-        return NextResponse.json(
-          { error: "This child is already linked to your account" },
-          { status: 409 }
-        );
-      }
-      console.error("Failed to link child:", insertError);
+    // Create the junction via the canonical service (computes primary-contact,
+    // idempotent on the unique constraint / race).
+    const linked = await linkParentToStudentRecord(supabase, {
+      studentId: student.id,
+      parentId,
+      relationship,
+    });
+    if (!linked.ok) {
+      return NextResponse.json({ error: linked.error }, { status: linked.status });
+    }
+    if (linked.alreadyLinked) {
       return NextResponse.json(
-        { error: "Failed to link child. Please try again." },
-        { status: 500 }
+        { error: "This child is already linked to your account" },
+        { status: 409 }
       );
     }
+    const isPrimary = linked.isPrimaryContact ?? false;
 
     // Fetch enrollment info to return full child data
     const { data: enrollment } = await supabase

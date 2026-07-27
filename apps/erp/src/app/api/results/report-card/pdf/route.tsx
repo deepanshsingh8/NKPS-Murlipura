@@ -6,6 +6,7 @@ import { createClient } from "@nkps/shared/lib/supabase/server";
 import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { canViewReportCard, getReportCardData } from "@/lib/report-card";
 import type { ReportCardExamGroup } from "@/lib/report-card";
+import { getStudentOutstandingDues, dueGateApplies } from "@/lib/student-dues";
 import { ReportCardPDF } from "@/components/pdf/ReportCardPDF";
 import { getPdfTemplate } from "@/lib/pdf-templates";
 import { contentDispositionAttachment } from "@nkps/shared/lib/utils";
@@ -76,6 +77,22 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    // Fee-dues gate: students and parents can see results exist but cannot
+    // download the marksheet while fees are outstanding. Admin/staff/teacher are
+    // never blocked. Service-role client so parents are evaluated correctly.
+    if (await dueGateApplies(supabase, user.id)) {
+      const dues = await getStudentOutstandingDues(createAdminClient(), studentId);
+      if (dues.hasOutstanding) {
+        return NextResponse.json(
+          {
+            error: "Outstanding fee dues",
+            message: `Result download is locked until fees are cleared. Outstanding dues: ₹${dues.total.toLocaleString("en-IN")}.`,
+          },
+          { status: 403 }
+        );
+      }
+    }
+
     // Caller-role gate (audit H2): students/parents only see published marks
     // through the live-compute path. The snapshot path (read further down)
     // is unaffected because finalized snapshots are by definition published.
@@ -122,6 +139,26 @@ export async function GET(request: Request) {
         .maybeSingle();
 
       if (activeRow?.snapshot) {
+        // A finalized snapshot must still honour the live publish gate for the
+        // people it was distributed to: if an admin un-publishes this class's
+        // results for the exam, students/parents can no longer download the
+        // frozen marksheet. Staff (admin/teacher) keep operational access. The
+        // snapshot row itself is left untouched (audit-quality), so re-publish
+        // restores access with no re-finalize needed.
+        if (!callerIsStaff) {
+          const { count: publishedCount } = await adminClient
+            .from("results")
+            .select("id", { count: "exact", head: true })
+            .eq("student_id", studentId)
+            .eq("exam_type_id", examTypeId)
+            .eq("is_published", true);
+          if (!publishedCount) {
+            return NextResponse.json(
+              { error: "Results for this exam are not currently published." },
+              { status: 403 }
+            );
+          }
+        }
         // Reject snapshots whose schema version we don't know how to render.
         // The marksheet_publications.schema_version column is the source of
         // truth (the JSON's own field is informational); falling back to the
@@ -374,6 +411,7 @@ export async function GET(request: Request) {
       const ranks = await computeRanksForClass(supabase, {
         class_id: classId,
         academic_year_id: yearId,
+        includeUnpublished: callerIsStaff,
       });
       const rank = ranks.get(studentId) ?? null;
       enriched = { ...finalResult, rank };

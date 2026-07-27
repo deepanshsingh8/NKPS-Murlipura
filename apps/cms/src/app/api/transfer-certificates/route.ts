@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
+import { extractStoragePath } from "@nkps/shared/lib/storage-paths";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -155,6 +156,57 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// GET serves two reads for the TC page, both via the service-role client.
+// The page can't read these tables with the browser anon client because their
+// RLS requires an authenticated/admin session that the CMS browser client
+// doesn't carry — so the list and student-search must go through this route.
+//   • (default)            → list all transfer certificates
+//   • ?studentSearch=<q>   → active-student lookup for the upload dialog
+export async function GET(request: NextRequest) {
+  const admin = await verifyAdminOrEditor("transfer_certificates");
+  if (!admin) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const studentSearch = searchParams.get("studentSearch");
+
+  if (studentSearch !== null) {
+    const q = studentSearch.trim();
+    if (q.length < 2) {
+      return NextResponse.json({ students: [] });
+    }
+    // Strip characters that have meaning in a PostgREST `.or()` filter string
+    // so the user query can't inject extra filter logic.
+    const safe = q.replace(/[,().*\\%]/g, " ").trim();
+    if (safe.length < 2) {
+      return NextResponse.json({ students: [] });
+    }
+    const { data, error } = await admin
+      .from("students")
+      .select("*")
+      .or(`full_name.ilike.%${safe}%,admission_no.ilike.%${safe}%`)
+      .eq("is_active", true)
+      .order("full_name")
+      .limit(10);
+    if (error) {
+      console.error("TC student search error:", error);
+      return NextResponse.json({ error: "Failed to search students" }, { status: 500 });
+    }
+    return NextResponse.json({ students: data ?? [] });
+  }
+
+  const { data, error } = await admin
+    .from("transfer_certificates")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.error("TC list error:", error);
+    return NextResponse.json({ error: "Failed to fetch certificates" }, { status: 500 });
+  }
+  return NextResponse.json({ certificates: data ?? [] });
+}
+
 export async function DELETE(request: NextRequest) {
   const admin = await verifyAdminOrEditor("transfer_certificates");
   if (!admin) {
@@ -162,12 +214,22 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { id, fileUrl } = await request.json();
+    const { id } = await request.json();
 
-    const urlParts = (fileUrl as string).split("/");
-    const fileName = urlParts[urlParts.length - 1];
+    // Re-derive the object path from the DB row (not the client-supplied
+    // fileUrl) so a crafted body can't delete an arbitrary stored object.
+    const { data: row } = await admin
+      .from("transfer_certificates")
+      .select("file_url, student_id")
+      .eq("id", id)
+      .maybeSingle();
+    const fileName = row
+      ? extractStoragePath(row.file_url, "transfer-certificates")
+      : null;
 
-    await admin.storage.from("transfer-certificates").remove([fileName]);
+    if (fileName) {
+      await admin.storage.from("transfer-certificates").remove([fileName]);
+    }
 
     const { error } = await admin
       .from("transfer_certificates")
@@ -177,6 +239,39 @@ export async function DELETE(request: NextRequest) {
     if (error) {
       console.error("TC delete DB error:", error);
       return NextResponse.json({ error: "Failed to delete certificate" }, { status: 500 });
+    }
+
+    // Removing a TC reopens the student it closed: undo the close that the
+    // upload performed (students.is_active=false + most-recent enrollment
+    // terminated). Best-effort — failures are logged, not fatal, and the admin
+    // can still fix status from the students page.
+    const studentId = row?.student_id as string | null | undefined;
+    if (studentId) {
+      const { error: reactivateErr } = await admin
+        .from("students")
+        .update({ is_active: true })
+        .eq("id", studentId);
+      if (reactivateErr) {
+        console.error("TC delete: failed to reactivate student:", reactivateErr);
+      }
+
+      const { data: terminatedEnrollment } = await admin
+        .from("student_enrollments")
+        .select("id")
+        .eq("student_id", studentId)
+        .eq("status", "terminated")
+        .order("enrollment_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (terminatedEnrollment?.id) {
+        const { error: enrollmentErr } = await admin
+          .from("student_enrollments")
+          .update({ status: "active" })
+          .eq("id", terminatedEnrollment.id);
+        if (enrollmentErr) {
+          console.error("TC delete: failed to revert enrollment status:", enrollmentErr);
+        }
+      }
     }
 
     return NextResponse.json({ success: true });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAdmin } from "@nkps/shared/lib/verify-admin";
+import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { z } from "zod";
 
 const scheduleSchema = z.object({
@@ -16,7 +16,7 @@ const scheduleSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const admin = await verifyAdmin();
+  const admin = await verifyAdminOrEditor("exam_timetable");
   if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const admin = await verifyAdmin();
+  const admin = await verifyAdminOrEditor("exam_timetable");
   if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

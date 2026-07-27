@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminWithUser } from "@nkps/shared/lib/verify-admin";
 import { feeChangeRequestReviewSchema } from "@nkps/shared/lib/validations";
+import { validateWaiver } from "@/lib/fee-waiver";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -107,12 +108,56 @@ export async function POST(request: NextRequest, context: RouteContext) {
     console.error(`[fee-change-requests.approve] reverted: ${reason}`);
   };
 
-  // Snapshot the live row for the audit log (and to detect drift).
-  const { data: liveRow, error: liveErr } = await admin
-    .from(claimed.target_table)
-    .select("*")
-    .eq("id", claimed.target_id)
-    .maybeSingle();
+  // For an INSERT there is no live target row. Apply it on its own path: a
+  // proposed waiver is re-validated against the *current* ledger (cap + dedup)
+  // so it can't slip through after the student paid or another waiver landed
+  // between request and approval.
+  let insertedId: string | null = null;
+  let insertedRow: Record<string, unknown> | null = null;
+  if (claimed.action === "insert") {
+    const proposed = (claimed.proposed_changes ?? {}) as Record<string, unknown>;
+    if (proposed.payment_method === "waiver") {
+      const recheck = await validateWaiver(admin, {
+        student_id: String(proposed.student_id ?? ""),
+        fee_structure_id: String(proposed.fee_structure_id ?? ""),
+        waiver_amount: Number(proposed.waiver_amount ?? 0),
+        waiver_reason: String(proposed.waiver_reason ?? ""),
+        month: (proposed.month as string | null) ?? null,
+      });
+      if (!recheck.ok) {
+        await revert(`waiver re-validation failed: ${recheck.error}`);
+        return NextResponse.json(
+          { error: `Cannot approve waiver: ${recheck.error}` },
+          { status: 409 }
+        );
+      }
+    }
+    const { data: created, error: insErr } = await admin
+      .from(claimed.target_table)
+      .insert(proposed)
+      .select("*")
+      .single();
+    if (insErr || !created) {
+      await revert(`insert failed: ${insErr?.message}`);
+      return NextResponse.json(
+        { error: "Failed to apply insert. Request reverted to pending." },
+        { status: 500 }
+      );
+    }
+    insertedId = created.id as string;
+    insertedRow = created;
+  }
+
+  // Snapshot the live row for the audit log (and to detect drift). Inserts
+  // skip this — there is no prior row.
+  const { data: liveRow, error: liveErr } =
+    claimed.action === "insert"
+      ? { data: null, error: null }
+      : await admin
+          .from(claimed.target_table)
+          .select("*")
+          .eq("id", claimed.target_id)
+          .maybeSingle();
   if (liveErr) {
     await revert("live-row lookup failed");
     return NextResponse.json(
@@ -120,7 +165,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       { status: 500 }
     );
   }
-  if (!liveRow) {
+  if (claimed.action !== "insert" && !liveRow) {
     await revert("target row gone");
     return NextResponse.json(
       {
@@ -132,7 +177,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   // Apply the change.
-  if (claimed.action === "delete") {
+  if (claimed.action === "insert") {
+    // Already applied above.
+  } else if (claimed.action === "delete") {
     const { error: delErr } = await admin
       .from(claimed.target_table)
       .delete()
@@ -199,6 +246,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
             { status: 400 }
           );
         }
+        // A refund can never exceed the amount actually paid. Use the proposed
+        // amount_paid if this same request also edits it, otherwise the live
+        // value. Mirrors the invariant the direct refund path enforces.
+        const effectivePaid =
+          "amount_paid" in patch
+            ? Number(patch.amount_paid)
+            : Number(liveRow.amount_paid);
+        if (Number.isFinite(effectivePaid) && refundAmt > effectivePaid) {
+          await revert("refund exceeds amount paid");
+          return NextResponse.json(
+            { error: "Refund amount cannot exceed the amount paid." },
+            { status: 400 }
+          );
+        }
         const reason = String(patch.refund_reason ?? liveRow.refund_reason ?? "");
         if (reason.trim().length < 5) {
           await revert("missing refund_reason");
@@ -235,20 +296,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 
   // Re-read after the apply for the audit log.
-  const { data: afterRow } =
+  const afterRow =
     claimed.action === "delete"
-      ? { data: null }
-      : await admin
-          .from(claimed.target_table)
-          .select("*")
-          .eq("id", claimed.target_id)
-          .maybeSingle();
+      ? null
+      : claimed.action === "insert"
+        ? insertedRow
+        : (
+            await admin
+              .from(claimed.target_table)
+              .select("*")
+              .eq("id", claimed.target_id)
+              .maybeSingle()
+          ).data;
 
   const { error: auditErr } = await admin
     .from("fee_change_audit_log")
     .insert({
       target_table: claimed.target_table,
-      target_id: claimed.target_id,
+      target_id: claimed.action === "insert" ? insertedId : claimed.target_id,
       action: claimed.action,
       before_snapshot: liveRow,
       after_snapshot: afterRow,

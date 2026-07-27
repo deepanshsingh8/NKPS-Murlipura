@@ -68,6 +68,8 @@ export interface StaffMember {
   date_of_birth: string | null;
   address: string | null;
   qualifications: string | null;
+  // Driving-license number — captured for bus drivers (category 'busDriver').
+  license_number: string | null;
   is_active: boolean;
   sort_order: number;
   created_at: string;
@@ -184,6 +186,16 @@ export interface Teacher {
 export type Gender = 'male' | 'female' | 'other';
 export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
 
+// UDISE+ template enums (migration 072). Stored values match the DB CHECK
+// constraints; display labels/aliases live in lib/student-template.ts.
+export type MinorityGroup =
+  | 'muslim' | 'sikh' | 'christian' | 'jain' | 'buddhist' | 'parsi' | 'none';
+export type MediumOfInstruction = 'english' | 'hindi';
+export type DistanceBand = '1-3km' | '3-5km' | '5-10km' | 'above-10km';
+export type EducationLevel =
+  | 'primary' | 'upper_primary' | 'secondary' | 'senior_secondary'
+  | 'graduation' | 'pg_or_more';
+
 export interface Student {
   id: string;
   admission_no: string;
@@ -208,6 +220,52 @@ export interface Student {
   is_alumni: boolean;
   alumni_passing_year: string | null;
   alumni_academic_year_id: string | null;
+  // ── UDISE+ General Profile (migration 072) ──
+  name_as_per_aadhar: string | null;
+  jan_aadhar_number: string | null;
+  mother_occupation: string | null;
+  mother_qualification: string | null;
+  mother_mobile: string | null;
+  mother_annual_income: number | null;
+  father_occupation: string | null;
+  father_qualification: string | null;
+  father_mobile: string | null;
+  father_annual_income: number | null;
+  guardian_name: string | null;
+  guardian_relation: string | null;
+  guardian_mobile: string | null;
+  present_pincode: string | null;
+  permanent_address: string | null;
+  permanent_pincode: string | null;
+  mother_tongue: string | null;
+  minority_group: MinorityGroup | null;
+  is_bpl: boolean | null;
+  is_ews: boolean | null;
+  is_cwsn: boolean | null;
+  cwsn_impairment_type: string | null;
+  height_cm: number | null;
+  weight_kg: number | null;
+  // ── UDISE+ Enrolment Profile (migration 072) ──
+  is_rte: boolean | null;
+  medium_of_instruction: MediumOfInstruction | null;
+  previous_school_address: string | null;
+  previous_school_block: string | null;
+  previous_school_district: string | null;
+  previous_school_state: string | null;
+  previous_school_udise_code: string | null;
+  previous_school_reason_for_leaving: string | null;
+  previous_class_studied: string | null;
+  previous_school_board: string | null;
+  board_roll_number: string | null;
+  board_percentage: number | null;
+  last_session_attendance: string | null;
+  is_staff_ward: boolean | null;
+  participates_ncc: boolean | null;
+  participates_nss: boolean | null;
+  participates_scouts: boolean | null;
+  participates_competitions: boolean | null;
+  distance_band: DistanceBand | null;
+  parent_highest_education: EducationLevel | null;
   created_at: string;
   updated_at: string;
 }
@@ -333,7 +391,11 @@ export interface StudentEnrollment {
   enrollment_date: string;
   status: EnrollmentStatus;
   has_transport: boolean;
-  transport_slab_id: string | null;
+  bus_stop_id: string | null;
+  bus_id: string | null;
+  transport_direction: TransportDirection;
+  transport_fee_override: number | null;
+  pickup_address: string | null;
   updated_at: string;
 }
 
@@ -530,40 +592,140 @@ export interface FeeStructure {
   is_active: boolean;
   description: string | null;
   late_fee_percent: number;
+  // Legacy one-time flat surcharge. Superseded by late_fee_per_day in the UI
+  // (migration 080); column retained so historical rows aren't lost, but the
+  // dues calc no longer reads it.
   late_fee_fixed_amount: number;
+  // Per-day flat surcharge: charged once for every day past due_date.
+  late_fee_per_day: number;
+  // Optional ceiling on the accrued late fee for this structure. null = no cap.
+  late_fee_max: number | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface TransportFareSlab {
+// =============================================================
+// Transport — stop-based fleet model
+// =============================================================
+
+export type TransportDirection = 'both' | 'pickup_only' | 'drop_only';
+
+// Stable stop registry. The name is the identity; the fee is priced per
+// academic year in BusStopFee.
+export interface BusStop {
   id: string;
-  academic_year_id: string;
   name: string;
-  distance_km_min: number | null;
-  distance_km_max: number | null;
-  amount: number;
-  frequency: FeeFrequency;
+  area: string | null;
+  lat: number | null;
+  lng: number | null;
   is_active: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
 }
 
-// Synthetic fee line for the student's transport slab. Shaped like
+// Per-academic-year flat fee for a stop.
+export interface BusStopFee {
+  id: string;
+  bus_stop_id: string;
+  academic_year_id: string;
+  amount: number;
+  frequency: FeeFrequency;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Vehicle registry. driver_id / conductor_id reference staff_members
+// (category 'busDriver').
+export interface Bus {
+  id: string;
+  bus_number: string;
+  registration_number: string | null;
+  capacity: number | null;
+  driver_id: string | null;
+  conductor_id: string | null;
+  is_active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Which stops a bus serves (its route).
+export interface BusRouteStop {
+  id: string;
+  bus_id: string;
+  bus_stop_id: string;
+  sort_order: number | null;
+  created_at: string;
+}
+
+export type TransportChangeType =
+  | 'bus_change'
+  | 'stop_change'
+  | 'direction_change'
+  | 'drop'
+  | 'resume';
+
+export type TransportChangeReason =
+  | 'house_shifting'
+  | 'rented_house_change'
+  | 'bus_point_temporary_change'
+  | 'facility_dropped'
+  | 'one_side_facility'
+  | 'other';
+
+export type TransportChangeStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'cancelled'
+  | 'applied';
+
+// A bus-change / stop-change / one-side / drop amendment, submittable by the
+// office or a parent (parent submissions start 'pending').
+export interface TransportChangeRequest {
+  id: string;
+  enrollment_id: string;
+  change_type: TransportChangeType;
+  previous_bus_id: string | null;
+  amended_bus_id: string | null;
+  previous_stop_id: string | null;
+  amended_stop_id: string | null;
+  direction: TransportDirection | null;
+  effective_from: string;
+  effective_to: string | null;
+  reason_code: TransportChangeReason;
+  reason_note: string | null;
+  application_url: string | null;
+  source: 'office' | 'parent';
+  status: TransportChangeStatus;
+  requested_by: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Synthetic fee line for the student's transport stop. Shaped like
 // FeeStructure so existing UI/dues code can iterate over a unified array of
 // `EffectiveFeeLine` entries. `kind` distinguishes the two so consumers that
 // need to record payments know which FK to send.
 export interface TransportFeeLine {
-  kind: 'transport_slab';
-  id: string;                 // slab id (used as React key + payment FK)
+  kind: 'transport_stop';
+  id: string;                 // bus_stop id (used as React key + payment FK)
   fee_type: 'Transport';
   amount: number;
   frequency: FeeFrequency;
   due_date: null;
   late_fee_percent: 0;
   late_fee_fixed_amount: 0;
+  late_fee_per_day: 0;
+  late_fee_max: null;
   stream_id: null;
-  slab_name: string;          // for UI label, e.g. "0–5 km"
+  stop_name: string;          // for UI label, e.g. "100 Feet Road"
+  direction: TransportDirection;
 }
 
 export type EffectiveFeeLine =
@@ -577,7 +739,7 @@ export interface FeePayment {
   id: string;
   student_id: string;
   fee_structure_id: string | null;
-  transport_slab_id: string | null;
+  bus_stop_id: string | null;
   amount_paid: number;
   payment_date: string;
   payment_method: PaymentMethod;
@@ -784,29 +946,6 @@ export interface DisclosureDocument {
   file_url: string | null;
   file_name: string | null;
   sort_order: number;
-  updated_at: string;
-}
-
-export interface ProspectusDocument {
-  id: string;
-  title: string;
-  file_url: string;
-  file_name: string | null;
-  sort_order: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface HolidayHomework {
-  id: string;
-  title: string;
-  class_grade: string;
-  session: string;
-  academic_year: string;
-  file_url: string;
-  file_name: string | null;
-  sort_order: number;
-  created_at: string;
   updated_at: string;
 }
 
@@ -1121,5 +1260,32 @@ export interface SchoolMeetingCount {
   exam_type_id: string | null;
   class_id: string | null;
   total_meetings: number;
+  updated_at: string;
+}
+
+// ── Murlipura-specific content types ─────────────────────────────────────────
+// These back the CMS holiday-homework and prospectus features (Murlipura-only;
+// not present in the parent NKPS repo). Kept here so the shared package remains
+// the single source of truth for DB row shapes.
+export interface HolidayHomework {
+  id: string;
+  title: string;
+  class_grade: string;
+  session: string;
+  academic_year: string;
+  file_url: string;
+  file_name: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProspectusDocument {
+  id: string;
+  title: string;
+  file_url: string;
+  file_name: string | null;
+  sort_order: number;
+  created_at: string;
   updated_at: string;
 }

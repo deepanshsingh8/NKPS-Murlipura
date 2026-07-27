@@ -217,14 +217,27 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      subjects_created: subjectsCreated,
-      subjects_skipped: subjectsSkipped,
-      assignments_created: assignmentsCreated,
-      assignments_skipped: assignmentsSkipped,
-      missing_classes: missingClasses,
-    });
+    // If nothing was created and the only outcome was unmatched classes, the
+    // operation accomplished nothing — surface that as a non-2xx so callers
+    // that only check res.ok don't treat it as success.
+    const allFailed =
+      subjectsCreated === 0 &&
+      assignmentsCreated === 0 &&
+      missingClasses.length > 0;
+    return NextResponse.json(
+      {
+        success: !allFailed,
+        ...(allFailed
+          ? { error: `No matching classes found: ${missingClasses.join(", ")}` }
+          : {}),
+        subjects_created: subjectsCreated,
+        subjects_skipped: subjectsSkipped,
+        assignments_created: assignmentsCreated,
+        assignments_skipped: assignmentsSkipped,
+        missing_classes: missingClasses,
+      },
+      { status: allFailed ? 400 : 200 }
+    );
   } catch (err) {
     console.error("Quick setup error:", err);
     return NextResponse.json(

@@ -21,7 +21,7 @@ const playfair = Playfair_Display({
 // their own sidebar layouts via /src/app/cms/layout.tsx and /src/app/erp/layout.tsx.
 // Public-site routes live in apps/website/.
 export const metadata: Metadata = {
-  title: "NKPS Admin",
+  title: "NKPS Portal",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

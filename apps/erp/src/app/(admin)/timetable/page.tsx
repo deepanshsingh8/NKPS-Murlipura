@@ -47,6 +47,15 @@ const DEFAULT_PERIODS = [
   { num: 8, start: "02:15", end: "03:00" },
 ];
 
+// Suggested times for a period row when no stored period exists yet. Period 0
+// is the zero/pre-first period, so it sits before P1.
+function periodTimeDefaults(num: number): { start: string; end: string } {
+  const def = DEFAULT_PERIODS.find((p) => p.num === num);
+  if (def) return { start: def.start, end: def.end };
+  if (num === 0) return { start: "07:15", end: "08:00" };
+  return { start: "08:00", end: "08:45" };
+}
+
 interface PeriodCell extends TimetablePeriod {
   subject_name?: string;
   teacher_name?: string;
@@ -76,6 +85,9 @@ export default function AdminTimetablePage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Period rows the admin added on top of the defaults (a zero period, or
+  // periods beyond the default 8) so they have a row to click into.
+  const [extraPeriodNums, setExtraPeriodNums] = useState<number[]>([]);
   const [formData, setFormData] = useState({
     day_of_week: "1",
     period_number: "1",
@@ -174,7 +186,7 @@ export default function AdminTimetablePage() {
 
   const openDialog = (day: number, period: number) => {
     const existing = getCellData(day, period);
-    const defaultPeriod = DEFAULT_PERIODS.find((p) => p.num === period);
+    const defaultPeriod = periodTimeDefaults(period);
 
     if (existing) {
       setEditingId(existing.id);
@@ -274,6 +286,26 @@ export default function AdminTimetablePage() {
     );
   }
 
+  // Rows to render: the default periods, every period_number already saved for
+  // this class (so the grid scales past 8 and shows a zero period), plus any
+  // the admin just added. Header times prefer a stored period's actual time.
+  const allPeriodNums = Array.from(
+    new Set<number>([
+      ...DEFAULT_PERIODS.map((p) => p.num),
+      ...periods.map((p) => p.period_number),
+      ...extraPeriodNums,
+    ])
+  ).sort((a, b) => a - b);
+  const periodRows = allPeriodNums.map((num) => {
+    const cell = periods.find((p) => p.period_number === num);
+    const def = periodTimeDefaults(num);
+    return {
+      num,
+      start: cell?.start_time?.slice(0, 5) ?? def.start,
+      end: cell?.end_time?.slice(0, 5) ?? def.end,
+    };
+  });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
@@ -363,6 +395,29 @@ export default function AdminTimetablePage() {
               </span>
             </div>
           )}
+          <div className="mb-3 flex flex-wrap gap-2">
+            {!allPeriodNums.includes(0) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setExtraPeriodNums((prev) => [...prev, 0])}
+              >
+                <Plus className="h-4 w-4 mr-1" /> Add zero period
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setExtraPeriodNums((prev) => [
+                  ...prev,
+                  Math.max(...allPeriodNums) + 1,
+                ])
+              }
+            >
+              <Plus className="h-4 w-4 mr-1" /> Add period
+            </Button>
+          </div>
           <div className="erp-table-container overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -381,10 +436,12 @@ export default function AdminTimetablePage() {
               </tr>
             </thead>
             <tbody>
-              {DEFAULT_PERIODS.map((dp) => (
+              {periodRows.map((dp) => (
                 <tr key={dp.num} className="border-b border-gray-100 dark:border-border">
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
-                    <div className="font-medium">P{dp.num}</div>
+                    <div className="font-medium">
+                      {dp.num === 0 ? "Zero Period" : `P${dp.num}`}
+                    </div>
                     <div className="text-xs text-gray-400 dark:text-gray-500">
                       {dp.start}-{dp.end}
                     </div>
@@ -474,7 +531,11 @@ export default function AdminTimetablePage() {
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Period</Label>
                 <Input
-                  value={`Period ${formData.period_number}`}
+                  value={
+                    formData.period_number === "0"
+                      ? "Zero Period"
+                      : `Period ${formData.period_number}`
+                  }
                   disabled
                   className="bg-gray-50 h-9"
                 />

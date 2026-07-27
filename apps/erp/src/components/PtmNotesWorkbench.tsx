@@ -115,22 +115,29 @@ export function PtmNotesWorkbench({
       if (currentYear) setAcademicYearId(currentYear.id as string);
 
       // Scope-dependent class fetch:
-      //  - "teacher": only classes where this teacher has a subject assignment
+      //  - "teacher": union of "teaches a subject here" AND "is class teacher
+      //    here" (matches server/RLS scope, get_my_class_ids)
       //  - "admin": every class in the current academic year
       if (scope === "teacher") {
         if (!tid) {
           setLoading(false);
           return;
         }
-        const { data: classSubjects } = await supabase
-          .from("class_subjects")
-          .select(
-            "class_id, classes(id, name, section, academic_year_id, sort_order, streams:stream_id(name))"
-          )
-          .eq("teacher_id", tid);
+        const classCols =
+          "id, name, section, academic_year_id, sort_order, streams:stream_id(name)";
+        const [{ data: classSubjects }, { data: ctClasses }] = await Promise.all([
+          supabase
+            .from("class_subjects")
+            .select(`class_id, classes(${classCols})`)
+            .eq("teacher_id", tid),
+          supabase.from("classes").select(classCols).eq("class_teacher_id", tid),
+        ]);
         const uniq = new Map<string, Class>();
         for (const cs of classSubjects ?? []) {
           const cls = cs.classes as unknown as Class;
+          if (cls && !uniq.has(cls.id)) uniq.set(cls.id, cls);
+        }
+        for (const cls of (ctClasses ?? []) as unknown as Class[]) {
           if (cls && !uniq.has(cls.id)) uniq.set(cls.id, cls);
         }
         setClasses(

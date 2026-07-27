@@ -23,6 +23,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Fail closed while a forced password change is pending, matching the
+    // verifyAdmin* helpers — a user mid-onboarding shouldn't be writing data.
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("must_change_password")
+      .eq("id", user.id)
+      .single();
+    if (profile?.must_change_password) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
 

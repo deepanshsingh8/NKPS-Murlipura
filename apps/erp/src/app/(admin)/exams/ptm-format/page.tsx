@@ -29,6 +29,7 @@ import {
   Star,
 } from "lucide-react";
 import { formatClassName } from "@nkps/shared/lib/utils";
+import { useIsAdmin } from "@nkps/shared/hooks/useIsAdmin";
 import type { Class, ExamType } from "@nkps/shared/types";
 
 interface PtmFormat {
@@ -70,6 +71,10 @@ function blankTemplate(): PtmFormat {
 }
 
 export default function AdminPtmFormatPage() {
+  // Editors granted `ptm_format` can view templates and generate PDFs, but
+  // creating/editing/deleting templates is admin-only (enforced server-side in
+  // /api/ptm-formats). Hide the management UI from non-admins.
+  const isAdmin = useIsAdmin();
   const [templates, setTemplates] = useState<PtmFormat[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [draft, setDraft] = useState<PtmFormat | null>(null);
@@ -272,6 +277,7 @@ export default function AdminPtmFormatPage() {
         </p>
       </div>
 
+      {isAdmin && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Template list */}
         <Card className="lg:col-span-1">
@@ -508,6 +514,7 @@ export default function AdminPtmFormatPage() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {/* Generator */}
       <Card>

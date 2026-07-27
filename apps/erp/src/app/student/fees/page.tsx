@@ -20,10 +20,12 @@ import {
 import { Button } from "@nkps/shared/components/ui/button";
 import { CreditCard, CheckCircle, AlertCircle, Loader2, Download } from "lucide-react";
 import { resolveEffectiveFeeLines, sumAnnualized } from "@/lib/fees";
+import type { StopFeeLookup } from "@/lib/fees";
 import type {
   FeeStructure,
   FeePayment,
-  TransportFareSlab,
+  BusStop,
+  TransportDirection,
   EffectiveFeeLine,
 } from "@nkps/shared/types";
 
@@ -40,7 +42,7 @@ export default function StudentFeesPage() {
   const [payments, setPayments] = useState<
     (FeePayment & {
       fee_structure?: FeeStructure;
-      transport_slab?: Pick<TransportFareSlab, "name"> | null;
+      bus_stop?: Pick<BusStop, "name"> | null;
     })[]
   >([]);
 
@@ -69,7 +71,7 @@ export default function StudentFeesPage() {
       const { data: enrollment } = await supabase
         .from("student_enrollments")
         .select(
-          "class_id, stream_id, academic_year_id, has_transport, transport_slab_id, classes(name)"
+          "class_id, stream_id, academic_year_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, classes(name)"
         )
         .eq("student_id", studentId)
         .order("enrollment_date", { ascending: false })
@@ -80,47 +82,88 @@ export default function StudentFeesPage() {
         (enrollment?.classes as unknown as { name: string } | null)?.name ?? "";
       const streamId = (enrollment?.stream_id as string | null) ?? null;
       const hasTransport = Boolean(enrollment?.has_transport);
-      const transportSlabId =
-        (enrollment?.transport_slab_id as string | null) ?? null;
+      const busStopId = (enrollment?.bus_stop_id as string | null) ?? null;
+      const direction =
+        (enrollment?.transport_direction as TransportDirection | null) ?? "both";
+      const feeOverride =
+        (enrollment?.transport_fee_override as number | null) ?? null;
       const academicYearId =
         (enrollment?.academic_year_id as string | null) ?? null;
 
-      // Fetch fee structures for student's class + transport slab catalog,
-      // then resolve unified fee lines (academic + the picked transport slab).
+      // Fetch fee structures for student's class + per-stop fees for the year,
+      // then resolve unified fee lines (academic + the assigned stop's fee).
       if (className) {
-        const [{ data: structuresData }, { data: slabsData }] = await Promise.all([
-          supabase.from("fee_structures").select("*").eq("class_name", className),
+        // Scope structures to the enrollment's academic year and active rows
+        // only — avoids stacking multiple years of a reused class name and
+        // excludes the amount=0 "Historical" buckets from bulk import.
+        let structuresQuery = supabase
+          .from("fee_structures")
+          .select("*")
+          .eq("class_name", className)
+          .eq("is_active", true);
+        if (academicYearId) {
+          structuresQuery = structuresQuery.eq("academic_year_id", academicYearId);
+        }
+        const [{ data: structuresData }, { data: stopFeesData }] = await Promise.all([
+          structuresQuery,
           academicYearId
             ? supabase
-                .from("transport_fare_slabs")
-                .select("id, name, amount, frequency, is_active")
+                .from("bus_stop_fees")
+                .select("bus_stop_id, amount, frequency, is_active, bus_stops(name)")
                 .eq("academic_year_id", academicYearId)
             : Promise.resolve({ data: [] }),
         ]);
+        const stopFees: StopFeeLookup[] = (
+          (stopFeesData as
+            | {
+                bus_stop_id: string;
+                amount: number | string;
+                frequency: string;
+                is_active: boolean;
+                bus_stops?: { name: string } | null;
+              }[]
+            | null) ?? []
+        ).map((row) => ({
+          bus_stop_id: row.bus_stop_id,
+          stop_name: row.bus_stops?.name ?? "",
+          amount: row.amount,
+          frequency: row.frequency,
+          is_active: row.is_active,
+        }));
         const resolved = resolveEffectiveFeeLines({
           structures: (structuresData as FeeStructure[]) ?? [],
           studentStreamId: streamId,
           hasTransport,
-          transportSlabId,
-          slabs: (slabsData as TransportFareSlab[]) ?? [],
+          busStopId,
+          direction,
+          feeOverride,
+          stopFees,
         });
         setFeeLines(resolved);
       }
 
-      // Fetch payments — also pull the slab name so the history table can
-      // show "Transport — 0–5 km" instead of falling back to "--".
-      const { data: paymentData } = await supabase
+      // Fetch payments — also pull the stop name so the history table can
+      // show "Transport — Main Gate" instead of falling back to "--".
+      // Scope to the current academic year so prior-year receipts aren't
+      // subtracted from this year's fees (fee structures are year-scoped).
+      let paymentsQuery = supabase
         .from("fee_payments")
         .select(
-          "*, fee_structure:fee_structures(*), transport_slab:transport_fare_slabs(name)"
+          "*, fee_structure:fee_structures(*), bus_stop:bus_stops(name)"
         )
-        .eq("student_id", studentId)
-        .order("payment_date", { ascending: false });
+        .eq("student_id", studentId);
+      if (academicYearId) {
+        paymentsQuery = paymentsQuery.eq("academic_year_id", academicYearId);
+      }
+      const { data: paymentData } = await paymentsQuery.order(
+        "payment_date",
+        { ascending: false }
+      );
 
       setPayments(
         (paymentData as (FeePayment & {
           fee_structure?: FeeStructure;
-          transport_slab?: Pick<TransportFareSlab, "name"> | null;
+          bus_stop?: Pick<BusStop, "name"> | null;
         })[]) ?? []
       );
       setLoading(false);
@@ -140,18 +183,36 @@ export default function StudentFeesPage() {
   // Compute summary — annualize each line so quarterly/monthly fees are
   // counted correctly for the whole academic year.
   const totalFees = sumAnnualized(feeLines);
+  // Match the admin dues view: cash paid + any waiver granted both settle a
+  // fee. A partially-refunded payment keeps status 'refunded' with amount_paid
+  // unchanged, so include refunded rows too and net out refund_amount (never
+  // below 0 per row) — otherwise the whole receipt vanishes and dues overstate.
   const totalPaid = payments
-    .filter((p) => p.status === "paid" || p.status === "partial")
-    .reduce((sum, p) => sum + p.amount_paid, 0);
+    .filter(
+      (p) =>
+        p.status === "paid" ||
+        p.status === "partial" ||
+        p.status === "refunded"
+    )
+    .reduce(
+      (sum, p) =>
+        sum +
+        Math.max(
+          0,
+          Number(p.amount_paid) - Number(p.refund_amount ?? 0)
+        ) +
+        Number(p.waiver_amount ?? 0),
+      0
+    );
   const pending = totalFees - totalPaid;
 
   // Lines marked paid: match by fee_structure_id (academic) or
-  // transport_slab_id (transport). Both keys live in EffectiveFeeLine.id by
+  // bus_stop_id (transport). Both keys live in EffectiveFeeLine.id by
   // construction, so a single Set covers both.
   const paidLineIds = new Set(
     payments
       .filter((p) => p.status === "paid")
-      .map((p) => p.fee_structure_id ?? p.transport_slab_id)
+      .map((p) => p.fee_structure_id ?? p.bus_stop_id)
       .filter((id): id is string => Boolean(id))
   );
 
@@ -235,8 +296,8 @@ export default function StudentFeesPage() {
                 {feeLines.map((line) => (
                   <TableRow key={line.id}>
                     <TableCell className="font-medium">
-                      {line.kind === "transport_slab"
-                        ? `Transport — ${line.slab_name}`
+                      {line.kind === "transport_stop"
+                        ? `Transport — ${line.stop_name}`
                         : line.fee_type}
                     </TableCell>
                     <TableCell>{formatCurrency(line.amount)}</TableCell>
@@ -286,8 +347,8 @@ export default function StudentFeesPage() {
                   <TableRow key={p.id}>
                     <TableCell>{p.payment_date}</TableCell>
                     <TableCell>
-                      {p.transport_slab?.name
-                        ? `Transport — ${p.transport_slab.name}`
+                      {p.bus_stop?.name
+                        ? `Transport — ${p.bus_stop.name}`
                         : p.fee_structure?.fee_type ?? "--"}
                     </TableCell>
                     <TableCell>{formatCurrency(p.amount_paid)}</TableCell>

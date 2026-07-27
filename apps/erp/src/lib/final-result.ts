@@ -780,9 +780,14 @@ export async function computeFinalResult(
  */
 export async function computeRanksForClass(
   supabase: SupabaseClient,
-  params: { class_id: string; academic_year_id: string }
+  params: {
+    class_id: string;
+    academic_year_id: string;
+    includeUnpublished?: boolean;
+  }
 ): Promise<Map<string, number>> {
   const { class_id, academic_year_id } = params;
+  const includeUnpublished = params.includeUnpublished ?? true;
 
   const { data: enrollments } = await supabase
     .from("student_enrollments")
@@ -796,9 +801,11 @@ export async function computeRanksForClass(
 
   const results = await Promise.all(
     studentIds.map((sid) =>
-      computeFinalResult(supabase, { student_id: sid, academic_year_id }).then(
-        (fr) => ({ sid, fr })
-      )
+      computeFinalResult(supabase, {
+        student_id: sid,
+        academic_year_id,
+        includeUnpublished,
+      }).then((fr) => ({ sid, fr }))
     )
   );
 

@@ -217,12 +217,19 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      created,
-      skipped,
-      errors,
-    });
+    // Total failure (nothing created, every row errored) must not read as a
+    // success to a caller that only checks res.ok.
+    const allFailed = created === 0 && errors.length > 0;
+    return NextResponse.json(
+      {
+        success: !allFailed,
+        ...(allFailed ? { error: "No assignments were created — every row failed." } : {}),
+        created,
+        skipped,
+        errors,
+      },
+      { status: allFailed ? 400 : 200 }
+    );
   } catch (err) {
     console.error("Bulk assign error:", err);
     return NextResponse.json(

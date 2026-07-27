@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { staffBulkUploadSchema } from "@nkps/shared/lib/validations";
 import { createPortalUser } from "@nkps/shared/lib/create-portal-user";
+import { staffPortalRole } from "@nkps/shared/lib/staff-roles";
+import { promoteStaffToTeacher } from "@/lib/staff-teacher-sync";
 
 const VALID_CATEGORIES = [
   "management", "admin", "pgt", "tgt", "prt",
@@ -51,6 +53,16 @@ export async function POST(request: Request) {
 
     let inserted = 0;
     const errors: { name: string; error: string }[] = [];
+    // Successfully-inserted rows (with their new ids + category) so we can
+    // provision the right login role per staff member after the inserts.
+    type InsertedRow = {
+      id: string;
+      name: string;
+      category: string;
+      email: string | null;
+      phone: string | null;
+    };
+    const insertedRows: InsertedRow[] = [];
 
     // Get current max sort_order per category
     const categoriesToQuery = perRowMode
@@ -88,20 +100,27 @@ export async function POST(request: Request) {
           date_of_birth: validDob,
           address: s.address?.trim() || null,
           qualifications: s.qualifications?.trim() || null,
+          // License applies only to bus drivers; ignore it for other rows so a
+          // stray value in the sheet can't attach a licence to a non-driver.
+          license_number:
+            cat === "busDriver" ? s.license_number?.trim() || null : null,
           sort_order: order,
         };
       });
 
-      const { error: insertError } = await admin
+      const { data: insData, error: insertError } = await admin
         .from("staff_members")
-        .insert(records);
+        .insert(records)
+        .select("id, name, category, email, phone");
 
       if (insertError) {
         // If batch fails, try individually
         for (const record of records) {
-          const { error: singleError } = await admin
+          const { data: singleData, error: singleError } = await admin
             .from("staff_members")
-            .insert(record);
+            .insert(record)
+            .select("id, name, category, email, phone")
+            .single();
 
           if (singleError) {
             console.error("Staff bulk single-insert failed:", singleError);
@@ -112,37 +131,65 @@ export async function POST(request: Request) {
             errors.push({ name: record.name, error: friendly });
           } else {
             inserted++;
+            if (singleData) insertedRows.push(singleData as InsertedRow);
           }
         }
         continue;
       }
 
       inserted += batch.length;
+      if (insData) insertedRows.push(...(insData as InsertedRow[]));
     }
 
-    // Auto-create portal users for staff with emails (non-blocking)
+    // For each inserted staff row: teaching staff always get a linked teachers
+    // record (regardless of email, so they're immediately assignable), and a
+    // login is additionally provisioned when an email is present — teaching →
+    // teacher, office → staff, drivers/peons → no login.
     let usersCreated = 0;
-    const staffWithEmails = staff.filter((s) => s.email?.trim());
-    const failedNames = errors.map((e) => e.name);
+    for (const s of insertedRows) {
+      const portalRole = staffPortalRole(s.category);
 
-    for (const s of staffWithEmails) {
-      if (failedNames.includes(s.name.trim())) continue;
-      const userResult = await createPortalUser({
-        email: s.email!.trim(),
-        fullName: s.name.trim(),
-        role: "teacher",
-        phone: s.phone || null,
-      });
-      if (userResult.success) usersCreated++;
+      let teacherId: string | undefined;
+      if (portalRole === "teacher") {
+        const promo = await promoteStaffToTeacher(admin, s.id);
+        if (!("error" in promo)) teacherId = promo.teacher_id;
+      }
+
+      if (!s.email?.trim()) continue;
+      if (portalRole === "teacher" && teacherId) {
+        const userResult = await createPortalUser({
+          email: s.email.trim(),
+          fullName: s.name.trim(),
+          role: "teacher",
+          phone: s.phone || null,
+          teacherId,
+        });
+        if (userResult.success) usersCreated++;
+      } else if (portalRole === "staff") {
+        const userResult = await createPortalUser({
+          email: s.email.trim(),
+          fullName: s.name.trim(),
+          role: "staff",
+          phone: s.phone || null,
+        });
+        if (userResult.success) usersCreated++;
+      }
     }
 
-    return NextResponse.json({
-      success: true,
-      inserted,
-      usersCreated,
-      errors,
-      total: staff.length,
-    });
+    // Nothing inserted + at least one error = total failure; surface it as
+    // non-2xx so a caller checking only res.ok doesn't read it as success.
+    const allFailed = inserted === 0 && errors.length > 0;
+    return NextResponse.json(
+      {
+        success: !allFailed,
+        ...(allFailed ? { error: "No staff were imported — every row failed." } : {}),
+        inserted,
+        usersCreated,
+        errors,
+        total: staff.length,
+      },
+      { status: allFailed ? 400 : 200 }
+    );
   } catch (err) {
     console.error("Bulk staff upload error:", err);
     return NextResponse.json(

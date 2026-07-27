@@ -58,9 +58,13 @@ export function UpcomingEvents({
       const supabase = createClient();
       const today = new Date().toISOString().split("T")[0];
 
+      // Portal calendars must never surface admin-internal events. RLS on
+      // calendar_events is permissive (USING true), so the is_public gate is
+      // enforced here on every role-facing read.
       let query = supabase
         .from("calendar_events")
         .select("*")
+        .eq("is_public", true)
         .gte("start_date", today)
         .order("start_date", { ascending: true })
         .limit(limit);

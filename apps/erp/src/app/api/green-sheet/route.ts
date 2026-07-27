@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { buildGreenSheetData } from "@/lib/green-sheet";
 
 export async function GET(request: Request) {
@@ -41,7 +42,12 @@ export async function GET(request: Request) {
     );
   }
 
-  const data = await buildGreenSheetData(supabase, classId, academicYearId);
+  // The builder reads `results` (and related tables) which have no SELECT
+  // policy for editors (role 'staff'), so on the RLS-bound cookie client an
+  // editor would silently get a blank sheet. Build the data with the
+  // service-role client; the admin/editor permission gate above (on the cookie
+  // client) is unchanged.
+  const data = await buildGreenSheetData(createAdminClient(), classId, academicYearId);
   if (!data) {
     return NextResponse.json(
       { error: "Class or academic year not found, or they mismatch" },

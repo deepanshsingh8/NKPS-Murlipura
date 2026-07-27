@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { buildWhiteSheetData } from "@/lib/white-sheet";
 
 export async function GET(request: Request) {
@@ -43,7 +44,12 @@ export async function GET(request: Request) {
     );
   }
 
-  const data = await buildWhiteSheetData(supabase, classId, examTypeId);
+  // The builder reads `results` (and related tables) which have no SELECT
+  // policy for editors (role 'staff'), so on the RLS-bound cookie client an
+  // editor would silently get a blank sheet. Build the data with the
+  // service-role client; the admin/editor permission gate above (on the cookie
+  // client) is unchanged.
+  const data = await buildWhiteSheetData(createAdminClient(), classId, examTypeId);
   if (!data) {
     return NextResponse.json(
       { error: "Class or exam type not found" },

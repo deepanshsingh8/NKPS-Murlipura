@@ -4,42 +4,14 @@ import { createClient } from "@nkps/shared/lib/supabase/server";
 import { sendEmail, buildWelcomeEmail } from "@nkps/shared/lib/email";
 import { generateSecurePassword } from "@nkps/shared/lib/password";
 import { rateLimit } from "@nkps/shared/lib/rate-limit";
-
-type AdminClient = ReturnType<typeof createAdminClient>;
-
-async function isAdmissionNoTaken(
-  supabase: AdminClient,
-  candidate: string
-): Promise<boolean> {
-  const { data } = await supabase
-    .from("students")
-    .select("id")
-    .eq("admission_no", candidate)
-    .maybeSingle();
-  return !!data;
-}
-
-// Pick a free admission number for a brand-new student approval. We try the
-// email-localpart first (preserves the previous default for the common case)
-// and fall back to a year-prefixed random tag if it's taken.
-async function pickFreeAdmissionNo(
-  supabase: AdminClient,
-  email: string
-): Promise<string> {
-  const localPart = email.split("@")[0]?.replace(/[^A-Za-z0-9_-]/g, "") ?? "";
-  if (localPart && !(await isAdmissionNoTaken(supabase, localPart))) {
-    return localPart;
-  }
-  const year = new Date().getFullYear();
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
-    const candidate = `${year}-${suffix}`;
-    if (!(await isAdmissionNoTaken(supabase, candidate))) return candidate;
-  }
-  // Extremely unlikely fallthrough — return a timestamp-based id which is
-  // effectively unique and let the DB unique constraint be the final guard.
-  return `${year}-${Date.now()}`;
-}
+import {
+  linkProfileToStudent,
+  linkProfileToTeacher,
+  linkProfileToParent,
+  linkParentAccountToStudent,
+  ensureParentRecord,
+} from "@/lib/identity/link";
+import { pickFreeAdmissionNo } from "@/lib/admission-no";
 
 export async function POST(request: Request) {
   try {
@@ -176,83 +148,92 @@ export async function POST(request: Request) {
         .eq("id", newUser.user.id);
     }
 
-    // For student role: create a students record and link it.
-    // Admission numbers must be unique. The previous default of
-    // `email.split("@")[0]` collides for any two `firstname@*` registrants —
-    // try it first, then fall back to a year-prefixed timestamp+random suffix
-    // until we find one nothing else is using.
-    if (role === "student" && newUser.user) {
+    // Surfaced to the admin UI when a record link couldn't be fully made, so
+    // they know to finish it via the "Link record" tool rather than assuming
+    // the account is fully set up.
+    let linkWarning: string | null = null;
+    const userId = newUser.user?.id ?? null;
+
+    // Role + domain-record wiring goes through the canonical identity service,
+    // which ALWAYS sets `role` alongside the link in one update (handle_new_user
+    // left it as 'student'), enforces 1:1, and is idempotent. (migration 068)
+    if (userId && role === "student") {
+      // Admission numbers must be unique. The previous default of
+      // `email.split("@")[0]` collides for any two `firstname@*` registrants —
+      // try it first, then fall back to a year-prefixed random suffix.
       const candidate = await pickFreeAdmissionNo(supabase, email);
       const { data: studentRecord, error: studentError } = await supabase
         .from("students")
-        .insert({
-          admission_no: candidate,
-          full_name,
-          email,
-          phone: phone || null,
-        })
+        .insert({ admission_no: candidate, full_name, email, phone: phone || null })
         .select("id")
         .single();
-
       if (!studentError && studentRecord) {
-        await supabase
-          .from("profiles")
-          .update({ student_id: studentRecord.id })
-          .eq("id", newUser.user.id);
+        const linked = await linkProfileToStudent(supabase, userId, studentRecord.id);
+        if (!linked.ok) linkWarning = `Account created, but linking the student record failed: ${linked.error}`;
       } else {
         console.error("Failed to create student record:", studentError);
+        linkWarning = "Account created, but the student record could not be created. Use the \"Link record\" tool.";
       }
-    }
-
-    // For parent role: create a parents record, link profile, and create student_parents junction
-    if (role === "parent" && newUser.user) {
-      const { data: parentRecord, error: parentError } = await supabase
-        .from("parents")
-        .insert({
-          full_name,
-          email,
-          phone: phone || "",
-          relationship: registration.relationship || "guardian",
-        })
+    } else if (userId && role === "teacher") {
+      // Self-registered teacher: provision a teachers record, then link.
+      const { randomBytes } = await import("crypto");
+      const employeeId = `TCH-${Date.now().toString(36).toUpperCase()}-${randomBytes(2).toString("hex").toUpperCase()}`;
+      const { data: teacherRecord, error: teacherError } = await supabase
+        .from("teachers")
+        .insert({ employee_id: employeeId, full_name, email, phone: phone || null })
         .select("id")
         .single();
+      if (!teacherError && teacherRecord) {
+        const linked = await linkProfileToTeacher(supabase, userId, teacherRecord.id);
+        if (!linked.ok) linkWarning = `Account created, but linking the teacher record failed: ${linked.error}`;
+      } else {
+        console.error("Failed to create teacher record:", teacherError);
+        linkWarning = "Account created, but the teacher record could not be created. Use the \"Link record\" tool.";
+      }
+    } else if (userId && role === "parent") {
+      const relationship = (registration.relationship || "guardian") as
+        | "father"
+        | "mother"
+        | "guardian";
+      const profileInfo = { email, fullName: full_name, phone };
 
-      if (!parentError && parentRecord) {
-        await supabase
-          .from("profiles")
-          .update({ parent_id: parentRecord.id })
-          .eq("id", newUser.user.id);
+      // Resolve the child (if an admission number was given) up front.
+      let studentId: string | null = null;
+      if (registration.student_admission_no) {
+        const { data: studentRecord } = await supabase
+          .from("students")
+          .select("id")
+          .eq("admission_no", registration.student_admission_no)
+          .maybeSingle();
+        studentId = studentRecord?.id ?? null;
+      }
 
-        // If student_admission_no was provided, look up the student and create the junction record
-        if (registration.student_admission_no) {
-          const { data: studentRecord } = await supabase
-            .from("students")
-            .select("id")
-            .eq("admission_no", registration.student_admission_no)
-            .single();
-
-          if (studentRecord) {
-            const { error: junctionError } = await supabase
-              .from("student_parents")
-              .insert({
-                student_id: studentRecord.id,
-                parent_id: parentRecord.id,
-                relationship: registration.relationship || "guardian",
-                is_primary_contact: true,
-              });
-
-            if (junctionError) {
-              console.error("Failed to create student_parents link:", junctionError);
-            }
-          } else {
-            console.error(
-              "Student not found for admission_no:",
-              registration.student_admission_no
-            );
-          }
+      if (studentId) {
+        const linked = await linkParentAccountToStudent(supabase, {
+          profileId: userId,
+          profile: profileInfo,
+          studentId,
+          relationship,
+        });
+        if (!linked.ok) {
+          linkWarning = `Account created, but linking to the child failed: ${linked.error} Use the "Link record" tool.`;
         }
       } else {
-        console.error("Failed to create parent record:", parentError);
+        // No / unknown admission number: STILL set up the parent record and
+        // role so the account lands on the parent dashboard and can "Add Child"
+        // itself. (Previously the role was never set and the parent was stranded
+        // on the student dashboard — the root cause of the linking failure.)
+        const parent = await ensureParentRecord(supabase, profileInfo);
+        if ("error" in parent) {
+          linkWarning = "Account created, but the parent record could not be set up. Use the \"Link record\" tool.";
+        } else {
+          const linked = await linkProfileToParent(supabase, userId, parent.parentId);
+          linkWarning = !linked.ok
+            ? `Account created, but setting up the parent profile failed: ${linked.error}`
+            : registration.student_admission_no
+              ? `Account created, but no student matches admission no "${registration.student_admission_no}". ${full_name} can add the child from their dashboard, or link it via the "Link record" tool.`
+              : `Account created without a child link (no admission number was provided). ${full_name} can add a child from their dashboard.`;
+        }
       }
     }
 
@@ -288,6 +269,7 @@ export async function POST(request: Request) {
       email,
       email_delivered: emailDelivered,
       ...(emailDelivered ? {} : { generated_password: password }),
+      ...(linkWarning ? { link_warning: linkWarning } : {}),
     });
   } catch (err) {
     console.error("Approve registration error:", err);

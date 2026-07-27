@@ -44,16 +44,28 @@ export default function ChangePasswordPage() {
         return;
       }
 
-      // Clear the must_change_password flag
+      // Clear the must_change_password flag server-side. This column is locked
+      // against direct writes from the browser client (migration 061), so it
+      // must go through an API route backed by the service-role client. If this
+      // fails the flag stays set and the user gets bounced back here on their
+      // next login — so we surface the error instead of silently continuing.
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (user) {
-        await supabase
-          .from("profiles")
-          .update({ must_change_password: false })
-          .eq("id", user.id);
+      if (!session?.access_token) {
+        toast.error("Your session expired. Please sign in again.");
+        return;
+      }
+
+      const res = await fetch("/api/portal/complete-password-change", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      if (!res.ok) {
+        toast.error("Couldn't finalize your password change. Please try again.");
+        return;
       }
 
       // Sign out so the user logs in fresh with their new password

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
@@ -42,24 +41,21 @@ export default function AdminTransferCertificatesPage() {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [searchingStudents, setSearchingStudents] = useState(false);
 
-  const supabase = createClient();
-
   const searchStudents = useCallback(async (query: string) => {
     if (query.length < 2) {
       setStudentResults([]);
       return;
     }
     setSearchingStudents(true);
-    const { data } = await supabase
-      .from("students")
-      .select("*")
-      .or(`full_name.ilike.%${query}%,admission_no.ilike.%${query}%`)
-      .eq("is_active", true)
-      .order("full_name")
-      .limit(10);
-    setStudentResults((data as Student[]) ?? []);
+    // Read via the service-role API route: the browser client can't read the
+    // students table (its RLS needs an admin session the CMS client lacks).
+    const res = await adminFetch(
+      `/api/transfer-certificates?studentSearch=${encodeURIComponent(query)}`
+    );
+    const json = await res.json().catch(() => ({}));
+    setStudentResults(res.ok ? ((json.students as Student[]) ?? []) : []);
     setSearchingStudents(false);
-  }, [supabase]);
+  }, []);
 
   const selectStudent = (student: Student) => {
     setSelectedStudent(student);
@@ -72,17 +68,19 @@ export default function AdminTransferCertificatesPage() {
   };
 
   const fetchCertificates = async () => {
-    const { data, error } = await supabase
-      .from("transfer_certificates")
-      .select("*")
-      .order("created_at", { ascending: false });
+    // Read via the service-role API route — the browser client can't read the
+    // transfer_certificates table (RLS requires an authenticated session the
+    // CMS browser client doesn't carry), which silently returned 0 rows.
+    const res = await adminFetch("/api/transfer-certificates");
+    const json = await res.json().catch(() => ({}));
 
-    if (error) {
-      toast.error("Failed to fetch certificates");
+    if (!res.ok) {
+      toast.error(json.error || "Failed to fetch certificates");
+      setLoading(false);
       return;
     }
 
-    setCertificates((data as TransferCertificate[]) ?? []);
+    setCertificates((json.certificates as TransferCertificate[]) ?? []);
     setLoading(false);
   };
 
@@ -306,7 +304,7 @@ export default function AdminTransferCertificatesPage() {
                           <span className="font-medium">{s.full_name}</span>
                           <span className="text-gray-500 dark:text-gray-400 ml-2">({s.admission_no})</span>
                           {s.father_name && (
-                            <span className="text-gray-400 dark:text-gray-500 ml-1 text-xs">\u00B7 {s.father_name}</span>
+                            <span className="text-gray-400 dark:text-gray-500 ml-1 text-xs">{"\u00B7 "}{s.father_name}</span>
                           )}
                         </button>
                       ))}

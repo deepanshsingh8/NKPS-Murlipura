@@ -289,7 +289,7 @@ export default function HeaderFooterPage() {
                         affiliation_number: e.target.value,
                       })
                     }
-                    placeholder="CBSE affiliation number"
+                    placeholder="e.g. 1730406"
                   />
                 </div>
               </div>

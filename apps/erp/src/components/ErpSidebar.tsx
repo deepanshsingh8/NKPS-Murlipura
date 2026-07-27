@@ -26,6 +26,7 @@ import {
   Bus,
   Banknote,
   GitPullRequestArrow,
+  MapPin,
 } from "lucide-react";
 import {
   SidebarShell,
@@ -110,9 +111,21 @@ const erpItems: SidebarItem[] = [
     hideOverview: true,
     children: [
       { kind: "link", icon: CreditCard, label: "Academic", href: "/fees/academic" },
-      { kind: "link", icon: Bus, label: "Transport", href: "/fees/transport" },
       { kind: "link", icon: Banknote, label: "Payment Management", href: "/fees/payments" },
       { kind: "link", icon: GitPullRequestArrow, label: "Change Requests", href: "/fees/change-requests" },
+    ],
+  },
+  {
+    kind: "group",
+    icon: Bus,
+    label: "Transport",
+    landingHref: "/transport",
+    children: [
+      { kind: "link", icon: MapPin, label: "Stops & Fees", href: "/transport/stops" },
+      { kind: "link", icon: Bus, label: "Buses & Routes", href: "/transport/buses" },
+      { kind: "link", icon: UserCog, label: "Drivers", href: "/transport/drivers" },
+      { kind: "link", icon: UserCheck, label: "Student Assignments", href: "/transport/assignments" },
+      { kind: "link", icon: GitPullRequestArrow, label: "Change Requests", href: "/transport/changes" },
     ],
   },
   {
@@ -133,6 +146,7 @@ const erpItems: SidebarItem[] = [
 const EDITOR_ALWAYS_ALLOWED = new Set(["/"]);
 const PENDING_REGISTRATION_BADGE_HREFS = new Set(["/people/users"]);
 const PENDING_FEE_CHANGE_REQUEST_BADGE_HREFS = new Set(["/fees/change-requests"]);
+const PENDING_TRANSPORT_CHANGE_BADGE_HREFS = new Set(["/transport/changes"]);
 
 export function ErpSidebar() {
   const { collapsed } = useSidebar();
@@ -144,6 +158,7 @@ export function ErpSidebar() {
       editorAlwaysAllowedHrefs={EDITOR_ALWAYS_ALLOWED}
       pendingRegistrationBadgeHrefs={PENDING_REGISTRATION_BADGE_HREFS}
       pendingFeeChangeRequestBadgeHrefs={PENDING_FEE_CHANGE_REQUEST_BADGE_HREFS}
+      pendingTransportChangeBadgeHrefs={PENDING_TRANSPORT_CHANGE_BADGE_HREFS}
       settingsHref="/portal/settings?from=erp"
       logoutRedirect="/login"
       footerExtra={<AppSwitcher scope="erp-admin" collapsed={collapsed} />}

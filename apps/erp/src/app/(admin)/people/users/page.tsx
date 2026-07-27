@@ -30,6 +30,7 @@ import {
   TableRow,
 } from "@nkps/shared/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@nkps/shared/components/ui/tabs";
+import { LinkHealthPanel } from "@/components/admin/LinkHealthPanel";
 import { toast } from "sonner";
 import {
   Plus,
@@ -43,6 +44,7 @@ import {
   CheckCircle2,
   XCircle,
   KeyRound,
+  Link2,
 } from "lucide-react";
 import { adminFetch } from "@nkps/shared/lib/admin-api";
 import type { Profile, UserRole, RegistrationRequest, RegistrationStatus } from "@nkps/shared/types";
@@ -110,6 +112,22 @@ export default function AdminUsersPage() {
   const [permsDialogOpen, setPermsDialogOpen] = useState(false);
   const [permsTargetId, setPermsTargetId] = useState<string | null>(null);
   const [permsTargetName, setPermsTargetName] = useState("");
+
+  // Link account → student record dialog (admin repair tool)
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkTarget, setLinkTarget] = useState<Profile | null>(null);
+  const [linkAdmissionNo, setLinkAdmissionNo] = useState("");
+  const [linkVerifying, setLinkVerifying] = useState(false);
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
+  const [linkResult, setLinkResult] = useState<{
+    full_name: string;
+    admission_no: string;
+    class_label: string | null;
+    is_active: boolean;
+  } | null>(null);
+  const [linkRelationship, setLinkRelationship] = useState<
+    "father" | "mother" | "guardian"
+  >("guardian");
 
   const supabase = createClient();
 
@@ -321,6 +339,9 @@ export default function AdminUsersPage() {
       } else {
         toast.success("Registration approved — login details sent via email");
       }
+      if (data.link_warning) {
+        toast.warning(data.link_warning, { duration: 12000 });
+      }
       await fetchRequests();
       await fetchProfiles();
     } catch {
@@ -365,6 +386,75 @@ export default function AdminUsersPage() {
     }
   };
 
+  // ---- Link account → student record (admin repair tool) ----
+  const openLinkDialog = (profile: Profile) => {
+    setLinkTarget(profile);
+    setLinkAdmissionNo("");
+    setLinkResult(null);
+    setLinkRelationship("guardian");
+    setLinkDialogOpen(true);
+  };
+
+  const verifyAdmission = async () => {
+    if (!linkAdmissionNo.trim()) return;
+    setLinkVerifying(true);
+    setLinkResult(null);
+    try {
+      const res = await adminFetch(
+        `/api/students/link-account?admission_no=${encodeURIComponent(
+          linkAdmissionNo.trim()
+        )}`
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Lookup failed");
+        return;
+      }
+      if (!data.found) {
+        toast.error("No student found with that admission number");
+        return;
+      }
+      setLinkResult(data.student);
+    } catch {
+      toast.error("Lookup failed");
+    } finally {
+      setLinkVerifying(false);
+    }
+  };
+
+  const submitLink = async () => {
+    if (!linkTarget || !linkResult) return;
+    setLinkSubmitting(true);
+    try {
+      const res = await adminFetch("/api/students/link-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile_id: linkTarget.id,
+          admission_no: linkAdmissionNo.trim(),
+          relationship:
+            linkTarget.role === "parent" ? linkRelationship : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Failed to link account");
+        return;
+      }
+      toast.success(
+        data.alreadyLinked
+          ? `Already linked to ${data.linked.student_name}`
+          : `Linked ${linkTarget.full_name} to ${data.linked.student_name}`
+      );
+      setLinkDialogOpen(false);
+      await fetchProfiles();
+    } catch {
+      toast.error("Failed to link account");
+    } finally {
+      setLinkSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -390,6 +480,8 @@ export default function AdminUsersPage() {
           </Button>
         )}
       </div>
+
+      <LinkHealthPanel onChanged={fetchProfiles} />
 
       <div className="erp-table-container p-6">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -517,6 +609,19 @@ export default function AdminUsersPage() {
                               >
                                 <KeyRound className="h-4 w-4 mr-1" />
                                 Permissions
+                              </Button>
+                            )}
+                            {(profile.role === "student" || profile.role === "parent") && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openLinkDialog(profile)}
+                                title="Link this account to a student record by admission number"
+                              >
+                                <Link2 className="h-4 w-4 mr-1" />
+                                {profile.role === "student" && profile.student_id
+                                  ? "Re-link"
+                                  : "Link record"}
                               </Button>
                             )}
                             <Button
@@ -862,6 +967,111 @@ export default function AdminUsersPage() {
                 className="bg-red-600 hover:bg-red-700 text-white"
               >
                 Reject Registration
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Link Account → Student Record Dialog */}
+      <Dialog open={linkDialogOpen} onOpenChange={setLinkDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-navy-900 flex items-center justify-center">
+                <Link2 className="h-5 w-5 text-gold-400" />
+              </div>
+              <div>
+                <DialogTitle>Link to student record</DialogTitle>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                  {linkTarget
+                    ? `Connect ${linkTarget.full_name} (${linkTarget.role}) to a student by admission number`
+                    : ""}
+                </p>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="erp-form-group">
+              <Label htmlFor="linkAdmission">Admission number</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="linkAdmission"
+                  value={linkAdmissionNo}
+                  onChange={(e) => {
+                    setLinkAdmissionNo(e.target.value);
+                    setLinkResult(null);
+                  }}
+                  placeholder="e.g. NKPS-1023"
+                  className="h-10"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      verifyAdmission();
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={verifyAdmission}
+                  disabled={linkVerifying || !linkAdmissionNo.trim()}
+                >
+                  {linkVerifying ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Verify"
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {linkResult && (
+              <div className="rounded-xl border border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/20 p-3">
+                <p className="text-sm font-semibold text-navy-900 dark:text-white">
+                  {linkResult.full_name}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  {linkResult.admission_no}
+                  {linkResult.class_label ? ` · ${linkResult.class_label}` : ""}
+                  {!linkResult.is_active ? " · (inactive)" : ""}
+                </p>
+              </div>
+            )}
+
+            {linkTarget?.role === "parent" && (
+              <div className="erp-form-group">
+                <Label>Relationship</Label>
+                <Select
+                  value={linkRelationship}
+                  onValueChange={(v) =>
+                    v && setLinkRelationship(v as "father" | "mother" | "guardian")
+                  }
+                >
+                  <SelectTrigger className="w-full h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="father">Father</SelectItem>
+                    <SelectItem value="mother">Mother</SelectItem>
+                    <SelectItem value="guardian">Guardian</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLinkDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={submitLink}
+                disabled={!linkResult || linkSubmitting}
+                className="bg-navy-900 hover:bg-navy-800 text-white"
+              >
+                {linkSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Link account
               </Button>
             </DialogFooter>
           </div>

@@ -31,6 +31,7 @@ export type FeatureKey =
   | "exam_timetable"
   | "admit_cards"
   | "fees"
+  | "transport"
   | "timetable"
   | "calendar"
   | "attendance"
@@ -75,6 +76,7 @@ export const FEATURE_CATALOG: readonly FeatureDef[] = [
   { key: "exam_timetable", label: "Exam Timetable", href: "/exams/timetable", group: "erp" },
   { key: "admit_cards", label: "Admit Cards", href: "/exams/admit-cards", group: "erp" },
   { key: "fees", label: "Fees", href: "/fees", group: "erp" },
+  { key: "transport", label: "Transport", href: "/transport", group: "erp" },
   { key: "timetable", label: "Timetable", href: "/timetable", group: "erp" },
   { key: "calendar", label: "Calendar", href: "/calendar", group: "erp" },
   { key: "attendance", label: "Attendance", href: "/attendance", group: "erp" },

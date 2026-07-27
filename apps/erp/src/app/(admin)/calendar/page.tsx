@@ -63,6 +63,7 @@ export default function AdminCalendarPage() {
     start_date: "",
     end_date: "",
     class_id: "",
+    is_public: true,
   });
   const [newEvent, setNewEvent] = useState({
     title: "",
@@ -71,6 +72,7 @@ export default function AdminCalendarPage() {
     start_date: "",
     end_date: "",
     class_id: "",
+    is_public: true,
   });
 
   const fetchEvents = useCallback(async () => {
@@ -140,6 +142,11 @@ export default function AdminCalendarPage() {
         start_date: newEvent.start_date,
         end_date: newEvent.end_date || null,
         class_id: newEvent.class_id || null,
+        // A class-scoped event is, by definition, not school-wide. Without this
+        // the column falls back to its DB default of true, so a single-class
+        // holiday would block attendance for every class.
+        is_school_wide: !newEvent.class_id,
+        is_public: newEvent.is_public,
         created_by: session.user.id,
       },
     });
@@ -156,6 +163,7 @@ export default function AdminCalendarPage() {
         start_date: "",
         end_date: "",
         class_id: "",
+        is_public: true,
       });
       fetchEvents();
     }
@@ -188,6 +196,7 @@ export default function AdminCalendarPage() {
       start_date: evt.start_date,
       end_date: evt.end_date ?? "",
       class_id: evt.class_id ?? "",
+      is_public: evt.is_public ?? true,
     });
     setEditEventOpen(true);
   };
@@ -215,6 +224,11 @@ export default function AdminCalendarPage() {
         start_date: editData.start_date,
         end_date: editData.end_date || null,
         class_id: editData.class_id || null,
+        // Mirror the insert path: a class-scoped event is not school-wide.
+        // Without this the stale flag would keep a class holiday blocking
+        // attendance for every class.
+        is_school_wide: !editData.class_id,
+        is_public: editData.is_public,
       },
       match: { column: "id", value: editingEvent.id },
     });
@@ -300,6 +314,7 @@ export default function AdminCalendarPage() {
                   <TableHead>Type</TableHead>
                   <TableHead>Start Date</TableHead>
                   <TableHead>End Date</TableHead>
+                  <TableHead>Website</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="w-12" />
                 </TableRow>
@@ -323,6 +338,19 @@ export default function AdminCalendarPage() {
                     <TableCell>{formatDate(evt.start_date)}</TableCell>
                     <TableCell>
                       {evt.end_date ? formatDate(evt.end_date) : "--"}
+                    </TableCell>
+                    <TableCell>
+                      {evt.class_id ? (
+                        <span className="text-xs text-gray-400">Class only</span>
+                      ) : evt.is_public ? (
+                        <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                          Public
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-gray-100 text-gray-600 dark:bg-muted dark:text-gray-300">
+                          Internal
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="max-w-[200px] truncate text-gray-500 dark:text-gray-400">
                       {evt.description || "--"}
@@ -450,6 +478,23 @@ export default function AdminCalendarPage() {
                 />
               </div>
             </div>
+            <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 dark:border-border p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-900 focus:ring-navy-900"
+                checked={newEvent.is_public}
+                onChange={(e) =>
+                  setNewEvent({ ...newEvent, is_public: e.target.checked })
+                }
+              />
+              <span className="text-xs">
+                <span className="font-medium block">Show on public website</span>
+                <span className="text-gray-500">
+                  School-wide events appear on the home page and Academic
+                  Calendar. Uncheck to keep this event internal.
+                </span>
+              </span>
+            </label>
             <Button
               onClick={handleAddEvent}
               disabled={submitting}
@@ -567,6 +612,23 @@ export default function AdminCalendarPage() {
                 />
               </div>
             </div>
+            <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 dark:border-border p-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-900 focus:ring-navy-900"
+                checked={editData.is_public}
+                onChange={(e) =>
+                  setEditData({ ...editData, is_public: e.target.checked })
+                }
+              />
+              <span className="text-xs">
+                <span className="font-medium block">Show on public website</span>
+                <span className="text-gray-500">
+                  School-wide events appear on the home page and Academic
+                  Calendar. Uncheck to keep this event internal.
+                </span>
+              </span>
+            </label>
             <Button
               onClick={handleEditEvent}
               disabled={submitting}

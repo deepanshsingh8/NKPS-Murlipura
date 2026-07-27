@@ -87,6 +87,30 @@ export function contentDispositionAttachment(rawName: string): string {
 }
 
 /**
+ * Escape a value for safe inclusion in a CSV cell.
+ *
+ * Guards against two distinct risks:
+ *  1. CSV structure — quotes the value when it contains a comma, quote, or
+ *     newline, doubling any embedded quotes (RFC 4180).
+ *  2. Formula/CSV injection — a cell beginning with `= + - @` (or a tab/CR that
+ *     spreadsheets strip before evaluating) is treated as a formula by Excel /
+ *     Google Sheets. Free-text fields (student names, admission numbers) are
+ *     attacker-controllable via bulk import, so we neutralize the leading
+ *     character with a `'` prefix before applying CSV quoting.
+ */
+export function csvEscape(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  let s = String(value);
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = `'${s}`;
+  }
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+/**
  * Convert "HH:MM" / "HH:MM:SS" to a 12-hour "h:MM am/pm" display.
  */
 export function formatTime12(time: string | null | undefined): string {

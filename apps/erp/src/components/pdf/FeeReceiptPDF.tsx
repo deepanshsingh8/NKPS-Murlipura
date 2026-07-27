@@ -97,6 +97,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
   },
+  refundBanner: {
+    marginTop: 6,
+    padding: 6,
+    backgroundColor: "#fef2f2",
+    borderWidth: 1,
+    borderColor: "#dc2626",
+  },
+  refundBannerTitle: {
+    fontFamily: "Helvetica-Bold",
+    color: "#991b1b",
+    fontSize: 10,
+  },
+  refundBannerLine: {
+    color: "#991b1b",
+    fontSize: 8.5,
+    marginTop: 2,
+  },
   amountLabel: { fontFamily: "Helvetica-Bold", color: "#0b2452" },
   amountValue: {
     fontFamily: "Helvetica-Bold",
@@ -215,6 +232,12 @@ export interface FeeReceiptData {
     class_label: string;
     roll_number: number | null;
   };
+  // Payment lifecycle — when 'refunded', the receipt is stamped so it can't be
+  // mistaken for proof of a settled payment.
+  status?: string | null;
+  refund_amount?: number | null;
+  refund_reason?: string | null;
+  refunded_at?: string | null;
   remarks?: string | null;
   // Migration 044 — only populated for non-cash methods.
   cheque_number?: string | null;
@@ -260,11 +283,17 @@ function Copy({
   data: FeeReceiptData;
   logoData?: Buffer | Uint8Array;
 }) {
-  const amountText = new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(data.amount);
+  const formatINR = (n: number) =>
+    new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency: "INR",
+      maximumFractionDigits: 2,
+    }).format(n);
+  const amountText = formatINR(data.amount);
+  const isRefunded = data.status === "refunded";
+  const refundedDate = data.refunded_at
+    ? new Date(data.refunded_at).toLocaleDateString("en-IN")
+    : null;
 
   return (
     <View style={styles.copy} wrap={false}>
@@ -370,8 +399,23 @@ function Copy({
         </View>
       ) : null}
 
+      {isRefunded ? (
+        <View style={styles.refundBanner}>
+          <Text style={styles.refundBannerTitle}>REFUNDED — NOT A VALID PROOF OF PAYMENT</Text>
+          <Text style={styles.refundBannerLine}>
+            {data.refund_amount != null
+              ? `Refunded ${formatINR(data.refund_amount)}`
+              : "This payment was refunded"}
+            {refundedDate ? ` on ${refundedDate}` : ""}
+            {data.refund_reason ? ` — ${data.refund_reason}` : ""}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.amountBox}>
-        <Text style={styles.amountLabel}>Amount Received</Text>
+        <Text style={styles.amountLabel}>
+          {isRefunded ? "Amount Received (since refunded)" : "Amount Received"}
+        </Text>
         <Text style={styles.amountValue}>{amountText}</Text>
       </View>
       <Text style={styles.words}>{numberToWords(data.amount)}</Text>
@@ -398,7 +442,9 @@ function Copy({
         </View>
       </View>
       <Text style={styles.footer}>
-        Fees once paid are non-refundable. This is a computer-generated receipt.
+        {isRefunded
+          ? "This payment was refunded — this document is for record only and is not a valid proof of payment. Computer-generated receipt."
+          : "Fees once paid are non-refundable. This is a computer-generated receipt."}
       </Text>
     </View>
   );

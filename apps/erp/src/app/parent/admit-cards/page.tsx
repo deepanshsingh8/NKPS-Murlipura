@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@nkps/shared/components/ui/select";
-import { Download, Loader2, IdCard, CalendarClock, Users } from "lucide-react";
+import { Download, Loader2, IdCard, CalendarClock, Users, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 interface ChildOption {
@@ -63,6 +63,7 @@ export default function ParentAdmitCardsPage() {
   const [loadingExams, setLoadingExams] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [defaultTemplateExists, setDefaultTemplateExists] = useState(false);
+  const [dues, setDues] = useState<{ total: number; hasOutstanding: boolean } | null>(null);
 
   const fetchChildren = useCallback(async () => {
     const supabase = createClient();
@@ -195,6 +196,20 @@ export default function ParentAdmitCardsPage() {
     fetchExams();
   }, [fetchExams]);
 
+  // Fee-dues gate: a child with outstanding dues can be viewed but their admit
+  // cards can't be downloaded. Re-fetch whenever the selected child changes.
+  useEffect(() => {
+    if (!selectedChild) {
+      setDues(null);
+      return;
+    }
+    setDues(null);
+    fetch(`/api/students/dues?student_id=${selectedChild}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setDues(d))
+      .catch(() => {});
+  }, [selectedChild]);
+
   const download = async (examTypeId: string, examName: string) => {
     if (!selectedChild) return;
     setDownloading(examTypeId);
@@ -204,7 +219,7 @@ export default function ParentAdmitCardsPage() {
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        toast.error(body.error ?? "Failed to download admit card");
+        toast.error(body.message ?? body.error ?? "Failed to download admit card");
         return;
       }
       await downloadFromResponse(
@@ -280,6 +295,22 @@ export default function ParentAdmitCardsPage() {
         )}
       </div>
 
+      {dues?.hasOutstanding && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">
+              Admit card download locked
+            </p>
+            <p className="text-sm text-red-600 dark:text-red-400 mt-0.5">
+              Clear the outstanding fee dues of ₹{dues.total.toLocaleString("en-IN")} for{" "}
+              {child?.full_name ?? "this child"} to download admit cards. The exam schedule
+              stays visible below.
+            </p>
+          </div>
+        </div>
+      )}
+
       {!defaultTemplateExists ? (
         <Card className="bg-white dark:bg-card rounded-2xl">
           <CardContent className="py-12 text-center text-gray-400 dark:text-gray-500">
@@ -334,7 +365,7 @@ export default function ParentAdmitCardsPage() {
                 </div>
                 <Button
                   onClick={() => download(e.id, e.name)}
-                  disabled={downloading === e.id}
+                  disabled={downloading === e.id || Boolean(dues?.hasOutstanding)}
                   className="w-full bg-navy-900 text-white hover:bg-navy-900/90"
                   size="sm"
                 >
@@ -343,7 +374,11 @@ export default function ParentAdmitCardsPage() {
                   ) : (
                     <Download className="h-4 w-4 mr-2" />
                   )}
-                  {downloading === e.id ? "Preparing…" : "Download Admit Card"}
+                  {dues?.hasOutstanding
+                    ? "Locked — dues pending"
+                    : downloading === e.id
+                      ? "Preparing…"
+                      : "Download Admit Card"}
                 </Button>
               </CardContent>
             </Card>

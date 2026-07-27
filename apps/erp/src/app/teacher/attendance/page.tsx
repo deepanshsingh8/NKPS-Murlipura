@@ -138,6 +138,7 @@ export default function TeacherAttendancePage() {
         .from("student_enrollments")
         .select("student_id, roll_number, students(full_name)")
         .eq("class_id", classId)
+        .eq("status", "active")
         .order("roll_number");
 
       if (!enrollments || enrollments.length === 0) {

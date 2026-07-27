@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { promoteStaffToTeacher } from "@/lib/staff-teacher-sync";
+import { isTeachingStaffCategory } from "@nkps/shared/lib/staff-roles";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -20,6 +21,23 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { id } = await context.params;
+
+  // Only teaching staff can become a teacher record — a front-desk clerk or
+  // bus driver has no business appearing as an assignable teacher.
+  const { data: member } = await admin
+    .from("staff_members")
+    .select("category")
+    .eq("id", id)
+    .maybeSingle();
+  if (!member) {
+    return NextResponse.json({ error: "Staff member not found" }, { status: 404 });
+  }
+  if (!isTeachingStaffCategory(member.category as string)) {
+    return NextResponse.json(
+      { error: "Only teaching staff can be converted to a teacher." },
+      { status: 400 }
+    );
+  }
 
   const result = await promoteStaffToTeacher(admin, id);
   if ("error" in result) {

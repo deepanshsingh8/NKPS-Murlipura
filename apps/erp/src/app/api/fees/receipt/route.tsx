@@ -48,7 +48,7 @@ export async function GET(request: Request) {
     const { data: payment, error: payErr } = await admin
       .from("fee_payments")
       .select(
-        "id, student_id, amount_paid, payment_date, payment_method, receipt_number, month, status, remarks, cheque_number, cheque_date, bank_name, payer_name, transaction_ref, payment_provider, fee_structure:fee_structures(fee_type, academic_year_id, academic_years(name)), transport_slab:transport_fare_slabs(name, academic_year_id, academic_years(name))"
+        "id, student_id, amount_paid, payment_date, payment_method, receipt_number, month, status, remarks, refund_amount, refund_reason, refunded_at, cheque_number, cheque_date, bank_name, payer_name, transaction_ref, payment_provider, fee_structure:fee_structures(fee_type, academic_year_id, academic_years(name)), bus_stop:bus_stops(name), academic_year:academic_years(name)"
       )
       .eq("id", paymentId)
       .single();
@@ -130,19 +130,18 @@ export async function GET(request: Request) {
       academic_years: { name: string } | null;
     } | null;
 
-    const transportSlab = payment.transport_slab as unknown as {
+    const busStop = payment.bus_stop as unknown as {
       name: string;
-      academic_years: { name: string } | null;
     } | null;
 
-    // Transport receipts use the slab name as the line description so
-    // parents see "0–5 km" rather than a generic "Transport".
-    const feeTypeLabel = transportSlab
-      ? `Transport — ${transportSlab.name}`
+    // Transport receipts use the stop name as the line description so
+    // parents see "100 Feet Road" rather than a generic "Transport".
+    const feeTypeLabel = busStop
+      ? `Transport — ${busStop.name}`
       : feeStructure?.fee_type ?? "Fee";
 
     const academicYearName =
-      transportSlab?.academic_years?.name ??
+      (payment.academic_year as unknown as { name: string } | null)?.name ??
       feeStructure?.academic_years?.name ??
       (enrollment?.academic_years as unknown as { name: string } | null)?.name ??
       "";
@@ -168,6 +167,10 @@ export async function GET(request: Request) {
           payment_method: payment.payment_method,
           month: payment.month,
           academic_year: academicYearName,
+          status: payment.status,
+          refund_amount: payment.refund_amount != null ? Number(payment.refund_amount) : null,
+          refund_reason: payment.refund_reason ?? null,
+          refunded_at: payment.refunded_at ?? null,
           remarks: payment.remarks,
           cheque_number: payment.cheque_number ?? null,
           cheque_date: payment.cheque_date ?? null,

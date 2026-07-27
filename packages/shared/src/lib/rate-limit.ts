@@ -80,11 +80,24 @@ export function rateLimit({
 }
 
 /**
- * Best-effort client IP from common reverse-proxy headers, falling back to
- * a constant string so callers never have to handle nullable. Vercel sets
- * `x-forwarded-for`; behind some hosts `x-real-ip` is the only one available.
+ * Best-effort client IP from reverse-proxy headers, falling back to a constant
+ * string so callers never have to handle nullable.
+ *
+ * SECURITY: `x-forwarded-for` is client-spoofable when the app is NOT behind a
+ * proxy that overwrites it — an attacker can then rotate the value to get a
+ * fresh rate-limit bucket per request. Deploy this app behind a proxy (Vercel,
+ * Cloudflare, nginx) that sets a trusted single-value header, and point
+ * `TRUSTED_IP_HEADER` at it (e.g. "x-real-ip", "cf-connecting-ip",
+ * "x-vercel-forwarded-for"). When set, that header is the sole source of truth.
+ * Note: the limiter is also per-process; for durable, shared limits move the
+ * store to Redis/Upstash.
  */
 export function clientIp(request: Request | NextRequest): string {
+  const trustedHeader = process.env.TRUSTED_IP_HEADER;
+  if (trustedHeader) {
+    const trusted = request.headers.get(trustedHeader);
+    if (trusted) return trusted.split(",")[0]!.trim();
+  }
   const xff = request.headers.get("x-forwarded-for");
   if (xff) return xff.split(",")[0]!.trim();
   const real = request.headers.get("x-real-ip");

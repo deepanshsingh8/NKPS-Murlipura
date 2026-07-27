@@ -16,10 +16,15 @@ export function extractStoragePath(
   if (!fileUrl) return null;
   const trimmed = fileUrl.trim();
   if (!trimmed) return null;
+  // Reject traversal in any branch so a crafted stored URL/path can't escape
+  // its bucket prefix when used to delete an object.
+  const hasTraversal = (p: string) =>
+    p.split("/").some((seg) => seg === "..");
   // Already-relative path. Strip leading slashes; ignore query string if any.
   if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-    const noQuery = trimmed.split("?")[0];
-    return noQuery.replace(/^\/+/, "");
+    const noQuery = trimmed.split("?")[0]!.replace(/^\/+/, "");
+    if (hasTraversal(noQuery)) return null;
+    return noQuery;
   }
   let parsed: URL;
   try {
@@ -31,5 +36,7 @@ export function extractStoragePath(
   const m = parsed.pathname.match(re);
   if (!m) return null;
   if (m[1] !== bucket) return null;
-  return decodeURIComponent(m[2]);
+  const path = decodeURIComponent(m[2]!);
+  if (hasTraversal(path)) return null;
+  return path;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, Fragment } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import * as XLSX from "xlsx";
 import {
@@ -27,31 +27,38 @@ import {
   Upload,
   Download,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   X,
   Pencil,
 } from "lucide-react";
 import { formatClassName } from "@nkps/shared/lib/utils";
+import { adminFetch } from "@nkps/shared/lib/admin-api";
+import {
+  STUDENT_TEMPLATE_FIELDS,
+  type StudentTemplateField,
+  bulkTemplateHeaders,
+  bulkTemplateColWidths,
+  formatDateDDMMYYYY,
+  mapTemplateHeaders,
+  normalizeDateString,
+  normalizeEnum,
+  normalizeNumber,
+  normalizePhone,
+  normalizeToken,
+  normalizeYesNo,
+  toTitleCase,
+} from "@nkps/shared/lib/student-template";
 
+// All cell values are kept as display strings in the preview (booleans as
+// "YES"/"NO", enums as their stored value) — the server's zod preprocessing
+// coerces them on submit.
 interface ParsedRow {
-  admission_no: string;
-  full_name: string;
-  class_name: string;
-  section: string;
-  stream: string;
-  father_name: string;
-  mother_name: string;
-  date_of_birth: string;
-  gender: string;
-  phone: string;
-  address: string;
-  roll_number: number | undefined;
-  email: string;
-  blood_group: string;
-  category: string;
-  aadhar_number: string;
-  previous_school: string;
+  data: Record<string, string>;
   errors: string[];
+  warnings: string[];
 }
 
 interface UploadError {
@@ -62,13 +69,20 @@ interface UploadError {
   error: string;
 }
 
+interface UploadWarning {
+  admission_no: string;
+  full_name?: string;
+  warning: string;
+}
+
 interface UploadResult {
   success: boolean;
   inserted: number;
+  created: number;
   updated: number;
-  usersCreated: number;
   classesCreated: number;
   errors: UploadError[];
+  warnings: UploadWarning[];
   total: number;
 }
 
@@ -78,170 +92,130 @@ interface StudentBulkUploadProps {
   onSuccess: () => void;
 }
 
-// Flexible column name mapping
-const COLUMN_ALIASES: Record<string, string[]> = {
-  admission_no: [
-    "admission no",
-    "adm no",
-    "admission number",
-    "admno",
-    "sr no",
-    "sr. no",
-    "serial no",
-    "s.no",
-    "s no",
-  ],
-  full_name: [
-    "name",
-    "student name",
-    "full name",
-    "student's name",
-    "pupil name",
-  ],
-  class_name: [
-    "class",
-    "class name",
-    "grade",
-    "standard",
-    "std",
-  ],
-  section: [
-    "section",
-    "sec",
-    "div",
-    "division",
-  ],
-  stream: [
-    "stream",
-    "specialization",
-    "branch",
-    "faculty",
-    "group",
-  ],
-  father_name: [
-    "father name",
-    "father's name",
-    "father",
-    "fathers name",
-    "f/name",
-    "f name",
-  ],
-  mother_name: [
-    "mother name",
-    "mother's name",
-    "mother",
-    "mothers name",
-    "m/name",
-    "m name",
-  ],
-  date_of_birth: ["dob", "date of birth", "birth date", "birthdate", "d.o.b", "d.o.b."],
-  gender: ["gender", "sex", "m/f"],
-  phone: ["phone", "mobile", "contact", "phone no", "mobile no", "contact no", "phone number"],
-  address: ["address", "residential address", "home address"],
-  roll_number: ["roll no", "roll number", "roll", "rollno", "roll no."],
-  email: ["email", "e-mail", "email id", "email address", "mail"],
-  blood_group: ["blood group", "blood type", "bloodgroup", "bg"],
-  category: ["category", "caste", "caste category", "reservation", "social category"],
-  aadhar_number: ["aadhar", "aadhaar", "aadhar no", "aadhaar no", "aadhar number", "aadhaar number", "uid", "aadhar no."],
-  previous_school: ["previous school", "prev school", "last school", "school", "previous institution"],
-};
+const CHUNK_SIZE = 500; // rows per request — keeps a 60+ column payload well under the request-body limit
 
-function normalizeHeader(header: string): string {
-  return header.toLowerCase().replace(/[^a-z0-9\s/]/g, "").trim();
-}
+// Numeric-looking text columns that Excel mangles into scientific notation /
+// trailing ".0" — cleaned with normalizePhone on import.
+const DIGIT_TEXT_KEYS = new Set([
+  "phone",
+  "mother_mobile",
+  "father_mobile",
+  "guardian_mobile",
+  "aadhar_number",
+  "jan_aadhar_number",
+  "present_pincode",
+  "permanent_pincode",
+  "board_roll_number",
+  "previous_school_udise_code",
+]);
 
-function mapHeaders(headers: string[]): Record<number, string> {
-  const mapping: Record<number, string> = {};
+const fieldByKey = new Map(STUDENT_TEMPLATE_FIELDS.map((f) => [f.key, f]));
 
-  headers.forEach((header, index) => {
-    const normalized = normalizeHeader(header);
-    if (!normalized) return;
-
-    // Two-pass matching: first try exact matches, then substring matches
-    // This prevents "blood group" matching "group" (stream) before "blood group" (blood_group)
-    let matched = false;
-    for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
-      if (normalized === field || aliases.some((alias) => normalized === alias)) {
-        mapping[index] = field;
-        matched = true;
-        break;
+/** Normalize one raw cell per its registry field. Returns the display value
+ *  plus an optional row warning when a non-blank value wasn't recognized. */
+function normalizeCell(
+  field: StudentTemplateField,
+  raw: string
+): { value: string; warning?: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { value: "" };
+  switch (field.kind) {
+    case "name":
+      return { value: toTitleCase(trimmed) };
+    case "date": {
+      const normalized = normalizeDateString(trimmed);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+        return { value: "", warning: `${field.label}: "${trimmed}" is not a valid date — left blank` };
       }
-    }
-    if (!matched) {
-      for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
-        if (aliases.some((alias) => normalized.includes(alias))) {
-          mapping[index] = field;
-          break;
+      // Date of birth must be a real past date (server rejects future / pre-1900
+      // DOBs, which would fail the whole upload batch with a cryptic error). A
+      // future DOB is almost always a wrong-year typo, so blank it and warn —
+      // consistent with how other unrecognized values are handled above.
+      if (field.key === "date_of_birth") {
+        const t = Date.parse(`${normalized}T00:00:00Z`);
+        const year = Number(normalized.slice(0, 4));
+        if (year < 1900 || t > Date.now()) {
+          return { value: "", warning: `${field.label}: "${trimmed}" is not a valid past date — left blank` };
         }
       }
+      // Day/month ambiguity: when the day is ≤ 12 the date reads validly both as
+      // DD/MM and MM/DD (e.g. 04/12 vs 12/04). Excel stores dates by locale, so a
+      // sheet authored in US M/D format can silently swap these. Keep the value
+      // but flag the at-risk row so the admin can verify against the real date.
+      const [yy, mm, dd] = normalized.split("-");
+      if (Number(dd) <= 12 && dd !== mm) {
+        return {
+          value: normalized,
+          warning: `${field.label}: imported as ${dd}/${mm}/${yy} (DD/MM). If the sheet used MM/DD it should be ${mm}/${dd}/${yy} — please verify.`,
+        };
+      }
+      return { value: normalized };
     }
-  });
-
-  return mapping;
-}
-
-function toTitleCase(value: string): string {
-  if (!value) return "";
-  return value
-    .toLowerCase()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function normalizeGender(value: string): string {
-  const v = value.toLowerCase().trim();
-  if (v === "m" || v === "male" || v === "boy") return "male";
-  if (v === "f" || v === "female" || v === "girl") return "female";
-  if (v === "other" || v === "o") return "other";
-  return "";
-}
-
-function excelSerialToDate(serial: number): string {
-  const epoch = new Date(1899, 11, 30);
-  const date = new Date(epoch.getTime() + serial * 86400000);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function normalizeDateString(value: string): string {
-  if (!value) return "";
-  // Handle Excel serial numbers (e.g., 43564)
-  const num = Number(value);
-  if (!isNaN(num) && num > 1000 && num < 100000) {
-    return excelSerialToDate(num);
-  }
-  const parts = value.split(/[/\-\.]/);
-  if (parts.length === 3) {
-    const [a, b, c] = parts;
-    if (a.length <= 2 && c.length === 4) {
-      return `${c}-${b.padStart(2, "0")}-${a.padStart(2, "0")}`;
+    case "boolean": {
+      const v = normalizeYesNo(trimmed);
+      if (v === undefined) {
+        return { value: "", warning: `${field.label}: "${trimmed}" is not YES/NO — left blank` };
+      }
+      return { value: v ? "YES" : "NO" };
     }
-    if (a.length === 4) {
-      return `${a}-${b.padStart(2, "0")}-${c.padStart(2, "0")}`;
+    case "enum": {
+      const v = normalizeEnum(field, trimmed);
+      if (v === undefined) {
+        return { value: "", warning: `${field.label}: "${trimmed}" not recognised — left blank` };
+      }
+      return { value: v };
+    }
+    case "number": {
+      const num = normalizeNumber(trimmed);
+      if (num === undefined) {
+        return { value: "", warning: `${field.label}: "${trimmed}" is not a number — left blank` };
+      }
+      return { value: String(num) };
+    }
+    case "integer": {
+      const num = parseInt(trimmed, 10);
+      return { value: isNaN(num) ? "" : String(num) };
+    }
+    default: {
+      let value = trimmed;
+      if (DIGIT_TEXT_KEYS.has(field.key)) value = normalizePhone(value);
+      if (field.key === "email") value = value.toLowerCase();
+      return { value };
     }
   }
-  return value;
 }
 
-function normalizePhone(value: string): string {
-  if (!value) return "";
-  const cleaned = value.replace(/[eE]+\d+$/, "");
-  return cleaned.replace(/\.0+$/, "").trim();
+/** Human-friendly value for the expanded preview row: enum tokens show their
+ *  label ("english" → "English"), ISO dates show as DD/MM/YYYY. */
+function previewDisplayValue(field: StudentTemplateField, raw: string): string {
+  if (!raw) return "";
+  if (field.kind === "enum") {
+    const hit = (field.enumValues ?? []).find((ev) => ev.value === raw);
+    return hit ? hit.label : raw;
+  }
+  if (field.kind === "date") return formatDateDDMMYYYY(raw);
+  return raw;
 }
 
-function validateRow(row: ParsedRow): string[] {
+function validateRow(data: Record<string, string>): string[] {
   const errors: string[] = [];
-  if (!row.admission_no || row.admission_no.trim() === "") {
+  if (!data.admission_no || data.admission_no.trim() === "") {
     errors.push("Admission number is required");
   }
-  if (!row.full_name || row.full_name.trim().length < 2) {
+  if (!data.full_name || data.full_name.trim().length < 2) {
     errors.push("Name is required (min 2 chars)");
   }
-  if (!row.class_name || row.class_name.trim() === "") {
+  if (!data.class_name || data.class_name.trim() === "") {
     errors.push("Class is required");
   }
   return errors;
+}
+
+function splitSubjects(raw: string): string[] {
+  return raw
+    .split(/[,;]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
 }
 
 export function StudentBulkUpload({
@@ -252,28 +226,60 @@ export function StudentBulkUpload({
   const [step, setStep] = useState<"upload" | "preview" | "results">("upload");
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState("");
+  const [mappedKeys, setMappedKeys] = useState<string[]>([]);
+  const [unrecognizedHeaders, setUnrecognizedHeaders] = useState<string[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [existingClassKeys, setExistingClassKeys] = useState<Set<string>>(new Set());
+  // lowercased class label → subjects available in that class (normalized
+  // match tokens + display names for the warning message)
+  const [classSubjects, setClassSubjects] = useState<
+    Map<string, { tokens: Set<string>; names: string[] }>
+  >(new Map());
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
 
-  // Fetch existing classes when entering preview
+  // Fetch existing classes (+ their subjects, for Subjects column preview
+  // matching) when entering preview.
   useEffect(() => {
     if (step !== "preview") return;
     const supabase = createClient();
     (async () => {
       const { data: classes } = await supabase
         .from("classes")
-        .select("name, section, stream_id, streams:stream_id(name)");
+        .select("id, name, section, stream_id, streams:stream_id(name)");
+      // Keys are lowercased so "XI - A (science)" in a sheet still matches
+      // the DB's "XI - A (Science)".
       const keys = new Set<string>();
+      const idToKey = new Map<string, string>();
       for (const c of classes || []) {
-        keys.add(formatClassName({
+        const label = formatClassName({
           name: c.name as string,
           section: c.section as string,
           streams: c.streams as unknown as { name: string } | null,
-        }));
+        });
+        keys.add(label.toLowerCase());
+        idToKey.set(c.id as string, label.toLowerCase());
       }
       setExistingClassKeys(keys);
+
+      const { data: cs } = await supabase
+        .from("class_subjects")
+        .select("class_id, subjects:subject_id(name, nickname)");
+      const subjectMap = new Map<string, { tokens: Set<string>; names: string[] }>();
+      for (const row of cs || []) {
+        const key = idToKey.get(row.class_id as string);
+        if (!key) continue;
+        const subject = row.subjects as unknown as { name: string; nickname: string | null } | null;
+        if (!subject) continue;
+        if (!subjectMap.has(key)) subjectMap.set(key, { tokens: new Set(), names: [] });
+        const entry = subjectMap.get(key)!;
+        entry.tokens.add(normalizeToken(subject.name));
+        if (subject.nickname) entry.tokens.add(normalizeToken(subject.nickname));
+        entry.names.push(subject.name);
+      }
+      setClassSubjects(subjectMap);
     })();
   }, [step]);
 
@@ -281,9 +287,14 @@ export function StudentBulkUpload({
     setStep("upload");
     setParsedRows([]);
     setFileName("");
+    setMappedKeys([]);
+    setUnrecognizedHeaders([]);
     setEditingIndex(null);
+    setExpandedIndex(null);
     setExistingClassKeys(new Set());
+    setClassSubjects(new Map());
     setUploading(false);
+    setUploadProgress(null);
     setUploadResult(null);
   };
 
@@ -316,18 +327,15 @@ export function StudentBulkUpload({
           }
 
           const headers = rawRows[0].map(String);
-          const columnMap = mapHeaders(headers);
+          const { mapping, unrecognized } = mapTemplateHeaders(headers);
+          const keys = Object.values(mapping);
 
-          if (!Object.values(columnMap).includes("admission_no")) {
-            toast.error(
-              'Could not find "Admission No" column. Please check the headers.'
-            );
+          if (!keys.includes("admission_no")) {
+            toast.error('Could not find "Admission No" column. Please check the headers.');
             return;
           }
-          if (!Object.values(columnMap).includes("full_name")) {
-            toast.error(
-              'Could not find "Name" column. Please check the headers.'
-            );
+          if (!keys.includes("full_name")) {
+            toast.error('Could not find "Name" column. Please check the headers.');
             return;
           }
 
@@ -338,51 +346,18 @@ export function StudentBulkUpload({
               continue;
             }
 
-            const record: ParsedRow = {
-              admission_no: "",
-              full_name: "",
-              class_name: "",
-              section: "",
-              stream: "",
-              father_name: "",
-              mother_name: "",
-              date_of_birth: "",
-              gender: "",
-              phone: "",
-              address: "",
-              roll_number: undefined,
-              email: "",
-              blood_group: "",
-              category: "",
-              aadhar_number: "",
-              previous_school: "",
-              errors: [],
-            };
-
-            const NAME_FIELDS = new Set(["full_name", "father_name", "mother_name", "address", "previous_school"]);
-
-            for (const [colIndex, field] of Object.entries(columnMap)) {
-              const cellValue = String(row[Number(colIndex)] ?? "").trim();
-              if (field === "roll_number") {
-                const num = parseInt(cellValue, 10);
-                record.roll_number = isNaN(num) ? undefined : num;
-              } else if (field === "gender") {
-                record[field] = normalizeGender(cellValue);
-              } else if (field === "date_of_birth") {
-                record[field] = normalizeDateString(cellValue);
-              } else if (field === "phone") {
-                record[field] = normalizePhone(cellValue);
-              } else if (field === "email") {
-                record[field] = cellValue.toLowerCase();
-              } else if (NAME_FIELDS.has(field)) {
-                (record as unknown as Record<string, unknown>)[field] = toTitleCase(cellValue);
-              } else {
-                (record as unknown as Record<string, unknown>)[field] = cellValue;
-              }
+            const rowData: Record<string, string> = {};
+            const warnings: string[] = [];
+            for (const [colIndex, key] of Object.entries(mapping)) {
+              const field = fieldByKey.get(key);
+              if (!field) continue;
+              const cellValue = String(row[Number(colIndex)] ?? "");
+              const { value, warning } = normalizeCell(field, cellValue);
+              rowData[key] = value;
+              if (warning) warnings.push(warning);
             }
 
-            record.errors = validateRow(record);
-            parsed.push(record);
+            parsed.push({ data: rowData, warnings, errors: validateRow(rowData) });
           }
 
           if (parsed.length === 0) {
@@ -390,6 +365,8 @@ export function StudentBulkUpload({
             return;
           }
 
+          setMappedKeys(keys);
+          setUnrecognizedHeaders(unrecognized);
           setParsedRows(parsed);
           setStep("preview");
           toast.success(`Parsed ${parsed.length} rows from ${file.name}`);
@@ -406,38 +383,71 @@ export function StudentBulkUpload({
   const validRows = parsedRows.filter((r) => r.errors.length === 0);
   const invalidRows = parsedRows.filter((r) => r.errors.length > 0);
 
+  const classLabel = (r: ParsedRow) => {
+    const name = (r.data.class_name || "").trim();
+    if (!name) return "";
+    const sec = (r.data.section || "A").trim();
+    const stream = (r.data.stream || "").trim();
+    return stream ? `${name} - ${sec} (${stream})` : `${name} - ${sec}`;
+  };
+
   // Compute unique class+section+stream combos from parsed data for preview
   const allFileClasses = Array.from(
-    new Set(
-      parsedRows
-        .filter((r) => r.class_name)
-        .map((r) => {
-          const name = r.class_name.trim();
-          const sec = (r.section || "A").trim();
-          const stream = r.stream?.trim();
-          return stream ? `${name} - ${sec} (${stream})` : `${name} - ${sec}`;
-        })
-    )
+    new Set(parsedRows.map(classLabel).filter(Boolean))
   ).sort();
 
-  const missingClasses = allFileClasses.filter((cls) => !existingClassKeys.has(cls));
-  const existingClasses = allFileClasses.filter((cls) => existingClassKeys.has(cls));
+  const missingClasses = allFileClasses.filter(
+    (cls) => !existingClassKeys.has(cls.toLowerCase())
+  );
+  const existingClasses = allFileClasses.filter((cls) =>
+    existingClassKeys.has(cls.toLowerCase())
+  );
+
+  /** Subject-matching warnings, computed live (class subjects load async). */
+  const subjectWarnings = (r: ParsedRow): string[] => {
+    const raw = r.data.subjects?.trim();
+    if (!raw) return [];
+    const label = classLabel(r);
+    if (!label) return [];
+    if (!existingClassKeys.has(label.toLowerCase())) {
+      return [`Class ${label} is new — its subjects don't exist yet, so the Subjects column will be skipped for this row until class subjects are assigned.`];
+    }
+    const available = classSubjects.get(label.toLowerCase());
+    const unmatched = splitSubjects(raw).filter(
+      (t) => !available || !available.tokens.has(normalizeToken(t))
+    );
+    if (unmatched.length === 0) return [];
+    if (!available || available.tokens.size === 0) {
+      return [`Class ${label} has no subjects assigned yet (Academics → Classes → subjects) — the Subjects column will be skipped for this row.`];
+    }
+    const shown = available.names.slice(0, 8).join(", ");
+    return [
+      `Subject${unmatched.length === 1 ? "" : "s"} not assigned to ${label}: ${unmatched.join(", ")}. This class currently has: ${shown}${available.names.length > 8 ? ", …" : ""}. Only matched subjects will be linked.`,
+    ];
+  };
+
+  const rowWarnings = (r: ParsedRow): string[] => [...r.warnings, ...subjectWarnings(r)];
+  const totalWarnings = parsedRows.reduce((n, r) => n + rowWarnings(r).length, 0);
 
   const removeRow = (index: number) => {
     setParsedRows((prev) => prev.filter((_, i) => i !== index));
-    if (editingIndex === index) setEditingIndex(null);
+    // Rows are keyed by array index, so removing a row shifts every later
+    // index down by one. Keep the active editing/expanded highlight on the
+    // same row: clear it if it was the removed row, decrement it if it sat
+    // below the removed one.
+    setEditingIndex((cur) =>
+      cur === null ? cur : cur === index ? null : cur > index ? cur - 1 : cur
+    );
+    setExpandedIndex((cur) =>
+      cur === null ? cur : cur === index ? null : cur > index ? cur - 1 : cur
+    );
   };
 
-  const updateRow = (index: number, field: keyof ParsedRow, value: string | number | undefined) => {
+  const updateRow = (index: number, key: string, value: string) => {
     setParsedRows((prev) => {
       const updated = [...prev];
-      const row = { ...updated[index] };
-      if (field === "roll_number") {
-        row.roll_number = value as number | undefined;
-      } else {
-        (row as unknown as Record<string, unknown>)[field] = value;
-      }
-      row.errors = validateRow(row);
+      const row = { ...updated[index], data: { ...updated[index].data, [key]: value } };
+      row.errors = validateRow(row.data);
       updated[index] = row;
       return updated;
     });
@@ -450,103 +460,175 @@ export function StudentBulkUpload({
     }
 
     setUploading(true);
-    const payload = {
-      students: validRows.map((r) => ({
-        admission_no: r.admission_no,
-        full_name: r.full_name,
-        class_name: r.class_name,
-        section: r.section || "A",
-        stream: r.stream || undefined,
-        father_name: r.father_name || undefined,
-        mother_name: r.mother_name || undefined,
-        date_of_birth: r.date_of_birth || undefined,
-        gender: r.gender || undefined,
-        phone: r.phone || undefined,
-        address: r.address || undefined,
-        roll_number: r.roll_number,
-        email: r.email || undefined,
-        blood_group: r.blood_group || undefined,
-        category: r.category || undefined,
-        aadhar_number: r.aadhar_number || undefined,
-        previous_school: r.previous_school || undefined,
-      })),
+
+    const toPayloadRow = (r: ParsedRow) => {
+      const out: Record<string, unknown> = {};
+      for (const key of mappedKeys) {
+        const raw = r.data[key] ?? "";
+        if (key === "roll_number") {
+          const num = parseInt(raw, 10);
+          if (!isNaN(num)) out.roll_number = num;
+          continue;
+        }
+        out[key] = raw;
+      }
+      // Required keys are always present even if their column mapping was
+      // edited away in preview.
+      out.admission_no = r.data.admission_no;
+      out.full_name = r.data.full_name;
+      out.class_name = r.data.class_name;
+      out.section = r.data.section || "A";
+      if (r.data.stream !== undefined) out.stream = r.data.stream;
+      return out;
+    };
+
+    // Submit in chunks so a 60-column × 5000-row sheet doesn't blow the
+    // request-body limit. Chunks are idempotent (upsert by admission no), so
+    // a mid-sequence failure can simply be re-uploaded.
+    const aggregate: UploadResult = {
+      success: true,
+      inserted: 0,
+      created: 0,
+      updated: 0,
+      classesCreated: 0,
+      errors: [],
+      warnings: [],
+      total: validRows.length,
     };
 
     try {
-      const res = await fetch("/api/students/bulk", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      for (let i = 0; i < validRows.length; i += CHUNK_SIZE) {
+        const chunk = validRows.slice(i, i + CHUNK_SIZE);
+        if (validRows.length > CHUNK_SIZE) {
+          setUploadProgress(
+            `Uploading ${Math.min(i + CHUNK_SIZE, validRows.length)} of ${validRows.length}…`
+          );
+        }
+        const res = await adminFetch("/api/students/bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            provided_keys: mappedKeys,
+            students: chunk.map(toPayloadRow),
+          }),
+        });
+        const data = await res.json();
 
-      const data = await res.json();
+        if (!res.ok && !data?.errors) {
+          toast.error(data.error || "Failed to import students");
+          setUploading(false);
+          setUploadProgress(null);
+          return;
+        }
 
-      if (!res.ok) {
-        toast.error(data.error || "Failed to import students");
-        setUploading(false);
-        return;
+        aggregate.inserted += data.inserted ?? 0;
+        aggregate.created += data.created ?? 0;
+        aggregate.updated += data.updated ?? 0;
+        aggregate.classesCreated += data.classesCreated ?? 0;
+        aggregate.errors.push(...(data.errors ?? []));
+        aggregate.warnings.push(...(data.warnings ?? []));
       }
 
-      setUploadResult(data as UploadResult);
+      aggregate.success = aggregate.inserted > 0 || aggregate.errors.length === 0;
+      setUploadResult(aggregate);
       setStep("results");
       onSuccess();
     } catch {
       toast.error("Failed to import students");
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
   const downloadTemplate = () => {
+    const headers = bulkTemplateHeaders();
+    const sample = (values: Record<string, string>) =>
+      STUDENT_TEMPLATE_FIELDS.map((f) => values[f.key] ?? "");
+
     const ws = XLSX.utils.aoa_to_sheet([
-      [
-        "Admission No",
-        "Name",
-        "Class",
-        "Section",
-        "Stream",
-        "Father's Name",
-        "Mother's Name",
-        "DOB (DD/MM/YYYY)",
-        "Gender (M/F)",
-        "Phone",
-        "Address",
-        "Roll No",
-        "Email",
-        "Blood Group",
-        "Category",
-        "Aadhar Number",
-        "Previous School",
-      ],
-      ["1001", "Rahul Kumar", "X", "A", "", "Rajesh Kumar", "Sunita Devi", "15/03/2012", "M", "9876543210", "123, Main Street", "1", "", "O+", "General", "", ""],
-      ["1002", "Priya Sharma", "XI", "A", "Science", "Anil Sharma", "Meena Sharma", "22/07/2010", "F", "9876543211", "456, Park Road", "2", "", "B+", "", "", ""],
-      ["1003", "Amit Singh", "XII", "B", "Commerce", "Ravi Singh", "Neha Singh", "10/01/2009", "M", "9876543212", "789, Lake View", "3", "", "", "", "", ""],
+      headers,
+      sample({
+        admission_no: "1001",
+        full_name: "Rahul Kumar",
+        class_name: "X",
+        section: "A",
+        roll_number: "1",
+        gender: "M",
+        date_of_birth: "15/03/2012",
+        aadhar_number: "123412341234",
+        mother_name: "Sunita Devi",
+        mother_occupation: "Homemaker",
+        mother_mobile: "9876543210",
+        father_name: "Rajesh Kumar",
+        father_occupation: "Farmer",
+        father_mobile: "9876543211",
+        address: "123, Main Street",
+        present_pincode: "302001",
+        blood_group: "O+",
+        mother_tongue: "Hindi",
+        category: "General",
+        minority_group: "NA",
+        is_bpl: "NO",
+        is_ews: "NO",
+        is_cwsn: "NO",
+        indian_national: "YES",
+        height_cm: "142",
+        weight_kg: "38",
+        admission_date: "01/04/2024",
+        is_rte: "NO",
+        medium_of_instruction: "English",
+        is_staff_ward: "NO",
+        participates_ncc: "NO",
+        participates_nss: "NO",
+        participates_scouts: "YES",
+        participates_competitions: "NO",
+        distance_band: "1-3 KM",
+        parent_highest_education: "Graduation",
+      }),
+      sample({
+        admission_no: "1002",
+        full_name: "Priya Sharma",
+        class_name: "XI",
+        section: "A",
+        stream: "Science",
+        roll_number: "2",
+        gender: "F",
+        date_of_birth: "22/07/2010",
+        subjects: "Physics, Chemistry, Maths, English",
+        father_name: "Anil Sharma",
+        mother_name: "Meena Sharma",
+        blood_group: "B+",
+        medium_of_instruction: "English",
+        previous_school: "Govt School Jaipur",
+        previous_school_district: "Jaipur",
+        previous_school_state: "Rajasthan",
+        previous_class_studied: "X",
+        previous_school_board: "RBSE",
+        board_percentage: "82.4",
+        distance_band: "3-5 KM",
+      }),
+      sample({
+        admission_no: "1003",
+        full_name: "Amit Singh",
+        class_name: "XII",
+        section: "B",
+        stream: "Commerce",
+        roll_number: "3",
+        gender: "M",
+        date_of_birth: "10/01/2009",
+      }),
     ]);
 
-    ws["!cols"] = [
-      { wch: 14 }, // Admission No
-      { wch: 20 }, // Name
-      { wch: 8 },  // Class
-      { wch: 8 },  // Section
-      { wch: 12 }, // Stream
-      { wch: 20 }, // Father
-      { wch: 20 }, // Mother
-      { wch: 18 }, // DOB
-      { wch: 12 }, // Gender
-      { wch: 14 }, // Phone
-      { wch: 30 }, // Address
-      { wch: 8 },  // Roll
-      { wch: 22 }, // Email
-      { wch: 12 }, // Blood Group
-      { wch: 12 }, // Category
-      { wch: 16 }, // Aadhar
-      { wch: 24 }, // Previous School
-    ];
+    ws["!cols"] = bulkTemplateColWidths();
 
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Students");
     XLSX.writeFile(wb, "student_upload_template.xlsx");
   };
+
+  // Fields to show inside the expanded row detail, in registry order.
+  const detailFields = STUDENT_TEMPLATE_FIELDS.filter((f) => mappedKeys.includes(f.key));
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -562,9 +644,9 @@ export function StudentBulkUpload({
               </DialogTitle>
               <p className="text-xs text-gray-500 mt-0.5">
                 {step === "upload"
-                  ? "Import students from Excel or CSV — class, section, and stream are read from the file"
+                  ? "Import students from Excel or CSV — supports the full General + Enrolment profile template"
                   : step === "preview"
-                  ? "Review and edit data before importing"
+                  ? "Review the data before importing"
                   : "Summary of the import operation"}
               </p>
             </div>
@@ -595,11 +677,11 @@ export function StudentBulkUpload({
             <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
               <p className="text-xs text-blue-700 font-medium mb-1">How it works</p>
               <ul className="text-xs text-blue-600 space-y-0.5 list-disc pl-4">
-                <li><strong>Class</strong> column is required (e.g., X, XI, XII, Nursery, LKG)</li>
-                <li><strong>Section</strong> column is optional (defaults to A if not provided)</li>
-                <li><strong>Stream</strong> column for senior classes (e.g., Science, Commerce, Humanities) — combined with class to match &quot;XI Science&quot;</li>
-                <li>Missing classes are <strong>auto-created</strong> during import for the current academic year.</li>
-                <li>You can edit any field in the preview screen before importing.</li>
+                <li>Only <strong>Admission No</strong>, <strong>Name</strong> and <strong>Class</strong> are required (marked with <strong>*</strong> in the template) — every other column is optional.</li>
+                <li>Re-uploading a student (same admission no) <strong>updates</strong> them: columns present in your file overwrite (a blank cell clears the value), columns missing from the file stay untouched.</li>
+                <li><strong>Section</strong> defaults to A. <strong>Stream</strong> applies to XI/XII (Science, Commerce, Humanities). Missing classes are auto-created.</li>
+                <li><strong>Subjects</strong>: comma-separated names matched to the class&apos;s subjects (e.g. &quot;Physics, Chemistry, Maths&quot;). Unmatched names are reported as warnings.</li>
+                <li>Yes/No columns accept YES/NO, Y/N or TRUE/FALSE. Dates are DD/MM/YYYY.</li>
               </ul>
             </div>
 
@@ -637,6 +719,12 @@ export function StudentBulkUpload({
                     {invalidRows.length} errors
                   </Badge>
                 )}
+                {totalWarnings > 0 && (
+                  <Badge variant="secondary" className="bg-amber-100 text-amber-700">
+                    <AlertTriangle className="h-3 w-3 mr-1" />
+                    {totalWarnings} warnings
+                  </Badge>
+                )}
               </div>
               <Button
                 variant="outline"
@@ -646,10 +734,38 @@ export function StudentBulkUpload({
                   setParsedRows([]);
                   setFileName("");
                   setEditingIndex(null);
+                  setExpandedIndex(null);
                 }}
               >
                 Upload Different File
               </Button>
+            </div>
+
+            {/* Column mapping summary */}
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <p className="text-xs text-gray-700 font-medium mb-1">
+                {mappedKeys.length} of {STUDENT_TEMPLATE_FIELDS.length} template columns present in this file
+              </p>
+              {unrecognizedHeaders.length > 0 && (
+                <div className="mt-1.5">
+                  <p className="text-xs text-amber-700 mb-1">
+                    Unrecognised columns (ignored):
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {unrecognizedHeaders.map((h) => (
+                      <span
+                        key={h}
+                        className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 text-xs font-medium text-amber-700"
+                      >
+                        {h}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <p className="text-[11px] text-gray-400 mt-1.5">
+                Columns not in the file are left untouched for existing students. Blank cells in present columns clear the stored value.
+              </p>
             </div>
 
             {missingClasses.length > 0 && (
@@ -693,15 +809,14 @@ export function StudentBulkUpload({
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-8"></TableHead>
                       <TableHead className="w-8">#</TableHead>
                       <TableHead>Adm No</TableHead>
                       <TableHead>Name</TableHead>
                       <TableHead>Class</TableHead>
                       <TableHead>Sec</TableHead>
                       <TableHead>Stream</TableHead>
-                      <TableHead>Father</TableHead>
-                      <TableHead>Gender</TableHead>
-                      <TableHead>Roll</TableHead>
+                      {mappedKeys.includes("subjects") && <TableHead>Subjects</TableHead>}
                       <TableHead>Status</TableHead>
                       <TableHead className="w-16"></TableHead>
                     </TableRow>
@@ -709,136 +824,176 @@ export function StudentBulkUpload({
                   <TableBody>
                     {parsedRows.map((row, i) => {
                       const isEditing = editingIndex === i;
+                      const isExpanded = expandedIndex === i;
+                      const warnings = rowWarnings(row);
+                      const subjectCount = row.data.subjects
+                        ? splitSubjects(row.data.subjects).length
+                        : 0;
+                      const colCount = 9 + (mappedKeys.includes("subjects") ? 1 : 0);
                       return (
-                        <TableRow
-                          key={i}
-                          className={
-                            row.errors.length > 0 ? "bg-red-50" : undefined
-                          }
-                        >
-                          <TableCell className="text-gray-400 text-xs">
-                            {i + 1}
-                          </TableCell>
-                          <TableCell>
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-20"
-                                value={row.admission_no}
-                                onChange={(e) => updateRow(i, "admission_no", e.target.value)}
-                              />
-                            ) : (
-                              <span className="font-medium">{row.admission_no || "—"}</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-32"
-                                value={row.full_name}
-                                onChange={(e) => updateRow(i, "full_name", e.target.value)}
-                              />
-                            ) : (
-                              row.full_name || "—"
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-16"
-                                value={row.class_name}
-                                onChange={(e) => updateRow(i, "class_name", e.target.value)}
-                              />
-                            ) : (
-                              row.class_name || "—"
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-12"
-                                value={row.section}
-                                onChange={(e) => updateRow(i, "section", e.target.value)}
-                              />
-                            ) : (
-                              row.section || "—"
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-20"
-                                value={row.stream}
-                                onChange={(e) => updateRow(i, "stream", e.target.value)}
-                              />
-                            ) : (
-                              <span className="text-gray-500">{row.stream || "—"}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-gray-600">
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-28"
-                                value={row.father_name}
-                                onChange={(e) => updateRow(i, "father_name", e.target.value)}
-                              />
-                            ) : (
-                              row.father_name || "—"
-                            )}
-                          </TableCell>
-                          <TableCell className="text-gray-600 capitalize">
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-14"
-                                value={row.gender}
-                                onChange={(e) => updateRow(i, "gender", e.target.value)}
-                              />
-                            ) : (
-                              row.gender || "—"
-                            )}
-                          </TableCell>
-                          <TableCell className="text-gray-600">
-                            {isEditing ? (
-                              <Input
-                                className="h-7 text-xs w-12"
-                                type="number"
-                                value={row.roll_number ?? ""}
-                                onChange={(e) => updateRow(i, "roll_number", e.target.value ? parseInt(e.target.value) : undefined)}
-                              />
-                            ) : (
-                              row.roll_number ?? "—"
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {row.errors.length > 0 ? (
-                              <span
-                                className="text-xs text-red-600"
-                                title={row.errors.join(", ")}
-                              >
-                                {row.errors[0]}
-                              </span>
-                            ) : (
-                              <CheckCircle2 className="h-4 w-4 text-green-500" />
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-0.5">
+                        <Fragment key={i}>
+                          <TableRow
+                            className={row.errors.length > 0 ? "bg-red-50" : undefined}
+                          >
+                            <TableCell className="pr-0">
                               <button
-                                onClick={() => setEditingIndex(isEditing ? null : i)}
-                                className={`p-1 rounded transition-colors ${isEditing ? "text-blue-600 bg-blue-50" : "text-gray-400 hover:text-blue-500"}`}
-                                title={isEditing ? "Done editing" : "Edit row"}
+                                onClick={() => setExpandedIndex(isExpanded ? null : i)}
+                                className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                                title={isExpanded ? "Collapse" : "Show all fields"}
                               >
-                                <Pencil className="h-3.5 w-3.5" />
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                )}
                               </button>
-                              <button
-                                onClick={() => removeRow(i)}
-                                className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                                title="Remove row"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
+                            </TableCell>
+                            <TableCell className="text-gray-400 text-xs">{i + 1}</TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  className="h-7 text-xs w-20"
+                                  value={row.data.admission_no || ""}
+                                  onChange={(e) => updateRow(i, "admission_no", e.target.value)}
+                                />
+                              ) : (
+                                <span className="font-medium">{row.data.admission_no || "—"}</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  className="h-7 text-xs w-32"
+                                  value={row.data.full_name || ""}
+                                  onChange={(e) => updateRow(i, "full_name", e.target.value)}
+                                />
+                              ) : (
+                                row.data.full_name || "—"
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  className="h-7 text-xs w-16"
+                                  value={row.data.class_name || ""}
+                                  onChange={(e) => updateRow(i, "class_name", e.target.value)}
+                                />
+                              ) : (
+                                row.data.class_name || "—"
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  className="h-7 text-xs w-12"
+                                  value={row.data.section || ""}
+                                  onChange={(e) => updateRow(i, "section", e.target.value)}
+                                />
+                              ) : (
+                                row.data.section || "—"
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isEditing ? (
+                                <Input
+                                  className="h-7 text-xs w-20"
+                                  value={row.data.stream || ""}
+                                  onChange={(e) => updateRow(i, "stream", e.target.value)}
+                                />
+                              ) : (
+                                <span className="text-gray-500">{row.data.stream || "—"}</span>
+                              )}
+                            </TableCell>
+                            {mappedKeys.includes("subjects") && (
+                              <TableCell>
+                                {isEditing ? (
+                                  <Input
+                                    className="h-7 text-xs w-40"
+                                    value={row.data.subjects || ""}
+                                    onChange={(e) => updateRow(i, "subjects", e.target.value)}
+                                  />
+                                ) : subjectCount > 0 ? (
+                                  <Badge variant="secondary" className="text-xs">
+                                    {subjectCount} subject{subjectCount === 1 ? "" : "s"}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
+                                )}
+                              </TableCell>
+                            )}
+                            <TableCell>
+                              {row.errors.length > 0 ? (
+                                <span
+                                  className="text-xs text-red-600"
+                                  title={row.errors.join(", ")}
+                                >
+                                  {row.errors[0]}
+                                </span>
+                              ) : warnings.length > 0 ? (
+                                <span
+                                  className="inline-flex items-center gap-1 text-xs text-amber-600"
+                                  title={warnings.join("\n")}
+                                >
+                                  <AlertTriangle className="h-3.5 w-3.5" />
+                                  {warnings.length}
+                                </span>
+                              ) : (
+                                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  onClick={() => setEditingIndex(isEditing ? null : i)}
+                                  className={`p-1 rounded transition-colors ${isEditing ? "text-blue-600 bg-blue-50" : "text-gray-400 hover:text-blue-500"}`}
+                                  title={isEditing ? "Done editing" : "Edit row"}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => removeRow(i)}
+                                  className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                                  title="Remove row"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                          {isExpanded && (
+                            <TableRow className="bg-gray-50/70 hover:bg-gray-50/70">
+                              {/* TableCell defaults to whitespace-nowrap, which makes
+                                  long values paint over neighbouring grid cells —
+                                  force normal wrapping inside the detail panel. */}
+                              <TableCell colSpan={colCount} className="py-3 whitespace-normal">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-2 px-2">
+                                  {detailFields
+                                    .filter((f) => (row.data[f.key] ?? "") !== "")
+                                    .map((f) => (
+                                      <div key={f.key} className="text-xs min-w-0">
+                                        <p className="text-gray-400 truncate" title={f.label}>
+                                          {f.label}
+                                        </p>
+                                        <p className="text-gray-700 break-words">
+                                          {previewDisplayValue(f, row.data[f.key])}
+                                        </p>
+                                      </div>
+                                    ))}
+                                </div>
+                                {warnings.length > 0 && (
+                                  <div className="mt-2 px-2 space-y-0.5">
+                                    {warnings.map((w, wi) => (
+                                      <p key={wi} className="text-xs text-amber-600 flex items-start gap-1 whitespace-normal break-words">
+                                        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                                        <span>{w}</span>
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
                       );
                     })}
                   </TableBody>
@@ -862,7 +1017,7 @@ export function StudentBulkUpload({
                 {uploading ? (
                   <>
                     <span className="h-4 w-4 mr-2 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    Uploading...
+                    {uploadProgress || "Uploading..."}
                   </>
                 ) : (
                   <>
@@ -880,18 +1035,22 @@ export function StudentBulkUpload({
             {uploadResult && (
               <>
                 {/* Summary stats */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div className="rounded-xl bg-green-50 border border-green-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-green-700">{uploadResult.inserted}</p>
-                    <p className="text-xs text-green-600">Inserted</p>
+                    <p className="text-2xl font-bold text-green-700">{uploadResult.created}</p>
+                    <p className="text-xs text-green-600">Created</p>
                   </div>
                   <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-blue-700">{uploadResult.total}</p>
-                    <p className="text-xs text-blue-600">Total Sent</p>
+                    <p className="text-2xl font-bold text-blue-700">{uploadResult.updated}</p>
+                    <p className="text-xs text-blue-600">Updated</p>
                   </div>
                   <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
                     <p className="text-2xl font-bold text-amber-700">{uploadResult.classesCreated}</p>
                     <p className="text-xs text-amber-600">Classes Created</p>
+                  </div>
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700">{uploadResult.warnings.length}</p>
+                    <p className="text-xs text-amber-600">Warnings</p>
                   </div>
                   <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-center">
                     <p className="text-2xl font-bold text-red-700">{uploadResult.errors.length}</p>
@@ -915,7 +1074,7 @@ export function StudentBulkUpload({
                       </p>
                     </div>
                     <div className="border rounded-xl overflow-hidden">
-                      <div className="overflow-x-auto max-h-[350px] overflow-y-auto">
+                      <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
                         <Table>
                           <TableHeader>
                             <TableRow>
@@ -947,6 +1106,29 @@ export function StudentBulkUpload({
                     </p>
                   </div>
                 )}
+
+                {uploadResult.warnings.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      <p className="text-sm font-medium text-amber-700">
+                        {uploadResult.warnings.length} warning{uploadResult.warnings.length === 1 ? "" : "s"} (students were still imported)
+                      </p>
+                    </div>
+                    <div className="border border-amber-200 rounded-xl overflow-hidden">
+                      <div className="max-h-[200px] overflow-y-auto divide-y divide-amber-100">
+                        {uploadResult.warnings.map((w, i) => (
+                          <div key={i} className="px-3 py-1.5 bg-amber-50/50">
+                            <p className="text-xs text-amber-800">
+                              <span className="font-medium">{w.admission_no}</span>
+                              {w.full_name ? ` · ${w.full_name}` : ""} — {w.warning}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
@@ -958,7 +1140,7 @@ export function StudentBulkUpload({
                 <Button
                   variant="outline"
                   onClick={() => {
-                    // Download failed students as CSV for easy re-upload
+                    // Download failed students as a sheet for easy re-upload
                     const failedData = uploadResult.errors.map((e) => ({
                       "Admission No": e.admission_no,
                       "Name": e.full_name || "",
