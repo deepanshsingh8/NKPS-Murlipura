@@ -1,720 +1,46 @@
 -- =====================================================================
--- CONSOLIDATED MIGRATION — ERP + CMS sync with NKPS upstream
+-- CONSOLIDATED MIGRATION — ERP + CMS sync with NKPS upstream  (v2, corrected)
 -- =====================================================================
 -- Run this ONCE, top to bottom, in the Supabase SQL editor for the
--- Murlipura project. It brings the live database up to the schema the
--- newly-synced ERP/CMS code expects.
+-- Murlipura project. Safe to run even if the earlier version was partially
+-- applied — every statement is idempotent.
+--
+-- WHY v2: the Murlipura DB already contains accolades / alumni /
+-- student_achievements / sports_* section rows. Upstream's step-wise CMS
+-- constraint migrations (059, 061, 064, 065, 067) briefly install a NARROWER
+-- section CHECK constraint that those existing rows violate — that is the
+-- "section_cards_section_check is violated by some row" error. v2 collapses
+-- the section constraint into its final form up front and drops the
+-- Rajawas-specific content seeds, so nothing conflicts with Murlipura data.
 --
 -- WHAT IT DOES
---   * Transport: retires the old fare-slab model and adds the stop-based
---     fleet model (buses, bus_stops, bus_route_stops, bus_stop_fees,
---     transport_change_requests) + student transport_direction/fee_override
---   * Telephony: call_logs table
---   * Students: additional profile/UDISE/guardian/parent columns
---   * Fees: fee-change-request insert policy, per-day late fee
---   * Staff: license number, webp photos, teacher-record backfills
---   * CMS: section-model + row-level-security hardening
+--   * Section constraint: remove retired 'latest_updates' rows, set the final
+--     allowed-section set (one shot, no intermediate narrowing)
+--   * ERP schema (the code needs this): stop-based transport fleet, telephony
+--     call_logs, student profile/UDISE/guardian columns, fee change-request +
+--     per-day late fee, staff license/webp, teacher backfills & integrity
+--   * CMS row-level-security hardening
 --
--- SAFETY
---   * Every statement is idempotent (IF NOT EXISTS / DROP ... IF EXISTS),
---     so re-running is safe and it tolerates our divergent history.
---   * Each block is its own transaction (its own begin/commit).
---   * Preserves ALL Murlipura data, including the Murlipura-only
---     holiday_homework and prospectus_documents tables. The obsolete
---     transport_fare_slabs table is left in place (orphaned, harmless).
+-- DELIBERATELY EXCLUDED
+--   * Rajawas content seeds (accolades/alumni/student-achievements/sports/
+--     why-choose-us default rows) — your Murlipura content is kept as-is
+--   * Rajawas bus-stop seed data (075, 077) — add Murlipura stops in the
+--     Transport UI
 --
--- DELIBERATELY EXCLUDED (Rajawas-specific operational data):
---   * migration-075-seed-bus-stops-2025-26  (Rajawas bus stops)
---   * migration-077-copy-bus-stop-fees-to-current-year (depends on 075)
---   Add Murlipura's own stops/fees via the Transport admin UI after running.
+-- Preserves ALL Murlipura data (holiday_homework, prospectus_documents, your
+-- existing section content). The obsolete transport_fare_slabs table is left
+-- untouched (orphaned, harmless).
 --
--- >>> STRONGLY RECOMMENDED: run against a database backup / staging copy
---     first, verify, then run on production. <<<
+-- >>> Run against a backup / staging copy first if you can, then production. <<<
 -- =====================================================================
 
 
-
 -- ============================================================
--- migration-059-remove-latest-updates-section.sql
+-- 0. Section constraint fix (heals a partial earlier run; sets final set)
 -- ============================================================
--- Migration 059: Remove the latest_updates section_cards section entirely.
---
--- The home page "Latest Updates" section is now driven solely by published
--- articles (CMS Articles area). The section_cards-based fallback and its CMS
--- "Site Media" management were redundant — the school keeps at least one
--- published article (e.g. an evergreen "History of NKPS"), so the home section
--- is never empty. This reverses migration 052.
---
--- Steps:
---   1. Delete all section_cards rows where section = 'latest_updates'
---      (both the seeded defaults and any admin-added cards).
---   2. Tighten the section CHECK constraint to drop 'latest_updates'.
---
--- Idempotent.
-
 begin;
-
--- 1. Drop all latest_updates cards.
 delete from section_cards where section = 'latest_updates';
-
--- 2. Recreate the section CHECK constraint without 'latest_updates'.
---    (Inline CHECK constraints get the auto-generated name
---    section_cards_section_check.)
-alter table section_cards
-  drop constraint if exists section_cards_section_check;
-
-alter table section_cards
-  add constraint section_cards_section_check
-  check (section in (
-    'hero_slider', 'testimonials', 'facilities_preview', 'leadership',
-    'legacy_timeline', 'why_choose_us', 'activities', 'annual_events',
-    'campus_facilities'
-  ));
-
-commit;
-
-
--- ============================================================
--- migration-060-content-rls-hardening.sql
--- ============================================================
--- Migration 060: Harden content-table RLS (articles + gallery_images)
---
--- Why: both tables had policies that any *authenticated* user could exploit.
---   - articles INSERT/UPDATE/DELETE were `TO authenticated WITH CHECK (true)`,
---     so any ERP parent/student/teacher JWT could deface or delete articles
---     directly via the anon client, bypassing CMS permission checks.
---   - gallery_images SELECT was `USING (true)`, exposing images that belong to
---     PRIVATE (is_public = false) gallery events to anyone with the public anon key.
---
--- Safe to apply: all CMS writes go through the service-role client
--- (verifyAdminOrEditor), which bypasses RLS — so tightening these policies does
--- not affect the admin/editor experience. The public website reads articles via
--- the service-role client and reads gallery_images via the anon client (standalone
--- images + public-event images only), both of which remain functional below.
-
--- ============================================================
--- articles: writes are admin/staff only
--- ============================================================
-DROP POLICY IF EXISTS "Authenticated can insert articles" ON articles;
-DROP POLICY IF EXISTS "Authenticated can update articles" ON articles;
-DROP POLICY IF EXISTS "Authenticated can delete articles" ON articles;
-
-CREATE POLICY "Staff can insert articles"
-  ON articles FOR INSERT TO authenticated
-  WITH CHECK (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
-  );
-
-CREATE POLICY "Staff can update articles"
-  ON articles FOR UPDATE TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
-  )
-  WITH CHECK (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
-  );
-
-CREATE POLICY "Staff can delete articles"
-  ON articles FOR DELETE TO authenticated
-  USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
-  );
-
--- ============================================================
--- gallery_images: public SELECT limited to non-private images
--- ============================================================
-DROP POLICY IF EXISTS "Public can view gallery images" ON gallery_images;
-
-CREATE POLICY "Public can view public gallery images"
-  ON gallery_images FOR SELECT
-  USING (
-    -- Standalone images (not tied to any event) are general public gallery items.
-    gallery_event_id IS NULL
-    -- Event images are visible only when their event is public.
-    OR EXISTS (
-      SELECT 1 FROM gallery_events e
-      WHERE e.id = gallery_images.gallery_event_id AND e.is_public = true
-    )
-  );
-
-
--- ============================================================
--- migration-061-profile-and-storage-hardening.sql
--- ============================================================
--- Migration 061: Profile privilege-escalation + signup + storage hardening
---
--- Three independent security fixes from the May-2026 security audit. All are
--- safe to apply on a live DB and do not change the admin/editor experience
--- (those paths use the service-role client, which bypasses RLS and is
--- explicitly allowed by the guards below).
---
--- ── C1 (Critical): profiles self-update could escalate to admin ──────────────
---   The "Users can update own profile" policy had only a USING clause (no
---   WITH CHECK, no column restriction), so any authenticated parent/student
---   could `UPDATE profiles SET role='admin'` on their own row via the browser
---   anon client and instantly own the platform. We add a BEFORE UPDATE trigger
---   that rejects changes to privileged columns (role, is_active,
---   must_change_password, teacher_id, student_id, parent_id) unless the caller
---   is an admin or the service role. We also REVOKE blanket column UPDATE and
---   GRANT back only the columns a user may legitimately self-edit.
---
--- ── H1 (High): handle_new_user trusted a client-asserted role ────────────────
---   The signup trigger copied `raw_user_meta_data->>'role'` verbatim. If public
---   signup is ever enabled in Supabase Auth, an attacker could self-register as
---   admin. We hardcode 'student' on insert; the admin creation paths
---   (auth.admin.createUser → registrations/approve, /api/users, bulk-create)
---   set the real role server-side afterward via the service-role client.
---
--- ── H2 (High): storage buckets ──────────────────────────────────────────────
---   The transfer-certificates bucket is flipped to private MANUALLY in Supabase
---   Studio (deliberate operational choice); the signed-URL TC routes work either
---   way, so this migration does not automate that flip.
---   Writes to content buckets are restricted to the service role (all uploads
---   already go through admin-gated signed-URL minting or the avatar API, which
---   use the service-role client; signed-URL uploads are authorized by the token,
---   not by the uploader's RLS, so this does not break them).
---
---   NOTE: the previous bucket policies were created in the Supabase Dashboard
---   ("Allow authenticated users") and are NOT in this file, so they cannot be
---   dropped by name here. After running this migration you MUST delete the old
---   permissive INSERT/UPDATE/DELETE policies on storage.objects for the buckets
---   gallery, transfer-certificates, site-media, staff-photos, avatars,
---   disclosure-documents in Dashboard → Storage → Policies. Otherwise RLS stays
---   permissive (policies are OR-combined).
-
--- ============================================================
--- C1 — Lock privileged profile columns
--- ============================================================
-CREATE OR REPLACE FUNCTION public.guard_profile_privileged_cols()
-RETURNS TRIGGER AS $$
-BEGIN
-  -- Server-side API (service-role client) and admins may change anything.
-  IF auth.role() = 'service_role' OR public.get_user_role() = 'admin' THEN
-    RETURN NEW;
-  END IF;
-
-  -- A regular authenticated user (parent/student/teacher/staff editing their
-  -- own row) must not touch role/access columns.
-  IF NEW.role               IS DISTINCT FROM OLD.role
-     OR NEW.is_active             IS DISTINCT FROM OLD.is_active
-     OR NEW.must_change_password  IS DISTINCT FROM OLD.must_change_password
-     OR NEW.teacher_id            IS DISTINCT FROM OLD.teacher_id
-     OR NEW.student_id            IS DISTINCT FROM OLD.student_id
-     OR NEW.parent_id             IS DISTINCT FROM OLD.parent_id THEN
-    RAISE EXCEPTION 'Not allowed to modify privileged profile columns';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS guard_profile_privileged_cols ON profiles;
-CREATE TRIGGER guard_profile_privileged_cols
-  BEFORE UPDATE ON profiles
-  FOR EACH ROW EXECUTE FUNCTION public.guard_profile_privileged_cols();
-
--- Defense in depth: column-level privileges. Even if the trigger were dropped,
--- the authenticated role cannot write privileged columns. Service role and
--- admin write via the service-role key, which is not subject to these grants.
-REVOKE UPDATE ON public.profiles FROM authenticated;
-GRANT UPDATE (full_name, phone, avatar_url) ON public.profiles TO authenticated;
-
--- ============================================================
--- H1 — Do not trust client-supplied role at signup
--- ============================================================
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, full_name, role)
-  VALUES (
-    new.id, new.email,
-    COALESCE(new.raw_user_meta_data->>'full_name', new.email),
-    -- Role is NEVER taken from client metadata. Admin-creation paths set the
-    -- real role afterward via the service-role client.
-    'student'
-  );
-  RETURN new;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- ============================================================
--- H2 — Storage: private TC bucket + service-role-only writes
--- ============================================================
--- NOTE: the transfer-certificates bucket is flipped to private MANUALLY in
--- Supabase Studio (deliberate operational choice — see project memory). The TC
--- lookup/download routes issue short-lived signed URLs that work regardless of
--- the bucket's public flag, so this migration intentionally does NOT automate it.
-
--- Restrict writes on user-content buckets to the service role. Signed-URL
--- uploads (gallery/site-media/staff-photos/disclosure) and the avatar API all
--- run through the service-role client, so this does not affect them.
-DROP POLICY IF EXISTS "Service role manages content buckets" ON storage.objects;
-CREATE POLICY "Service role manages content buckets"
-  ON storage.objects FOR ALL
-  TO service_role
-  USING (
-    bucket_id IN ('gallery','transfer-certificates','site-media',
-                  'staff-photos','disclosure-documents','avatars')
-  )
-  WITH CHECK (
-    bucket_id IN ('gallery','transfer-certificates','site-media',
-                  'staff-photos','disclosure-documents','avatars')
-  );
-
--- A user may overwrite ONLY their own avatar object (avatars/<uid>.<ext>),
--- matching apps/erp/.../api/portal/avatar/route.ts which writes that path via
--- the service-role client. This policy lets a future direct-anon-client avatar
--- upload remain self-scoped without granting cross-user write.
-DROP POLICY IF EXISTS "Users manage own avatar object" ON storage.objects;
-CREATE POLICY "Users manage own avatar object"
-  ON storage.objects FOR ALL
-  TO authenticated
-  USING (
-    bucket_id = 'avatars'
-    AND (storage.foldername(name))[1] IS NOT DISTINCT FROM auth.uid()::text
-  )
-  WITH CHECK (
-    bucket_id = 'avatars'
-    AND (storage.foldername(name))[1] IS NOT DISTINCT FROM auth.uid()::text
-  );
-
--- Public read for public buckets (everything except transfer-certificates).
-DROP POLICY IF EXISTS "Public read of public content buckets" ON storage.objects;
-CREATE POLICY "Public read of public content buckets"
-  ON storage.objects FOR SELECT
-  USING (
-    bucket_id IN ('gallery','site-media','staff-photos','avatars',
-                  'disclosure-documents')
-  );
-
--- Enforce allowed MIME types + size caps at the STORAGE layer. The signed-URL
--- upload flow lets the client set the object's content-type, so an attacker
--- could otherwise store HTML/SVG under an image/pdf extension and get stored
--- XSS. allowed_mime_types makes Supabase reject the upload regardless of the
--- client. (Closes the content-type-spoofing + SVG class; bounds quota abuse.)
-UPDATE storage.buckets
-  SET allowed_mime_types = ARRAY['image/jpeg','image/png','image/webp'],
-      file_size_limit = 5242880      -- 5 MB
-  WHERE id IN ('gallery','site-media','avatars');
-UPDATE storage.buckets
-  SET allowed_mime_types = ARRAY['image/jpeg','image/png'],
-      file_size_limit = 2097152      -- 2 MB
-  WHERE id = 'staff-photos';
-UPDATE storage.buckets
-  SET allowed_mime_types = ARRAY['application/pdf'],
-      file_size_limit = 10485760     -- 10 MB
-  WHERE id IN ('transfer-certificates','disclosure-documents');
-
-
--- ============================================================
--- migration-061-accolades-section.sql
--- ============================================================
--- Migration 061: Accolades section (home page)
--- Adds a new CMS-managed `accolades` section type for showcasing the school's
--- awards / recognition on the home page, right after "Explore Our Facilities".
--- Editable via Site Media → Home → Accolades (image + title + caption).
---
--- 1. Extend the section_cards CHECK constraint to permit 'accolades'.
--- 2. Seed a few default cards so the section renders out-of-the-box; admins can
---    edit the copy / replace the images via the CMS (defaults are protected
---    from deletion, only deactivatable).
--- Idempotent: constraint is recreated unconditionally; seeds only insert rows
--- that don't already exist (matched by title).
-
-begin;
-
--- 1. Widen the section CHECK constraint to include 'accolades'. Drop any
---    existing CHECK constraint on the `section` column by its real name (the
---    inline definition in supabase-schema.sql yields section_cards_section_check,
---    but we discover it dynamically so a differently-named live constraint is
---    still replaced rather than left to reject the new value).
-do $$
-declare
-  c record;
-begin
-  for c in
-    select con.conname
-    from pg_constraint con
-    join pg_class rel on rel.oid = con.conrelid
-    where rel.relname = 'section_cards'
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%section%'
-  loop
-    execute format('alter table section_cards drop constraint %I', c.conname);
-  end loop;
-end $$;
-
-alter table section_cards add constraint section_cards_section_check
-  check (section in (
-    'hero_slider', 'testimonials', 'facilities_preview', 'leadership',
-    'legacy_timeline', 'why_choose_us', 'activities', 'annual_events',
-    'campus_facilities', 'accolades'
-  ));
-
--- 2. Seed default accolade cards (placeholder imagery — replace via CMS).
-insert into section_cards (section, title, description, image_url, sort_order, is_active, is_default, default_snapshot)
-select * from (values
-  ('accolades', 'CBSE Affiliated School', 'Recognised by the Central Board of Secondary Education (Affiliation No. 1730406) for quality education.', '/images/gallery/g1.jpg', 0, true, true, null::jsonb),
-  ('accolades', 'Excellence in Academics', 'Consistent record of outstanding board results and academic achievements over four decades.', '/images/gallery/g2.jpg', 1, true, true, null::jsonb),
-  ('accolades', 'Sports & Cultural Honours', 'Award-winning performances by our students in district, state and national level competitions.', '/images/gallery/g3.jpg', 2, true, true, null::jsonb)
-) as v(section, title, description, image_url, sort_order, is_active, is_default, default_snapshot)
-where not exists (
-  select 1 from section_cards sc where sc.section = 'accolades'
-);
-
-commit;
-
-
--- ============================================================
--- migration-062-backfill-teacher-profile-link.sql
--- ============================================================
--- Migration 062 — backfill profiles.teacher_id for teacher accounts that were
--- linked to the wrong id by the staff "Create Users" (bulk-create) flow.
---
--- Bug: /api/portal/bulk-create wrote `profiles.teacher_id = staff_members.id`,
--- but the column is a FK to `teachers.id`. The mismatched write violated the FK
--- and silently failed, leaving teacher_id NULL. Affected teachers could not see
--- their assigned classes/students or mark attendance because every teacher-facing
--- query resolves the user via `SELECT teacher_id FROM profiles WHERE id = auth.uid()`.
---
--- The code path is fixed going forward (it now resolves the real teachers.id via
--- promoteStaffToTeacher). This repairs accounts already created. There is no stored
--- staff_member_id on the profile to recover from, so we re-link by email — the
--- teachers row mirrors the staff member's email, which equals the login email.
---
--- profiles.teacher_id is a privileged column locked by the guard_profile_privileged_cols
--- trigger (migration 061). That guard only exempts the service-role client and admins
--- resolved via a JWT (auth.uid()). Run from the Supabase SQL editor — the postgres
--- superuser with NO JWT — neither exemption matches, so the trigger blocks this
--- backfill with "Not allowed to modify privileged profile columns". This is a
--- sanctioned DBA repair, so we disable that ONE trigger for the two UPDATEs and
--- re-enable it, all inside a transaction so a failure rolls the disable back too.
--- The FK and every other trigger stay active; the guard's runtime protection for
--- regular authenticated users is unchanged.
-
-BEGIN;
-
-ALTER TABLE public.profiles DISABLE TRIGGER guard_profile_privileged_cols;
-
--- 1) Direct email match: profile email == teachers.email.
-UPDATE public.profiles p
-SET teacher_id = t.id
-FROM public.teachers t
-WHERE p.role = 'teacher'
-  AND p.teacher_id IS NULL
-  AND p.email IS NOT NULL
-  AND t.email IS NOT NULL
-  AND lower(p.email) = lower(t.email);
-
--- 2) Fallback via the staff_members link, for teachers whose teachers.email is
---    blank but whose staff_members row carries the email used to log in.
-UPDATE public.profiles p
-SET teacher_id = t.id
-FROM public.teachers t
-JOIN public.staff_members s ON s.id = t.staff_member_id
-WHERE p.role = 'teacher'
-  AND p.teacher_id IS NULL
-  AND p.email IS NOT NULL
-  AND s.email IS NOT NULL
-  AND lower(p.email) = lower(s.email);
-
-ALTER TABLE public.profiles ENABLE TRIGGER guard_profile_privileged_cols;
-
-COMMIT;
-
--- Surface any teacher accounts still unlinked after both passes (e.g. no teachers
--- row was ever created for them). These need a manual "Convert to teacher" + relink.
-DO $$
-DECLARE
-  orphan_count integer;
-BEGIN
-  SELECT count(*) INTO orphan_count
-  FROM public.profiles
-  WHERE role = 'teacher' AND teacher_id IS NULL;
-  IF orphan_count > 0 THEN
-    RAISE NOTICE 'migration-062: % teacher profile(s) still have a NULL teacher_id; convert their staff member to a teacher and recreate/relink.', orphan_count;
-  END IF;
-END $$;
-
-
--- ============================================================
--- migration-063-transport-road-distance.sql
--- ============================================================
--- migration-063-transport-road-distance.sql
---
--- Moves transport fee slabbing from straight-line (haversine) distance to the
--- real ROAD (driving) distance from school to the student's confirmed pickup
--- point. A 5 km radius circle is not 5 km of road, so the radial model over/
--- under-charged families with the same as-the-crow-flies distance.
---
--- The road distance is computed in the browser via the Google Maps
--- DirectionsService (the only key available is referrer-restricted) and then
--- re-validated server-side against the straight-line floor before billing.
--- These columns capture the billed number plus full provenance so every fare
--- is explainable and reproducible.
---
--- Reuses the existing pickup_lat/lng + override/verify audit columns from
--- migration-053. Idempotent.
-
-ALTER TABLE student_enrollments
-  -- The billed one-way road distance (km) from school to the pickup point.
-  ADD COLUMN IF NOT EXISTS road_distance_km numeric(6, 2),
-  -- Server-computed haversine for the same coords. Kept as the audit FLOOR
-  -- (real road distance is always >= straight line) and for sanity checks.
-  ADD COLUMN IF NOT EXISTS straight_line_km numeric(6, 2),
-  -- How the billed distance was obtained: 'google_routes' = DirectionsService,
-  -- 'manual' = admin assigned a slab by hand (Google failed / no coords).
-  ADD COLUMN IF NOT EXISTS distance_source text,
-  ADD COLUMN IF NOT EXISTS distance_computed_at timestamptz,
-  ADD COLUMN IF NOT EXISTS distance_computed_by uuid
-    REFERENCES profiles(id) ON DELETE SET NULL,
-  -- Google place id of the confirmed pickup — reproducibility + sibling dedup.
-  ADD COLUMN IF NOT EXISTS pickup_place_id text,
-  -- Encoded overview polyline of the route, so it can be redrawn on the map
-  -- and audited later without another billable Directions call.
-  ADD COLUMN IF NOT EXISTS pickup_route_polyline text;
-
--- Constrain the provenance value (nullable: cleared on opt-out).
-ALTER TABLE student_enrollments
-  DROP CONSTRAINT IF EXISTS chk_distance_source;
-ALTER TABLE student_enrollments
-  ADD CONSTRAINT chk_distance_source CHECK (
-    distance_source IS NULL
-    OR distance_source IN ('google_routes', 'manual')
-  );
-
--- A road-distance-sourced fare must have the road distance >= the straight
--- line for the same coords (a road can't be shorter than the crow-flies line).
--- Enforced only when both numbers are present and the source is google_routes,
--- so existing rows and manual assignments aren't blocked.
-ALTER TABLE student_enrollments
-  DROP CONSTRAINT IF EXISTS chk_road_distance_floor;
-ALTER TABLE student_enrollments
-  ADD CONSTRAINT chk_road_distance_floor CHECK (
-    distance_source IS DISTINCT FROM 'google_routes'
-    OR road_distance_km IS NULL
-    OR straight_line_km IS NULL
-    -- 0.1 km slack absorbs rounding at very short distances.
-    OR road_distance_km >= straight_line_km - 0.1
-  );
-
-COMMENT ON COLUMN student_enrollments.road_distance_km IS
-  'Billed one-way road (driving) distance in km from school to the pickup point. Replaces haversine as the slabbing input.';
-COMMENT ON COLUMN student_enrollments.straight_line_km IS
-  'Server-computed haversine for the pickup coords. Audit floor for road_distance_km; never billed directly.';
-COMMENT ON COLUMN student_enrollments.distance_source IS
-  'google_routes = DirectionsService road distance; manual = admin-assigned slab (Google failed/no coords, reason required).';
-COMMENT ON COLUMN student_enrollments.pickup_place_id IS
-  'Google place id of the confirmed pickup point, for reproducibility and sibling dedup.';
-COMMENT ON COLUMN student_enrollments.pickup_route_polyline IS
-  'Encoded overview polyline of the school->pickup route, for map redraw and audit without re-billing Directions.';
-
-
--- ============================================================
--- migration-064-alumni-section.sql
--- ============================================================
--- Migration 064: Alumni section (new /alumni page)
--- Adds a CMS-managed `alumni` section type used by the new Alumni page to
--- showcase special achievements of alumni after they pass out of school —
--- the foundation of a stronger alumni network. Editable via
--- Site Media → Alumni Page → Alumni Achievements (name + batch year +
--- current designation + achievement + optional photo).
---
--- 1. Widen the section_cards CHECK constraint to permit 'alumni' (keeping all
---    previously-allowed values, including 'accolades' from migration 061).
--- 2. Seed a few default alumni cards so the page renders out-of-the-box; admins
---    edit the copy / replace photos via the CMS (defaults are protected from
---    deletion, only deactivatable).
--- Idempotent.
-
-begin;
-
--- 1. Replace any existing CHECK constraint on the `section` column (discovered
---    dynamically) with the full, widened allow-list.
-do $$
-declare
-  c record;
-begin
-  for c in
-    select con.conname
-    from pg_constraint con
-    join pg_class rel on rel.oid = con.conrelid
-    where rel.relname = 'section_cards'
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%section%'
-  loop
-    execute format('alter table section_cards drop constraint %I', c.conname);
-  end loop;
-end $$;
-
-alter table section_cards add constraint section_cards_section_check
-  check (section in (
-    'hero_slider', 'testimonials', 'facilities_preview', 'leadership',
-    'legacy_timeline', 'why_choose_us', 'activities', 'annual_events',
-    'campus_facilities', 'accolades', 'alumni'
-  ));
-
--- 2. Seed default alumni achievement cards (placeholder imagery — replace via CMS).
-insert into section_cards (section, name, year, designation, description, image_url, sort_order, is_active, is_default, default_snapshot)
-select * from (values
-  ('alumni', 'Aarav Sharma', 'Class of 2012', 'Software Engineer, Bengaluru', 'Built a career in technology after NKPS — now engineering at a leading global tech company.', '/images/gallery/st1.jpg', 0, true, true, null::jsonb),
-  ('alumni', 'Priya Verma', 'Class of 2010', 'Doctor (MBBS, MD)', 'Cleared NEET and went on to serve as a physician, giving back to the community.', '/images/gallery/st2.jpg', 1, true, true, null::jsonb),
-  ('alumni', 'Rohan Gupta', 'Class of 2014', 'Civil Services Officer', 'Cracked the UPSC Civil Services Examination and is now serving in public administration.', '/images/gallery/st3.jpg', 2, true, true, null::jsonb)
-) as v(section, name, year, designation, description, image_url, sort_order, is_active, is_default, default_snapshot)
-where not exists (
-  select 1 from section_cards sc where sc.section = 'alumni'
-);
-
-commit;
-
-
--- ============================================================
--- migration-065-student-achievements-section.sql
--- ============================================================
--- Migration 065: Student Achievements section (home page)
--- Adds a CMS-managed `student_achievements` section type, shown as the middle
--- column of the new "News & Achievements" block on the home page (alongside
--- Latest Updates / articles and School Accolades). Editable via
--- Site Media → Home → Student Achievements (student name + achievement title +
--- description + optional year + optional photo).
---
--- 1. Widen the section_cards CHECK constraint to permit 'student_achievements'
---    (keeping all previously-allowed values, including 'accolades' from
---    migration 061 and 'alumni' from migration 064).
--- 2. Seed a few default cards so the column renders out-of-the-box; admins edit
---    the copy / replace photos via the CMS (defaults are protected from
---    deletion, only deactivatable).
--- Idempotent.
-
-begin;
-
--- 1. Replace any existing CHECK constraint on the `section` column (discovered
---    dynamically) with the full, widened allow-list.
-do $$
-declare
-  c record;
-begin
-  for c in
-    select con.conname
-    from pg_constraint con
-    join pg_class rel on rel.oid = con.conrelid
-    where rel.relname = 'section_cards'
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%section%'
-  loop
-    execute format('alter table section_cards drop constraint %I', c.conname);
-  end loop;
-end $$;
-
-alter table section_cards add constraint section_cards_section_check
-  check (section in (
-    'hero_slider', 'testimonials', 'facilities_preview', 'leadership',
-    'legacy_timeline', 'why_choose_us', 'activities', 'annual_events',
-    'campus_facilities', 'accolades', 'alumni', 'student_achievements'
-  ));
-
--- 2. Seed default student achievement cards (placeholder imagery — replace via CMS).
-insert into section_cards (section, name, title, year, description, image_url, sort_order, is_active, is_default, default_snapshot)
-select * from (values
-  ('student_achievements', 'Ananya Singh', 'District Topper — Class X', '2024', 'Scored 98.6% in the CBSE Class X board exams, ranking first in the district.', '/images/gallery/st1.jpg', 0, true, true, null::jsonb),
-  ('student_achievements', 'Kabir Mehta', 'State-Level Chess Champion', '2024', 'Won gold at the Rajasthan State Chess Championship, representing the school with distinction.', '/images/gallery/st2.jpg', 1, true, true, null::jsonb),
-  ('student_achievements', 'Diya Agarwal', 'National Science Olympiad Rank', '2023', 'Secured an All-India rank in the National Science Olympiad, among the top performers nationwide.', '/images/gallery/st3.jpg', 2, true, true, null::jsonb)
-) as v(section, name, title, year, description, image_url, sort_order, is_active, is_default, default_snapshot)
-where not exists (
-  select 1 from section_cards sc where sc.section = 'student_achievements'
-);
-
-commit;
-
-
--- ============================================================
--- migration-066-why-choose-us-sports-brilliance.sql
--- ============================================================
--- Migration 066: "Why Choose Us" — rename board-results card + add Sports Brilliance
--- About page → Why Choose Us section (section_cards, section = 'why_choose_us').
---
--- 1. Rename the default "100% Board Results" card to "Exceptional Board Results"
---    (also updates its default_snapshot so Reset-to-Default stays consistent).
---    Only touches the still-default card; an admin-renamed card is left alone.
--- 2. Add a 5th default card "Sports Brilliance" (Medal icon, sort_order 4).
--- Idempotent: the rename matches the old title (a no-op once applied); the
--- insert is guarded by a not-exists check on the new title.
-
-begin;
-
--- 1. Rename board-results card.
-update section_cards
-set title = 'Exceptional Board Results',
-    default_snapshot = jsonb_set(
-      coalesce(default_snapshot, '{}'::jsonb),
-      '{title}', '"Exceptional Board Results"'
-    )
-where section = 'why_choose_us'
-  and title = '100% Board Results';
-
--- 2. Add the Sports Brilliance card.
-insert into section_cards (
-  section, title, description, icon,
-  sort_order, is_active, is_default, default_snapshot
-)
-select
-  'why_choose_us',
-  'Sports Brilliance',
-  'Our students excel on the field, winning laurels at district, state and national level competitions.',
-  'Medal',
-  4, true, true,
-  jsonb_build_object(
-    'title', 'Sports Brilliance',
-    'description', 'Our students excel on the field, winning laurels at district, state and national level competitions.',
-    'icon', 'Medal'
-  )
-where not exists (
-  select 1 from section_cards
-  where section = 'why_choose_us' and title = 'Sports Brilliance' and is_default = true
-);
-
-commit;
-
-
--- ============================================================
--- migration-067-sports-sections.sql
--- ============================================================
--- Migration 067: Sports & Athletics sections (Student Life page)
--- Adds two CMS-managed section types — `sports_indoor` and `sports_outdoor` —
--- rendered together as the "Sports & Athletics" block on the Student Life page,
--- split into Indoor and Outdoor games. Each card is a single game: a name
--- (stored in `title`) plus an image (uploaded via Site Media → Student Life).
--- On the public site the images are clickable and expand in a lightbox.
---
--- 1. Widen the section_cards CHECK constraint to permit the two new sections
---    (keeping all previously-allowed values, incl. 'student_achievements' from
---    migration 065, 'alumni' from 064 and 'accolades' from 061).
--- 2. Seed the starter game lists the school provided. Seeded as NON-default
---    rows (is_default = false) so admins can fully add AND remove games via the
---    CMS — defaults are otherwise only deactivatable, but full curation control
---    is the explicit requirement here.
--- Idempotent.
-
-begin;
-
--- 1. Replace any existing CHECK constraint on the `section` column (discovered
---    dynamically) with the full, widened allow-list.
-do $$
-declare
-  c record;
-begin
-  for c in
-    select con.conname
-    from pg_constraint con
-    join pg_class rel on rel.oid = con.conrelid
-    where rel.relname = 'section_cards'
-      and con.contype = 'c'
-      and pg_get_constraintdef(con.oid) ilike '%section%'
-  loop
-    execute format('alter table section_cards drop constraint %I', c.conname);
-  end loop;
-end $$;
-
+alter table section_cards drop constraint if exists section_cards_section_check;
 alter table section_cards add constraint section_cards_section_check
   check (section in (
     'hero_slider', 'testimonials', 'facilities_preview', 'leadership',
@@ -722,426 +48,7 @@ alter table section_cards add constraint section_cards_section_check
     'campus_facilities', 'accolades', 'alumni', 'student_achievements',
     'sports_indoor', 'sports_outdoor'
   ));
-
--- 2. Seed the starter games (image_url left null — admins upload images via the
---    CMS; the public site shows a tasteful placeholder until then).
-insert into section_cards (section, title, sort_order, is_active, is_default)
-select * from (values
-  ('sports_indoor',  'Karate',         0, true, false),
-  ('sports_indoor',  'Chess',          1, true, false),
-  ('sports_indoor',  'Yoga',           2, true, false),
-  ('sports_indoor',  'Carrom',         3, true, false),
-  ('sports_indoor',  'Table Tennis',   4, true, false),
-  ('sports_indoor',  'Badminton',      5, true, false),
-  ('sports_outdoor', 'Football',       0, true, false),
-  ('sports_outdoor', 'Basketball',     1, true, false),
-  ('sports_outdoor', 'Athletics',      2, true, false),
-  ('sports_outdoor', 'Volleyball',     3, true, false),
-  ('sports_outdoor', 'Kabaddi',        4, true, false),
-  ('sports_outdoor', 'Kho Kho',        5, true, false),
-  ('sports_outdoor', 'Roller Skating', 6, true, false)
-) as v(section, title, sort_order, is_active, is_default)
-where not exists (
-  select 1 from section_cards sc
-  where sc.section = v.section
-);
-
 commit;
-
-
--- ============================================================
--- migration-068-identity-integrity.sql
--- ============================================================
--- Migration 068: Identity & cross-role linking integrity (cross: base profiles + ERP domain)
---
--- Root cause of the "linking parent to ward did not work" incident: a profile
--- could exist as role='parent' with parent_id = NULL (and the same for teacher),
--- linking was done by 5 independent code paths, there was no 1:1 guarantee
--- between an auth account and a domain record, and nothing surfaced the broken
--- state. This migration installs the integrity FLOOR that the linking service
--- (Phase 1) and the admin reconciliation surface (Phase 2) build on.
---
--- It is a `cross` migration because it constrains `profiles` (base) using its
--- FKs into teachers/students/parents and student_parents (ERP). It is only
--- meaningful on a full ERP deployment.
---
--- SAFE TO APPLY ON A LIVE DB:
---   * The role↔link trigger fires only on INSERT and on UPDATEs that actually
---     change role or a link column, so it never rejects unrelated edits to
---     existing orphan rows and never fails on apply.
---   * The UNIQUE link indexes are guarded by a pre-check that raises a clear,
---     itemised error (pointing at profile_link_health) if duplicate claims
---     exist, instead of failing with an opaque index-build error. Resolve the
---     duplicates, then re-run — the whole file is idempotent.
---
--- Composes with migration 061: that guard blocks NON-privileged callers from
--- touching role/link columns at all; this migration constrains WHAT the
--- privileged (admin / service-role) linking paths are allowed to commit.
-
--- ============================================================
--- 0.1 / 0.2 — Observability: link-health view
--- ============================================================
--- One row per anomaly. `category` partitions errors from informational signals:
---   ERROR (must fix): orphaned_profile, role_link_mismatch, duplicate_*_claim
---   INFO  (expected, surfaced for onboarding): unclaimed_student,
---         parent_without_children, student_without_guardian_account
-CREATE OR REPLACE VIEW public.profile_link_health AS
-  -- role demands a link but it is NULL (the incident class: parent/teacher)
-  SELECT 'orphaned_profile'::text AS category,
-         p.id::text               AS subject_id,
-         COALESCE(p.full_name, p.email) AS subject_label,
-         ('role=' || p.role || ' but ' || p.role || '_id is NULL') AS detail
-  FROM public.profiles p
-  WHERE (p.role = 'teacher' AND p.teacher_id IS NULL)
-     OR (p.role = 'parent'  AND p.parent_id  IS NULL)
-
-  UNION ALL
-  -- a student account that has not yet claimed its student record (self-claim
-  -- model — expected for fresh accounts, informational)
-  SELECT 'unclaimed_student', p.id::text, COALESCE(p.full_name, p.email),
-         'role=student but student_id is NULL (awaiting self-link)'
-  FROM public.profiles p
-  WHERE p.role = 'student' AND p.student_id IS NULL
-
-  UNION ALL
-  -- a non-null link that does not match the profile's role (admin may also hold
-  -- a teacher_id when a head/principal teaches; everything else is a mismatch)
-  SELECT 'role_link_mismatch', p.id::text, COALESCE(p.full_name, p.email),
-         'non-null link inconsistent with role=' || p.role
-  FROM public.profiles p
-  WHERE (p.student_id IS NOT NULL AND p.role <> 'student')
-     OR (p.parent_id  IS NOT NULL AND p.role <> 'parent')
-     OR (p.teacher_id IS NOT NULL AND p.role NOT IN ('teacher', 'admin'))
-
-  UNION ALL
-  -- two or more accounts claiming the same teacher record
-  SELECT 'duplicate_teacher_claim', p.teacher_id::text, t.full_name,
-         count(*) || ' accounts linked to this teacher record'
-  FROM public.profiles p JOIN public.teachers t ON t.id = p.teacher_id
-  WHERE p.teacher_id IS NOT NULL
-  GROUP BY p.teacher_id, t.full_name HAVING count(*) > 1
-
-  UNION ALL
-  -- two or more accounts claiming the same student record
-  SELECT 'duplicate_student_claim', p.student_id::text, s.full_name,
-         count(*) || ' accounts linked to this student record'
-  FROM public.profiles p JOIN public.students s ON s.id = p.student_id
-  WHERE p.student_id IS NOT NULL
-  GROUP BY p.student_id, s.full_name HAVING count(*) > 1
-
-  UNION ALL
-  -- two or more accounts claiming the same parent record
-  SELECT 'duplicate_parent_claim', p.parent_id::text, pa.full_name,
-         count(*) || ' accounts linked to this parent record'
-  FROM public.profiles p JOIN public.parents pa ON pa.id = p.parent_id
-  WHERE p.parent_id IS NOT NULL
-  GROUP BY p.parent_id, pa.full_name HAVING count(*) > 1
-
-  UNION ALL
-  -- an active parent record with no children linked (orphaned guardian record)
-  SELECT 'parent_without_children', pa.id::text, pa.full_name,
-         'active parent record has no student_parents links'
-  FROM public.parents pa
-  WHERE COALESCE(pa.is_active, true)
-    AND NOT EXISTS (SELECT 1 FROM public.student_parents sp WHERE sp.parent_id = pa.id)
-
-  UNION ALL
-  -- an active, non-alumni student whose guardians have no portal account yet
-  -- (onboarding signal — the parent can't see results/fees until they sign up)
-  SELECT 'student_without_guardian_account', s.id::text, s.full_name,
-         'active student has no linked parent with a portal account'
-  FROM public.students s
-  WHERE COALESCE(s.is_active, true) AND NOT COALESCE(s.is_alumni, false)
-    AND NOT EXISTS (
-      SELECT 1 FROM public.student_parents sp
-      JOIN public.profiles p ON p.parent_id = sp.parent_id
-      WHERE sp.student_id = s.id
-    );
-
-COMMENT ON VIEW public.profile_link_health IS
-  'Cross-role linking anomalies. ERROR categories (orphaned_profile, '
-  'role_link_mismatch, duplicate_*_claim) must be resolved; INFO categories '
-  '(unclaimed_student, parent_without_children, student_without_guardian_account) '
-  'are onboarding signals. Read via GET /api/admin/link-health.';
-
--- ============================================================
--- 0.3 — Enforce 1:1 between an auth account and a domain record
--- ============================================================
--- Pre-flight: refuse to build UNIQUE indexes if duplicate claims exist, with a
--- clear, actionable message instead of an opaque "could not create unique index".
-DO $$
-DECLARE
-  dup_count integer;
-BEGIN
-  SELECT count(*) INTO dup_count FROM (
-    SELECT teacher_id FROM public.profiles WHERE teacher_id IS NOT NULL
-      GROUP BY teacher_id HAVING count(*) > 1
-    UNION ALL
-    SELECT student_id FROM public.profiles WHERE student_id IS NOT NULL
-      GROUP BY student_id HAVING count(*) > 1
-    UNION ALL
-    SELECT parent_id  FROM public.profiles WHERE parent_id  IS NOT NULL
-      GROUP BY parent_id  HAVING count(*) > 1
-  ) d;
-
-  IF dup_count > 0 THEN
-    RAISE EXCEPTION
-      'Cannot enforce 1:1 link uniqueness: % duplicate claim(s) exist. '
-      'Run  SELECT * FROM public.profile_link_health WHERE category LIKE ''duplicate%%'';  '
-      'resolve them (unlink the wrong account), then re-run this migration.',
-      dup_count;
-  END IF;
-END $$;
-
--- Replace the plain partial indexes (migration 001 / erp-redesign) with UNIQUE
--- partial indexes. Same WHERE clause, so they still serve the lookup queries.
-DROP INDEX IF EXISTS idx_profiles_teacher_id;
-DROP INDEX IF EXISTS idx_profiles_student_id;
-DROP INDEX IF EXISTS idx_profiles_parent_id;
-
-CREATE UNIQUE INDEX idx_profiles_teacher_id
-  ON public.profiles(teacher_id) WHERE teacher_id IS NOT NULL;
-CREATE UNIQUE INDEX idx_profiles_student_id
-  ON public.profiles(student_id) WHERE student_id IS NOT NULL;
-CREATE UNIQUE INDEX idx_profiles_parent_id
-  ON public.profiles(parent_id) WHERE parent_id IS NOT NULL;
-
--- ============================================================
--- 0.4 — Enforce role ↔ link consistency
--- ============================================================
--- Invariants (the linking service in Phase 1 sets role + link in ONE update,
--- so it always satisfies these):
---   role='teacher' ⇒ teacher_id IS NOT NULL
---   role='parent'  ⇒ parent_id  IS NOT NULL
---   role='student' ⇒ student_id MAY be NULL (self-claim model)
---   a non-null link must match the role (admins may also hold a teacher_id)
---   admin/staff carry no student_id/parent_id
---
--- NOT exempt for service-role: a buggy server path that sets role='parent'
--- without a parent_id SHOULD fail loudly — that is the whole point.
-CREATE OR REPLACE FUNCTION public.enforce_profile_role_link()
-RETURNS TRIGGER AS $$
-BEGIN
-  -- On UPDATE, skip when neither role nor any link column changed, so routine
-  -- edits (phone, avatar) to a pre-existing anomalous row are never blocked —
-  -- only attempts to commit/keep an inconsistent role+link combination are.
-  IF TG_OP = 'UPDATE'
-     AND NEW.role       IS NOT DISTINCT FROM OLD.role
-     AND NEW.teacher_id IS NOT DISTINCT FROM OLD.teacher_id
-     AND NEW.student_id IS NOT DISTINCT FROM OLD.student_id
-     AND NEW.parent_id  IS NOT DISTINCT FROM OLD.parent_id THEN
-    RETURN NEW;
-  END IF;
-
-  IF NEW.role = 'teacher' AND NEW.teacher_id IS NULL THEN
-    RAISE EXCEPTION 'profile %: role=teacher requires teacher_id (use the linking service)', NEW.id;
-  END IF;
-  IF NEW.role = 'parent' AND NEW.parent_id IS NULL THEN
-    RAISE EXCEPTION 'profile %: role=parent requires parent_id (use the linking service)', NEW.id;
-  END IF;
-
-  IF NEW.student_id IS NOT NULL AND NEW.role <> 'student' THEN
-    RAISE EXCEPTION 'profile %: student_id set but role=% (must be student)', NEW.id, NEW.role;
-  END IF;
-  IF NEW.parent_id IS NOT NULL AND NEW.role <> 'parent' THEN
-    RAISE EXCEPTION 'profile %: parent_id set but role=% (must be parent)', NEW.id, NEW.role;
-  END IF;
-  IF NEW.teacher_id IS NOT NULL AND NEW.role NOT IN ('teacher', 'admin') THEN
-    RAISE EXCEPTION 'profile %: teacher_id set but role=% (must be teacher or admin)', NEW.id, NEW.role;
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS enforce_profile_role_link ON public.profiles;
-CREATE TRIGGER enforce_profile_role_link
-  BEFORE INSERT OR UPDATE ON public.profiles
-  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_role_link();
-
--- ============================================================
--- 0.5 — Single source of truth for the parent↔ward relationship
--- ============================================================
--- student_parents.relationship is the authoritative per-link relationship
--- (a person can be 'father' to one child and 'guardian' to another).
--- parents.relationship is now deprecated: kept for backward compatibility but
--- no longer written by the linking service and not read by the app.
-COMMENT ON COLUMN public.parents.relationship IS
-  'DEPRECATED (migration 068). The authoritative relationship lives per-link in '
-  'student_parents.relationship. This column is retained only for backward '
-  'compatibility and must not be read by application code.';
-
-
--- ============================================================
--- migration-069-timetable-classsubject-drift.sql
--- ============================================================
--- Migration 069: Surface teacher-assignment drift between timetable & class_subjects
---
--- Decision (Phase 3): `class_subjects` is the CANONICAL authority for "which
--- teacher teaches which subject in which class" — it's what teacher-scope.ts
--- and the RLS get_my_class_ids() helper read. `timetable_periods` is the
--- schedule and can drift (a period assigned to a different teacher than the
--- subject's class_subjects.teacher_id), which would let the timetable show one
--- teacher while scope/authorization uses another.
---
--- This view makes that drift observable so it can be reconciled. It does NOT
--- auto-rewrite timetable rows — period-level cover/substitution is sometimes
--- legitimate; the admin decides. Read-only, safe to apply on a live DB.
-
-CREATE OR REPLACE VIEW public.timetable_assignment_drift AS
-  SELECT tp.id              AS timetable_period_id,
-         tp.class_id,
-         c.name             AS class_name,
-         c.section          AS class_section,
-         tp.subject_id,
-         s.name             AS subject_name,
-         tp.day_of_week,
-         tp.period_number,
-         tp.teacher_id      AS timetable_teacher_id,
-         tt.full_name       AS timetable_teacher_name,
-         cs.teacher_id      AS canonical_teacher_id,
-         ct.full_name       AS canonical_teacher_name
-  FROM public.timetable_periods tp
-  JOIN public.class_subjects cs
-    ON cs.class_id = tp.class_id AND cs.subject_id = tp.subject_id
-  LEFT JOIN public.classes  c  ON c.id  = tp.class_id
-  LEFT JOIN public.subjects s  ON s.id  = tp.subject_id
-  LEFT JOIN public.teachers tt ON tt.id = tp.teacher_id
-  LEFT JOIN public.teachers ct ON ct.id = cs.teacher_id
-  WHERE tp.is_break IS NOT TRUE
-    AND tp.teacher_id IS DISTINCT FROM cs.teacher_id;
-
-COMMENT ON VIEW public.timetable_assignment_drift IS
-  'Timetable periods whose teacher differs from the canonical class_subjects '
-  'assignment for the same (class, subject). class_subjects is authoritative '
-  '(migration 069); rows here are drift to reconcile (or legitimate cover).';
-
-
--- ============================================================
--- migration-070-fee-change-request-insert.sql
--- ============================================================
--- =============================================================
--- Migration 070: fee_change_requests — support INSERT actions
--- =============================================================
--- Editors are blocked from clearing dues directly (waivers) the same way
--- they're blocked from direct refunds: they must file a change request for an
--- admin to approve. A waiver is a brand-new fee_payments row, so the change
--- request system — until now update/delete-only on an existing target row —
--- needs to model an INSERT (no target_id, no prior snapshot).
---
--- SAFE TO RE-RUN: drops/recreates named constraints; ALTER ... DROP NOT NULL
--- is idempotent.
--- =============================================================
-
-BEGIN;
-
--- fee_change_requests: an INSERT request has no target row to point at or
--- snapshot, so both become nullable and a table-level CHECK keeps the two
--- shapes (insert vs update/delete) consistent.
-ALTER TABLE fee_change_requests ALTER COLUMN target_id DROP NOT NULL;
-ALTER TABLE fee_change_requests ALTER COLUMN current_snapshot DROP NOT NULL;
-
-ALTER TABLE fee_change_requests
-  DROP CONSTRAINT IF EXISTS fee_change_requests_action_check;
-ALTER TABLE fee_change_requests
-  ADD CONSTRAINT fee_change_requests_action_check
-  CHECK (action IN ('insert', 'update', 'delete'));
-
-ALTER TABLE fee_change_requests
-  DROP CONSTRAINT IF EXISTS chk_change_request_target;
-ALTER TABLE fee_change_requests
-  ADD CONSTRAINT chk_change_request_target CHECK (
-    (action = 'insert'
-      AND target_id IS NULL
-      AND current_snapshot IS NULL)
-    OR (action IN ('update', 'delete')
-      AND target_id IS NOT NULL
-      AND current_snapshot IS NOT NULL)
-  );
-
--- fee_change_audit_log: an applied INSERT has no before_snapshot and no
--- pre-existing target_id (the row is created during apply; its new id is
--- captured in after_snapshot).
-ALTER TABLE fee_change_audit_log ALTER COLUMN target_id DROP NOT NULL;
-ALTER TABLE fee_change_audit_log ALTER COLUMN before_snapshot DROP NOT NULL;
-
-ALTER TABLE fee_change_audit_log
-  DROP CONSTRAINT IF EXISTS fee_change_audit_log_action_check;
-ALTER TABLE fee_change_audit_log
-  ADD CONSTRAINT fee_change_audit_log_action_check
-  CHECK (action IN ('insert', 'update', 'delete'));
-
-COMMIT;
-
-
--- ============================================================
--- migration-071-timetable-teacher-time-overlap.sql
--- ============================================================
--- =============================================================
--- Migration 071: timetable teacher clash = TIME OVERLAP, not period number
--- =============================================================
--- Classes run on STAGGERED schedules — "period 3" in one class is a different
--- wall-clock time than "period 3" in another. The old uniqueness index
--- (teacher_id, day_of_week, period_number) modelled clashes by period number,
--- which BOTH rejected valid non-overlapping staggered periods that happen to
--- share a number AND allowed genuine double-bookings across different numbers.
---
--- This replaces it with a true time-overlap exclusion constraint.
---
--- ⚠️  PRE-CHECK BEFORE APPLYING: this constraint will FAIL to create if the
---     live data already contains overlapping periods for a teacher (the old
---     index permitted them). Run this first and resolve any rows it returns:
---
---       SELECT a.teacher_id, a.day_of_week,
---              a.id AS period_a, a.start_time AS a_start, a.end_time AS a_end,
---              b.id AS period_b, b.start_time AS b_start, b.end_time AS b_end
---       FROM timetable_periods a
---       JOIN timetable_periods b
---         ON a.teacher_id = b.teacher_id
---        AND a.day_of_week = b.day_of_week
---        AND a.id < b.id
---        AND a.teacher_id IS NOT NULL
---        AND a.is_break IS NOT TRUE AND b.is_break IS NOT TRUE
---        AND a.start_time < b.end_time
---        AND a.end_time > b.start_time;
---
--- SAFE TO RE-RUN.
--- =============================================================
-
-BEGIN;
-
--- btree_gist lets a GiST exclusion constraint mix equality (teacher_id,
--- day_of_week) with the range-overlap operator.
-CREATE EXTENSION IF NOT EXISTS btree_gist;
-
--- Drop the period_number-based teacher uniqueness — wrong model.
-DROP INDEX IF EXISTS idx_timetable_teacher_slot_unique;
-
--- A teacher cannot occupy two periods whose wall-clock ranges overlap on the
--- same weekday. Postgres has no built-in range type for `time`, so times are
--- anchored to a fixed date and compared as tsrange. Breaks / free (teacher_id
--- NULL) rows are exempt.
--- NOTE: the predicate also requires start_time < end_time. tsrange() errors on
--- a lower bound greater than the upper bound, so any degenerate row
--- (end_time <= start_time, i.e. bad legacy data) must be excluded from the
--- index — otherwise CREATE CONSTRAINT fails with "range lower bound must be
--- less than or equal to range upper bound". Such rows are invalid and can't
--- meaningfully overlap anything; the app validates end > start on writes.
--- Find any offenders with:
---   SELECT id, class_id, day_of_week, period_number, start_time, end_time
---   FROM timetable_periods WHERE end_time <= start_time;
-ALTER TABLE timetable_periods
-  DROP CONSTRAINT IF EXISTS timetable_teacher_no_overlap;
-ALTER TABLE timetable_periods
-  ADD CONSTRAINT timetable_teacher_no_overlap
-  EXCLUDE USING gist (
-    teacher_id WITH =,
-    day_of_week WITH =,
-    tsrange('2000-01-01'::date + start_time, '2000-01-01'::date + end_time) WITH &&
-  ) WHERE (teacher_id IS NOT NULL AND is_break IS NOT TRUE AND start_time < end_time);
-
-COMMIT;
-
 
 -- ============================================================
 -- migration-072-student-profile-udise.sql
@@ -1706,6 +613,79 @@ create policy "Service role manages transport applications"
 
 
 -- ============================================================
+-- migration-063-transport-road-distance.sql
+-- ============================================================
+-- migration-063-transport-road-distance.sql
+--
+-- Moves transport fee slabbing from straight-line (haversine) distance to the
+-- real ROAD (driving) distance from school to the student's confirmed pickup
+-- point. A 5 km radius circle is not 5 km of road, so the radial model over/
+-- under-charged families with the same as-the-crow-flies distance.
+--
+-- The road distance is computed in the browser via the Google Maps
+-- DirectionsService (the only key available is referrer-restricted) and then
+-- re-validated server-side against the straight-line floor before billing.
+-- These columns capture the billed number plus full provenance so every fare
+-- is explainable and reproducible.
+--
+-- Reuses the existing pickup_lat/lng + override/verify audit columns from
+-- migration-053. Idempotent.
+
+ALTER TABLE student_enrollments
+  -- The billed one-way road distance (km) from school to the pickup point.
+  ADD COLUMN IF NOT EXISTS road_distance_km numeric(6, 2),
+  -- Server-computed haversine for the same coords. Kept as the audit FLOOR
+  -- (real road distance is always >= straight line) and for sanity checks.
+  ADD COLUMN IF NOT EXISTS straight_line_km numeric(6, 2),
+  -- How the billed distance was obtained: 'google_routes' = DirectionsService,
+  -- 'manual' = admin assigned a slab by hand (Google failed / no coords).
+  ADD COLUMN IF NOT EXISTS distance_source text,
+  ADD COLUMN IF NOT EXISTS distance_computed_at timestamptz,
+  ADD COLUMN IF NOT EXISTS distance_computed_by uuid
+    REFERENCES profiles(id) ON DELETE SET NULL,
+  -- Google place id of the confirmed pickup — reproducibility + sibling dedup.
+  ADD COLUMN IF NOT EXISTS pickup_place_id text,
+  -- Encoded overview polyline of the route, so it can be redrawn on the map
+  -- and audited later without another billable Directions call.
+  ADD COLUMN IF NOT EXISTS pickup_route_polyline text;
+
+-- Constrain the provenance value (nullable: cleared on opt-out).
+ALTER TABLE student_enrollments
+  DROP CONSTRAINT IF EXISTS chk_distance_source;
+ALTER TABLE student_enrollments
+  ADD CONSTRAINT chk_distance_source CHECK (
+    distance_source IS NULL
+    OR distance_source IN ('google_routes', 'manual')
+  );
+
+-- A road-distance-sourced fare must have the road distance >= the straight
+-- line for the same coords (a road can't be shorter than the crow-flies line).
+-- Enforced only when both numbers are present and the source is google_routes,
+-- so existing rows and manual assignments aren't blocked.
+ALTER TABLE student_enrollments
+  DROP CONSTRAINT IF EXISTS chk_road_distance_floor;
+ALTER TABLE student_enrollments
+  ADD CONSTRAINT chk_road_distance_floor CHECK (
+    distance_source IS DISTINCT FROM 'google_routes'
+    OR road_distance_km IS NULL
+    OR straight_line_km IS NULL
+    -- 0.1 km slack absorbs rounding at very short distances.
+    OR road_distance_km >= straight_line_km - 0.1
+  );
+
+COMMENT ON COLUMN student_enrollments.road_distance_km IS
+  'Billed one-way road (driving) distance in km from school to the pickup point. Replaces haversine as the slabbing input.';
+COMMENT ON COLUMN student_enrollments.straight_line_km IS
+  'Server-computed haversine for the pickup coords. Audit floor for road_distance_km; never billed directly.';
+COMMENT ON COLUMN student_enrollments.distance_source IS
+  'google_routes = DirectionsService road distance; manual = admin-assigned slab (Google failed/no coords, reason required).';
+COMMENT ON COLUMN student_enrollments.pickup_place_id IS
+  'Google place id of the confirmed pickup point, for reproducibility and sibling dedup.';
+COMMENT ON COLUMN student_enrollments.pickup_route_polyline IS
+  'Encoded overview polyline of the school->pickup route, for map redraw and audit without re-billing Directions.';
+
+
+-- ============================================================
 -- migration-078-staff-license-number.sql
 -- ============================================================
 -- migration-078-staff-license-number.sql
@@ -1781,6 +761,640 @@ ALTER TABLE fee_structures ADD CONSTRAINT fee_structures_late_fee_max_nonneg
 
 
 -- ============================================================
+-- migration-070-fee-change-request-insert.sql
+-- ============================================================
+-- =============================================================
+-- Migration 070: fee_change_requests — support INSERT actions
+-- =============================================================
+-- Editors are blocked from clearing dues directly (waivers) the same way
+-- they're blocked from direct refunds: they must file a change request for an
+-- admin to approve. A waiver is a brand-new fee_payments row, so the change
+-- request system — until now update/delete-only on an existing target row —
+-- needs to model an INSERT (no target_id, no prior snapshot).
+--
+-- SAFE TO RE-RUN: drops/recreates named constraints; ALTER ... DROP NOT NULL
+-- is idempotent.
+-- =============================================================
+
+BEGIN;
+
+-- fee_change_requests: an INSERT request has no target row to point at or
+-- snapshot, so both become nullable and a table-level CHECK keeps the two
+-- shapes (insert vs update/delete) consistent.
+ALTER TABLE fee_change_requests ALTER COLUMN target_id DROP NOT NULL;
+ALTER TABLE fee_change_requests ALTER COLUMN current_snapshot DROP NOT NULL;
+
+ALTER TABLE fee_change_requests
+  DROP CONSTRAINT IF EXISTS fee_change_requests_action_check;
+ALTER TABLE fee_change_requests
+  ADD CONSTRAINT fee_change_requests_action_check
+  CHECK (action IN ('insert', 'update', 'delete'));
+
+ALTER TABLE fee_change_requests
+  DROP CONSTRAINT IF EXISTS chk_change_request_target;
+ALTER TABLE fee_change_requests
+  ADD CONSTRAINT chk_change_request_target CHECK (
+    (action = 'insert'
+      AND target_id IS NULL
+      AND current_snapshot IS NULL)
+    OR (action IN ('update', 'delete')
+      AND target_id IS NOT NULL
+      AND current_snapshot IS NOT NULL)
+  );
+
+-- fee_change_audit_log: an applied INSERT has no before_snapshot and no
+-- pre-existing target_id (the row is created during apply; its new id is
+-- captured in after_snapshot).
+ALTER TABLE fee_change_audit_log ALTER COLUMN target_id DROP NOT NULL;
+ALTER TABLE fee_change_audit_log ALTER COLUMN before_snapshot DROP NOT NULL;
+
+ALTER TABLE fee_change_audit_log
+  DROP CONSTRAINT IF EXISTS fee_change_audit_log_action_check;
+ALTER TABLE fee_change_audit_log
+  ADD CONSTRAINT fee_change_audit_log_action_check
+  CHECK (action IN ('insert', 'update', 'delete'));
+
+COMMIT;
+
+
+-- ============================================================
+-- migration-061-profile-and-storage-hardening.sql
+-- ============================================================
+-- Migration 061: Profile privilege-escalation + signup + storage hardening
+--
+-- Three independent security fixes from the May-2026 security audit. All are
+-- safe to apply on a live DB and do not change the admin/editor experience
+-- (those paths use the service-role client, which bypasses RLS and is
+-- explicitly allowed by the guards below).
+--
+-- ── C1 (Critical): profiles self-update could escalate to admin ──────────────
+--   The "Users can update own profile" policy had only a USING clause (no
+--   WITH CHECK, no column restriction), so any authenticated parent/student
+--   could `UPDATE profiles SET role='admin'` on their own row via the browser
+--   anon client and instantly own the platform. We add a BEFORE UPDATE trigger
+--   that rejects changes to privileged columns (role, is_active,
+--   must_change_password, teacher_id, student_id, parent_id) unless the caller
+--   is an admin or the service role. We also REVOKE blanket column UPDATE and
+--   GRANT back only the columns a user may legitimately self-edit.
+--
+-- ── H1 (High): handle_new_user trusted a client-asserted role ────────────────
+--   The signup trigger copied `raw_user_meta_data->>'role'` verbatim. If public
+--   signup is ever enabled in Supabase Auth, an attacker could self-register as
+--   admin. We hardcode 'student' on insert; the admin creation paths
+--   (auth.admin.createUser → registrations/approve, /api/users, bulk-create)
+--   set the real role server-side afterward via the service-role client.
+--
+-- ── H2 (High): storage buckets ──────────────────────────────────────────────
+--   The transfer-certificates bucket is flipped to private MANUALLY in Supabase
+--   Studio (deliberate operational choice); the signed-URL TC routes work either
+--   way, so this migration does not automate that flip.
+--   Writes to content buckets are restricted to the service role (all uploads
+--   already go through admin-gated signed-URL minting or the avatar API, which
+--   use the service-role client; signed-URL uploads are authorized by the token,
+--   not by the uploader's RLS, so this does not break them).
+--
+--   NOTE: the previous bucket policies were created in the Supabase Dashboard
+--   ("Allow authenticated users") and are NOT in this file, so they cannot be
+--   dropped by name here. After running this migration you MUST delete the old
+--   permissive INSERT/UPDATE/DELETE policies on storage.objects for the buckets
+--   gallery, transfer-certificates, site-media, staff-photos, avatars,
+--   disclosure-documents in Dashboard → Storage → Policies. Otherwise RLS stays
+--   permissive (policies are OR-combined).
+
+-- ============================================================
+-- C1 — Lock privileged profile columns
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.guard_profile_privileged_cols()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Server-side API (service-role client) and admins may change anything.
+  IF auth.role() = 'service_role' OR public.get_user_role() = 'admin' THEN
+    RETURN NEW;
+  END IF;
+
+  -- A regular authenticated user (parent/student/teacher/staff editing their
+  -- own row) must not touch role/access columns.
+  IF NEW.role               IS DISTINCT FROM OLD.role
+     OR NEW.is_active             IS DISTINCT FROM OLD.is_active
+     OR NEW.must_change_password  IS DISTINCT FROM OLD.must_change_password
+     OR NEW.teacher_id            IS DISTINCT FROM OLD.teacher_id
+     OR NEW.student_id            IS DISTINCT FROM OLD.student_id
+     OR NEW.parent_id             IS DISTINCT FROM OLD.parent_id THEN
+    RAISE EXCEPTION 'Not allowed to modify privileged profile columns';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS guard_profile_privileged_cols ON profiles;
+CREATE TRIGGER guard_profile_privileged_cols
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.guard_profile_privileged_cols();
+
+-- Defense in depth: column-level privileges. Even if the trigger were dropped,
+-- the authenticated role cannot write privileged columns. Service role and
+-- admin write via the service-role key, which is not subject to these grants.
+REVOKE UPDATE ON public.profiles FROM authenticated;
+GRANT UPDATE (full_name, phone, avatar_url) ON public.profiles TO authenticated;
+
+-- ============================================================
+-- H1 — Do not trust client-supplied role at signup
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, full_name, role)
+  VALUES (
+    new.id, new.email,
+    COALESCE(new.raw_user_meta_data->>'full_name', new.email),
+    -- Role is NEVER taken from client metadata. Admin-creation paths set the
+    -- real role afterward via the service-role client.
+    'student'
+  );
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- H2 — Storage: private TC bucket + service-role-only writes
+-- ============================================================
+-- NOTE: the transfer-certificates bucket is flipped to private MANUALLY in
+-- Supabase Studio (deliberate operational choice — see project memory). The TC
+-- lookup/download routes issue short-lived signed URLs that work regardless of
+-- the bucket's public flag, so this migration intentionally does NOT automate it.
+
+-- Restrict writes on user-content buckets to the service role. Signed-URL
+-- uploads (gallery/site-media/staff-photos/disclosure) and the avatar API all
+-- run through the service-role client, so this does not affect them.
+DROP POLICY IF EXISTS "Service role manages content buckets" ON storage.objects;
+CREATE POLICY "Service role manages content buckets"
+  ON storage.objects FOR ALL
+  TO service_role
+  USING (
+    bucket_id IN ('gallery','transfer-certificates','site-media',
+                  'staff-photos','disclosure-documents','avatars')
+  )
+  WITH CHECK (
+    bucket_id IN ('gallery','transfer-certificates','site-media',
+                  'staff-photos','disclosure-documents','avatars')
+  );
+
+-- A user may overwrite ONLY their own avatar object (avatars/<uid>.<ext>),
+-- matching apps/erp/.../api/portal/avatar/route.ts which writes that path via
+-- the service-role client. This policy lets a future direct-anon-client avatar
+-- upload remain self-scoped without granting cross-user write.
+DROP POLICY IF EXISTS "Users manage own avatar object" ON storage.objects;
+CREATE POLICY "Users manage own avatar object"
+  ON storage.objects FOR ALL
+  TO authenticated
+  USING (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] IS NOT DISTINCT FROM auth.uid()::text
+  )
+  WITH CHECK (
+    bucket_id = 'avatars'
+    AND (storage.foldername(name))[1] IS NOT DISTINCT FROM auth.uid()::text
+  );
+
+-- Public read for public buckets (everything except transfer-certificates).
+DROP POLICY IF EXISTS "Public read of public content buckets" ON storage.objects;
+CREATE POLICY "Public read of public content buckets"
+  ON storage.objects FOR SELECT
+  USING (
+    bucket_id IN ('gallery','site-media','staff-photos','avatars',
+                  'disclosure-documents')
+  );
+
+-- Enforce allowed MIME types + size caps at the STORAGE layer. The signed-URL
+-- upload flow lets the client set the object's content-type, so an attacker
+-- could otherwise store HTML/SVG under an image/pdf extension and get stored
+-- XSS. allowed_mime_types makes Supabase reject the upload regardless of the
+-- client. (Closes the content-type-spoofing + SVG class; bounds quota abuse.)
+UPDATE storage.buckets
+  SET allowed_mime_types = ARRAY['image/jpeg','image/png','image/webp'],
+      file_size_limit = 5242880      -- 5 MB
+  WHERE id IN ('gallery','site-media','avatars');
+UPDATE storage.buckets
+  SET allowed_mime_types = ARRAY['image/jpeg','image/png'],
+      file_size_limit = 2097152      -- 2 MB
+  WHERE id = 'staff-photos';
+UPDATE storage.buckets
+  SET allowed_mime_types = ARRAY['application/pdf'],
+      file_size_limit = 10485760     -- 10 MB
+  WHERE id IN ('transfer-certificates','disclosure-documents');
+
+
+-- ============================================================
+-- migration-062-backfill-teacher-profile-link.sql
+-- ============================================================
+-- Migration 062 — backfill profiles.teacher_id for teacher accounts that were
+-- linked to the wrong id by the staff "Create Users" (bulk-create) flow.
+--
+-- Bug: /api/portal/bulk-create wrote `profiles.teacher_id = staff_members.id`,
+-- but the column is a FK to `teachers.id`. The mismatched write violated the FK
+-- and silently failed, leaving teacher_id NULL. Affected teachers could not see
+-- their assigned classes/students or mark attendance because every teacher-facing
+-- query resolves the user via `SELECT teacher_id FROM profiles WHERE id = auth.uid()`.
+--
+-- The code path is fixed going forward (it now resolves the real teachers.id via
+-- promoteStaffToTeacher). This repairs accounts already created. There is no stored
+-- staff_member_id on the profile to recover from, so we re-link by email — the
+-- teachers row mirrors the staff member's email, which equals the login email.
+--
+-- profiles.teacher_id is a privileged column locked by the guard_profile_privileged_cols
+-- trigger (migration 061). That guard only exempts the service-role client and admins
+-- resolved via a JWT (auth.uid()). Run from the Supabase SQL editor — the postgres
+-- superuser with NO JWT — neither exemption matches, so the trigger blocks this
+-- backfill with "Not allowed to modify privileged profile columns". This is a
+-- sanctioned DBA repair, so we disable that ONE trigger for the two UPDATEs and
+-- re-enable it, all inside a transaction so a failure rolls the disable back too.
+-- The FK and every other trigger stay active; the guard's runtime protection for
+-- regular authenticated users is unchanged.
+
+BEGIN;
+
+ALTER TABLE public.profiles DISABLE TRIGGER guard_profile_privileged_cols;
+
+-- 1) Direct email match: profile email == teachers.email.
+UPDATE public.profiles p
+SET teacher_id = t.id
+FROM public.teachers t
+WHERE p.role = 'teacher'
+  AND p.teacher_id IS NULL
+  AND p.email IS NOT NULL
+  AND t.email IS NOT NULL
+  AND lower(p.email) = lower(t.email);
+
+-- 2) Fallback via the staff_members link, for teachers whose teachers.email is
+--    blank but whose staff_members row carries the email used to log in.
+UPDATE public.profiles p
+SET teacher_id = t.id
+FROM public.teachers t
+JOIN public.staff_members s ON s.id = t.staff_member_id
+WHERE p.role = 'teacher'
+  AND p.teacher_id IS NULL
+  AND p.email IS NOT NULL
+  AND s.email IS NOT NULL
+  AND lower(p.email) = lower(s.email);
+
+ALTER TABLE public.profiles ENABLE TRIGGER guard_profile_privileged_cols;
+
+COMMIT;
+
+-- Surface any teacher accounts still unlinked after both passes (e.g. no teachers
+-- row was ever created for them). These need a manual "Convert to teacher" + relink.
+DO $$
+DECLARE
+  orphan_count integer;
+BEGIN
+  SELECT count(*) INTO orphan_count
+  FROM public.profiles
+  WHERE role = 'teacher' AND teacher_id IS NULL;
+  IF orphan_count > 0 THEN
+    RAISE NOTICE 'migration-062: % teacher profile(s) still have a NULL teacher_id; convert their staff member to a teacher and recreate/relink.', orphan_count;
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- migration-068-identity-integrity.sql
+-- ============================================================
+-- Migration 068: Identity & cross-role linking integrity (cross: base profiles + ERP domain)
+--
+-- Root cause of the "linking parent to ward did not work" incident: a profile
+-- could exist as role='parent' with parent_id = NULL (and the same for teacher),
+-- linking was done by 5 independent code paths, there was no 1:1 guarantee
+-- between an auth account and a domain record, and nothing surfaced the broken
+-- state. This migration installs the integrity FLOOR that the linking service
+-- (Phase 1) and the admin reconciliation surface (Phase 2) build on.
+--
+-- It is a `cross` migration because it constrains `profiles` (base) using its
+-- FKs into teachers/students/parents and student_parents (ERP). It is only
+-- meaningful on a full ERP deployment.
+--
+-- SAFE TO APPLY ON A LIVE DB:
+--   * The role↔link trigger fires only on INSERT and on UPDATEs that actually
+--     change role or a link column, so it never rejects unrelated edits to
+--     existing orphan rows and never fails on apply.
+--   * The UNIQUE link indexes are guarded by a pre-check that raises a clear,
+--     itemised error (pointing at profile_link_health) if duplicate claims
+--     exist, instead of failing with an opaque index-build error. Resolve the
+--     duplicates, then re-run — the whole file is idempotent.
+--
+-- Composes with migration 061: that guard blocks NON-privileged callers from
+-- touching role/link columns at all; this migration constrains WHAT the
+-- privileged (admin / service-role) linking paths are allowed to commit.
+
+-- ============================================================
+-- 0.1 / 0.2 — Observability: link-health view
+-- ============================================================
+-- One row per anomaly. `category` partitions errors from informational signals:
+--   ERROR (must fix): orphaned_profile, role_link_mismatch, duplicate_*_claim
+--   INFO  (expected, surfaced for onboarding): unclaimed_student,
+--         parent_without_children, student_without_guardian_account
+CREATE OR REPLACE VIEW public.profile_link_health AS
+  -- role demands a link but it is NULL (the incident class: parent/teacher)
+  SELECT 'orphaned_profile'::text AS category,
+         p.id::text               AS subject_id,
+         COALESCE(p.full_name, p.email) AS subject_label,
+         ('role=' || p.role || ' but ' || p.role || '_id is NULL') AS detail
+  FROM public.profiles p
+  WHERE (p.role = 'teacher' AND p.teacher_id IS NULL)
+     OR (p.role = 'parent'  AND p.parent_id  IS NULL)
+
+  UNION ALL
+  -- a student account that has not yet claimed its student record (self-claim
+  -- model — expected for fresh accounts, informational)
+  SELECT 'unclaimed_student', p.id::text, COALESCE(p.full_name, p.email),
+         'role=student but student_id is NULL (awaiting self-link)'
+  FROM public.profiles p
+  WHERE p.role = 'student' AND p.student_id IS NULL
+
+  UNION ALL
+  -- a non-null link that does not match the profile's role (admin may also hold
+  -- a teacher_id when a head/principal teaches; everything else is a mismatch)
+  SELECT 'role_link_mismatch', p.id::text, COALESCE(p.full_name, p.email),
+         'non-null link inconsistent with role=' || p.role
+  FROM public.profiles p
+  WHERE (p.student_id IS NOT NULL AND p.role <> 'student')
+     OR (p.parent_id  IS NOT NULL AND p.role <> 'parent')
+     OR (p.teacher_id IS NOT NULL AND p.role NOT IN ('teacher', 'admin'))
+
+  UNION ALL
+  -- two or more accounts claiming the same teacher record
+  SELECT 'duplicate_teacher_claim', p.teacher_id::text, t.full_name,
+         count(*) || ' accounts linked to this teacher record'
+  FROM public.profiles p JOIN public.teachers t ON t.id = p.teacher_id
+  WHERE p.teacher_id IS NOT NULL
+  GROUP BY p.teacher_id, t.full_name HAVING count(*) > 1
+
+  UNION ALL
+  -- two or more accounts claiming the same student record
+  SELECT 'duplicate_student_claim', p.student_id::text, s.full_name,
+         count(*) || ' accounts linked to this student record'
+  FROM public.profiles p JOIN public.students s ON s.id = p.student_id
+  WHERE p.student_id IS NOT NULL
+  GROUP BY p.student_id, s.full_name HAVING count(*) > 1
+
+  UNION ALL
+  -- two or more accounts claiming the same parent record
+  SELECT 'duplicate_parent_claim', p.parent_id::text, pa.full_name,
+         count(*) || ' accounts linked to this parent record'
+  FROM public.profiles p JOIN public.parents pa ON pa.id = p.parent_id
+  WHERE p.parent_id IS NOT NULL
+  GROUP BY p.parent_id, pa.full_name HAVING count(*) > 1
+
+  UNION ALL
+  -- an active parent record with no children linked (orphaned guardian record)
+  SELECT 'parent_without_children', pa.id::text, pa.full_name,
+         'active parent record has no student_parents links'
+  FROM public.parents pa
+  WHERE COALESCE(pa.is_active, true)
+    AND NOT EXISTS (SELECT 1 FROM public.student_parents sp WHERE sp.parent_id = pa.id)
+
+  UNION ALL
+  -- an active, non-alumni student whose guardians have no portal account yet
+  -- (onboarding signal — the parent can't see results/fees until they sign up)
+  SELECT 'student_without_guardian_account', s.id::text, s.full_name,
+         'active student has no linked parent with a portal account'
+  FROM public.students s
+  WHERE COALESCE(s.is_active, true) AND NOT COALESCE(s.is_alumni, false)
+    AND NOT EXISTS (
+      SELECT 1 FROM public.student_parents sp
+      JOIN public.profiles p ON p.parent_id = sp.parent_id
+      WHERE sp.student_id = s.id
+    );
+
+COMMENT ON VIEW public.profile_link_health IS
+  'Cross-role linking anomalies. ERROR categories (orphaned_profile, '
+  'role_link_mismatch, duplicate_*_claim) must be resolved; INFO categories '
+  '(unclaimed_student, parent_without_children, student_without_guardian_account) '
+  'are onboarding signals. Read via GET /api/admin/link-health.';
+
+-- ============================================================
+-- 0.3 — Enforce 1:1 between an auth account and a domain record
+-- ============================================================
+-- Pre-flight: refuse to build UNIQUE indexes if duplicate claims exist, with a
+-- clear, actionable message instead of an opaque "could not create unique index".
+DO $$
+DECLARE
+  dup_count integer;
+BEGIN
+  SELECT count(*) INTO dup_count FROM (
+    SELECT teacher_id FROM public.profiles WHERE teacher_id IS NOT NULL
+      GROUP BY teacher_id HAVING count(*) > 1
+    UNION ALL
+    SELECT student_id FROM public.profiles WHERE student_id IS NOT NULL
+      GROUP BY student_id HAVING count(*) > 1
+    UNION ALL
+    SELECT parent_id  FROM public.profiles WHERE parent_id  IS NOT NULL
+      GROUP BY parent_id  HAVING count(*) > 1
+  ) d;
+
+  IF dup_count > 0 THEN
+    RAISE EXCEPTION
+      'Cannot enforce 1:1 link uniqueness: % duplicate claim(s) exist. '
+      'Run  SELECT * FROM public.profile_link_health WHERE category LIKE ''duplicate%%'';  '
+      'resolve them (unlink the wrong account), then re-run this migration.',
+      dup_count;
+  END IF;
+END $$;
+
+-- Replace the plain partial indexes (migration 001 / erp-redesign) with UNIQUE
+-- partial indexes. Same WHERE clause, so they still serve the lookup queries.
+DROP INDEX IF EXISTS idx_profiles_teacher_id;
+DROP INDEX IF EXISTS idx_profiles_student_id;
+DROP INDEX IF EXISTS idx_profiles_parent_id;
+
+CREATE UNIQUE INDEX idx_profiles_teacher_id
+  ON public.profiles(teacher_id) WHERE teacher_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_profiles_student_id
+  ON public.profiles(student_id) WHERE student_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_profiles_parent_id
+  ON public.profiles(parent_id) WHERE parent_id IS NOT NULL;
+
+-- ============================================================
+-- 0.4 — Enforce role ↔ link consistency
+-- ============================================================
+-- Invariants (the linking service in Phase 1 sets role + link in ONE update,
+-- so it always satisfies these):
+--   role='teacher' ⇒ teacher_id IS NOT NULL
+--   role='parent'  ⇒ parent_id  IS NOT NULL
+--   role='student' ⇒ student_id MAY be NULL (self-claim model)
+--   a non-null link must match the role (admins may also hold a teacher_id)
+--   admin/staff carry no student_id/parent_id
+--
+-- NOT exempt for service-role: a buggy server path that sets role='parent'
+-- without a parent_id SHOULD fail loudly — that is the whole point.
+CREATE OR REPLACE FUNCTION public.enforce_profile_role_link()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- On UPDATE, skip when neither role nor any link column changed, so routine
+  -- edits (phone, avatar) to a pre-existing anomalous row are never blocked —
+  -- only attempts to commit/keep an inconsistent role+link combination are.
+  IF TG_OP = 'UPDATE'
+     AND NEW.role       IS NOT DISTINCT FROM OLD.role
+     AND NEW.teacher_id IS NOT DISTINCT FROM OLD.teacher_id
+     AND NEW.student_id IS NOT DISTINCT FROM OLD.student_id
+     AND NEW.parent_id  IS NOT DISTINCT FROM OLD.parent_id THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.role = 'teacher' AND NEW.teacher_id IS NULL THEN
+    RAISE EXCEPTION 'profile %: role=teacher requires teacher_id (use the linking service)', NEW.id;
+  END IF;
+  IF NEW.role = 'parent' AND NEW.parent_id IS NULL THEN
+    RAISE EXCEPTION 'profile %: role=parent requires parent_id (use the linking service)', NEW.id;
+  END IF;
+
+  IF NEW.student_id IS NOT NULL AND NEW.role <> 'student' THEN
+    RAISE EXCEPTION 'profile %: student_id set but role=% (must be student)', NEW.id, NEW.role;
+  END IF;
+  IF NEW.parent_id IS NOT NULL AND NEW.role <> 'parent' THEN
+    RAISE EXCEPTION 'profile %: parent_id set but role=% (must be parent)', NEW.id, NEW.role;
+  END IF;
+  IF NEW.teacher_id IS NOT NULL AND NEW.role NOT IN ('teacher', 'admin') THEN
+    RAISE EXCEPTION 'profile %: teacher_id set but role=% (must be teacher or admin)', NEW.id, NEW.role;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_profile_role_link ON public.profiles;
+CREATE TRIGGER enforce_profile_role_link
+  BEFORE INSERT OR UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_role_link();
+
+-- ============================================================
+-- 0.5 — Single source of truth for the parent↔ward relationship
+-- ============================================================
+-- student_parents.relationship is the authoritative per-link relationship
+-- (a person can be 'father' to one child and 'guardian' to another).
+-- parents.relationship is now deprecated: kept for backward compatibility but
+-- no longer written by the linking service and not read by the app.
+COMMENT ON COLUMN public.parents.relationship IS
+  'DEPRECATED (migration 068). The authoritative relationship lives per-link in '
+  'student_parents.relationship. This column is retained only for backward '
+  'compatibility and must not be read by application code.';
+
+
+-- ============================================================
+-- migration-069-timetable-classsubject-drift.sql
+-- ============================================================
+-- Migration 069: Surface teacher-assignment drift between timetable & class_subjects
+--
+-- Decision (Phase 3): `class_subjects` is the CANONICAL authority for "which
+-- teacher teaches which subject in which class" — it's what teacher-scope.ts
+-- and the RLS get_my_class_ids() helper read. `timetable_periods` is the
+-- schedule and can drift (a period assigned to a different teacher than the
+-- subject's class_subjects.teacher_id), which would let the timetable show one
+-- teacher while scope/authorization uses another.
+--
+-- This view makes that drift observable so it can be reconciled. It does NOT
+-- auto-rewrite timetable rows — period-level cover/substitution is sometimes
+-- legitimate; the admin decides. Read-only, safe to apply on a live DB.
+
+CREATE OR REPLACE VIEW public.timetable_assignment_drift AS
+  SELECT tp.id              AS timetable_period_id,
+         tp.class_id,
+         c.name             AS class_name,
+         c.section          AS class_section,
+         tp.subject_id,
+         s.name             AS subject_name,
+         tp.day_of_week,
+         tp.period_number,
+         tp.teacher_id      AS timetable_teacher_id,
+         tt.full_name       AS timetable_teacher_name,
+         cs.teacher_id      AS canonical_teacher_id,
+         ct.full_name       AS canonical_teacher_name
+  FROM public.timetable_periods tp
+  JOIN public.class_subjects cs
+    ON cs.class_id = tp.class_id AND cs.subject_id = tp.subject_id
+  LEFT JOIN public.classes  c  ON c.id  = tp.class_id
+  LEFT JOIN public.subjects s  ON s.id  = tp.subject_id
+  LEFT JOIN public.teachers tt ON tt.id = tp.teacher_id
+  LEFT JOIN public.teachers ct ON ct.id = cs.teacher_id
+  WHERE tp.is_break IS NOT TRUE
+    AND tp.teacher_id IS DISTINCT FROM cs.teacher_id;
+
+COMMENT ON VIEW public.timetable_assignment_drift IS
+  'Timetable periods whose teacher differs from the canonical class_subjects '
+  'assignment for the same (class, subject). class_subjects is authoritative '
+  '(migration 069); rows here are drift to reconcile (or legitimate cover).';
+
+
+-- ============================================================
+-- migration-071-timetable-teacher-time-overlap.sql
+-- ============================================================
+-- =============================================================
+-- Migration 071: timetable teacher clash = TIME OVERLAP, not period number
+-- =============================================================
+-- Classes run on STAGGERED schedules — "period 3" in one class is a different
+-- wall-clock time than "period 3" in another. The old uniqueness index
+-- (teacher_id, day_of_week, period_number) modelled clashes by period number,
+-- which BOTH rejected valid non-overlapping staggered periods that happen to
+-- share a number AND allowed genuine double-bookings across different numbers.
+--
+-- This replaces it with a true time-overlap exclusion constraint.
+--
+-- ⚠️  PRE-CHECK BEFORE APPLYING: this constraint will FAIL to create if the
+--     live data already contains overlapping periods for a teacher (the old
+--     index permitted them). Run this first and resolve any rows it returns:
+--
+--       SELECT a.teacher_id, a.day_of_week,
+--              a.id AS period_a, a.start_time AS a_start, a.end_time AS a_end,
+--              b.id AS period_b, b.start_time AS b_start, b.end_time AS b_end
+--       FROM timetable_periods a
+--       JOIN timetable_periods b
+--         ON a.teacher_id = b.teacher_id
+--        AND a.day_of_week = b.day_of_week
+--        AND a.id < b.id
+--        AND a.teacher_id IS NOT NULL
+--        AND a.is_break IS NOT TRUE AND b.is_break IS NOT TRUE
+--        AND a.start_time < b.end_time
+--        AND a.end_time > b.start_time;
+--
+-- SAFE TO RE-RUN.
+-- =============================================================
+
+BEGIN;
+
+-- btree_gist lets a GiST exclusion constraint mix equality (teacher_id,
+-- day_of_week) with the range-overlap operator.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+-- Drop the period_number-based teacher uniqueness — wrong model.
+DROP INDEX IF EXISTS idx_timetable_teacher_slot_unique;
+
+-- A teacher cannot occupy two periods whose wall-clock ranges overlap on the
+-- same weekday. Postgres has no built-in range type for `time`, so times are
+-- anchored to a fixed date and compared as tsrange. Breaks / free (teacher_id
+-- NULL) rows are exempt.
+-- NOTE: the predicate also requires start_time < end_time. tsrange() errors on
+-- a lower bound greater than the upper bound, so any degenerate row
+-- (end_time <= start_time, i.e. bad legacy data) must be excluded from the
+-- index — otherwise CREATE CONSTRAINT fails with "range lower bound must be
+-- less than or equal to range upper bound". Such rows are invalid and can't
+-- meaningfully overlap anything; the app validates end > start on writes.
+-- Find any offenders with:
+--   SELECT id, class_id, day_of_week, period_number, start_time, end_time
+--   FROM timetable_periods WHERE end_time <= start_time;
+ALTER TABLE timetable_periods
+  DROP CONSTRAINT IF EXISTS timetable_teacher_no_overlap;
+ALTER TABLE timetable_periods
+  ADD CONSTRAINT timetable_teacher_no_overlap
+  EXCLUDE USING gist (
+    teacher_id WITH =,
+    day_of_week WITH =,
+    tsrange('2000-01-01'::date + start_time, '2000-01-01'::date + end_time) WITH &&
+  ) WHERE (teacher_id IS NOT NULL AND is_break IS NOT TRUE AND start_time < end_time);
+
+COMMIT;
+
+
+-- ============================================================
 -- migration-081-backfill-teacher-records.sql
 -- ============================================================
 -- Migration 081 — backfill teachers records for existing teaching staff.
@@ -1822,6 +1436,119 @@ WHERE s.is_active = true
   )
   AND NOT EXISTS (
     SELECT 1 FROM teachers t WHERE t.staff_member_id = s.id
+  );
+
+
+-- ============================================================
+-- migration-083-teachers-staff-member-unique.sql
+-- ============================================================
+-- Migration 083: Enforce one teacher row per staff member
+--
+-- Why: promoteStaffToTeacher() (apps/erp/src/lib/staff-teacher-sync.ts) guards
+-- against duplicates with a non-atomic select-then-insert, and teachers has no
+-- uniqueness on staff_member_id. Two concurrent provisioning actions for the
+-- same staff member (auto-create-on-add + "Convert to teacher" click) can both
+-- see no existing row and both insert, yielding two teachers rows for one staff
+-- member — the person then appears twice in every teacher picker.
+--
+-- Fix: a partial UNIQUE index on teachers(staff_member_id) WHERE staff_member_id
+-- IS NOT NULL. Combined with the 23505-retry now handled in promoteStaffToTeacher,
+-- provisioning becomes idempotent under concurrency.
+--
+-- Safety: this migration will NOT create the index (and will NOT fail) if
+-- duplicate rows already exist — it raises a NOTICE listing the offending
+-- staff_member_ids instead. Deduplicating existing teachers rows is intentionally
+-- left manual because those rows may be referenced by timetable_periods,
+-- classes.class_teacher_id, teacher_subjects, etc., and consolidating them
+-- requires repointing those FKs deliberately. Once any duplicates are resolved,
+-- re-run this migration to create the index.
+
+DO $$
+DECLARE
+  dup_ids text;
+BEGIN
+  SELECT string_agg(staff_member_id::text, ', ')
+    INTO dup_ids
+  FROM (
+    SELECT staff_member_id
+    FROM teachers
+    WHERE staff_member_id IS NOT NULL
+    GROUP BY staff_member_id
+    HAVING count(*) > 1
+  ) d;
+
+  IF dup_ids IS NOT NULL THEN
+    RAISE NOTICE 'Skipping unique index: duplicate teachers rows exist for staff_member_id(s): %. Resolve these first, then re-run migration 083.', dup_ids;
+  ELSE
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_staff_member_id_unique
+      ON teachers(staff_member_id)
+      WHERE staff_member_id IS NOT NULL;
+    RAISE NOTICE 'Created partial unique index idx_teachers_staff_member_id_unique.';
+  END IF;
+END $$;
+
+
+-- ============================================================
+-- migration-060-content-rls-hardening.sql
+-- ============================================================
+-- Migration 060: Harden content-table RLS (articles + gallery_images)
+--
+-- Why: both tables had policies that any *authenticated* user could exploit.
+--   - articles INSERT/UPDATE/DELETE were `TO authenticated WITH CHECK (true)`,
+--     so any ERP parent/student/teacher JWT could deface or delete articles
+--     directly via the anon client, bypassing CMS permission checks.
+--   - gallery_images SELECT was `USING (true)`, exposing images that belong to
+--     PRIVATE (is_public = false) gallery events to anyone with the public anon key.
+--
+-- Safe to apply: all CMS writes go through the service-role client
+-- (verifyAdminOrEditor), which bypasses RLS — so tightening these policies does
+-- not affect the admin/editor experience. The public website reads articles via
+-- the service-role client and reads gallery_images via the anon client (standalone
+-- images + public-event images only), both of which remain functional below.
+
+-- ============================================================
+-- articles: writes are admin/staff only
+-- ============================================================
+DROP POLICY IF EXISTS "Authenticated can insert articles" ON articles;
+DROP POLICY IF EXISTS "Authenticated can update articles" ON articles;
+DROP POLICY IF EXISTS "Authenticated can delete articles" ON articles;
+
+CREATE POLICY "Staff can insert articles"
+  ON articles FOR INSERT TO authenticated
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  );
+
+CREATE POLICY "Staff can update articles"
+  ON articles FOR UPDATE TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  )
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  );
+
+CREATE POLICY "Staff can delete articles"
+  ON articles FOR DELETE TO authenticated
+  USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('admin', 'staff'))
+  );
+
+-- ============================================================
+-- gallery_images: public SELECT limited to non-private images
+-- ============================================================
+DROP POLICY IF EXISTS "Public can view gallery images" ON gallery_images;
+
+CREATE POLICY "Public can view public gallery images"
+  ON gallery_images FOR SELECT
+  USING (
+    -- Standalone images (not tied to any event) are general public gallery items.
+    gallery_event_id IS NULL
+    -- Event images are visible only when their event is public.
+    OR EXISTS (
+      SELECT 1 FROM gallery_events e
+      WHERE e.id = gallery_images.gallery_event_id AND e.is_public = true
+    )
   );
 
 
@@ -2018,53 +1745,4 @@ CREATE POLICY "Staff can update disclosure_board_results"
 CREATE POLICY "Staff can delete disclosure_board_results"
   ON disclosure_board_results FOR DELETE TO authenticated
   USING (public.get_user_role() IN ('admin', 'staff'));
-
-
--- ============================================================
--- migration-083-teachers-staff-member-unique.sql
--- ============================================================
--- Migration 083: Enforce one teacher row per staff member
---
--- Why: promoteStaffToTeacher() (apps/erp/src/lib/staff-teacher-sync.ts) guards
--- against duplicates with a non-atomic select-then-insert, and teachers has no
--- uniqueness on staff_member_id. Two concurrent provisioning actions for the
--- same staff member (auto-create-on-add + "Convert to teacher" click) can both
--- see no existing row and both insert, yielding two teachers rows for one staff
--- member — the person then appears twice in every teacher picker.
---
--- Fix: a partial UNIQUE index on teachers(staff_member_id) WHERE staff_member_id
--- IS NOT NULL. Combined with the 23505-retry now handled in promoteStaffToTeacher,
--- provisioning becomes idempotent under concurrency.
---
--- Safety: this migration will NOT create the index (and will NOT fail) if
--- duplicate rows already exist — it raises a NOTICE listing the offending
--- staff_member_ids instead. Deduplicating existing teachers rows is intentionally
--- left manual because those rows may be referenced by timetable_periods,
--- classes.class_teacher_id, teacher_subjects, etc., and consolidating them
--- requires repointing those FKs deliberately. Once any duplicates are resolved,
--- re-run this migration to create the index.
-
-DO $$
-DECLARE
-  dup_ids text;
-BEGIN
-  SELECT string_agg(staff_member_id::text, ', ')
-    INTO dup_ids
-  FROM (
-    SELECT staff_member_id
-    FROM teachers
-    WHERE staff_member_id IS NOT NULL
-    GROUP BY staff_member_id
-    HAVING count(*) > 1
-  ) d;
-
-  IF dup_ids IS NOT NULL THEN
-    RAISE NOTICE 'Skipping unique index: duplicate teachers rows exist for staff_member_id(s): %. Resolve these first, then re-run migration 083.', dup_ids;
-  ELSE
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_teachers_staff_member_id_unique
-      ON teachers(staff_member_id)
-      WHERE staff_member_id IS NOT NULL;
-    RAISE NOTICE 'Created partial unique index idx_teachers_staff_member_id_unique.';
-  END IF;
-END $$;
 
