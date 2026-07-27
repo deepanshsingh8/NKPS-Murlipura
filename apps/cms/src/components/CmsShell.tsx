@@ -2,28 +2,10 @@
 
 import { usePathname } from "next/navigation";
 import { CmsSidebar } from "@/components/CmsSidebar";
-import { SidebarProvider, useSidebar } from "@nkps/shared/components/providers/SidebarProvider";
-import { cn } from "@nkps/shared/lib/utils";
+import { SidebarProvider } from "@nkps/shared/components/providers/SidebarProvider";
+import { AppShell } from "@nkps/shared/components/AppShell";
 
-const NO_SHELL_PATHS = ["/login"];
-
-function CmsShellInner({ children }: { children: React.ReactNode }) {
-  const { collapsed } = useSidebar();
-
-  return (
-    <div className="flex min-h-screen bg-gray-50">
-      <CmsSidebar />
-      <main
-        className={cn(
-          "flex-1 p-8 transition-all duration-300",
-          collapsed ? "ml-[72px]" : "ml-64"
-        )}
-      >
-        {children}
-      </main>
-    </div>
-  );
-}
+const NO_SHELL_PATHS = ["/login", "/offline"];
 
 export function CmsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -35,7 +17,9 @@ export function CmsShell({ children }: { children: React.ReactNode }) {
 
   return (
     <SidebarProvider>
-      <CmsShellInner>{children}</CmsShellInner>
+      <AppShell sidebar={<CmsSidebar />} title="NKPS CMS">
+        {children}
+      </AppShell>
     </SidebarProvider>
   );
 }

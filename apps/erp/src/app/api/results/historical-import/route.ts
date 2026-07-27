@@ -406,12 +406,28 @@ export async function POST(req: NextRequest) {
 
   // 3. Flatten marks into results payload.
   const resultsPayload: Array<Record<string, unknown>> = [];
+  // Out-of-range marks (obtained > max, or negative) violate the
+  // results_marks_in_range CHECK. Skip them per-cell and report them, rather
+  // than letting one bad cell abort an entire 500-row upsert chunk.
+  const invalidMarks: string[] = [];
   for (const r of resolvedRows) {
     const classId = classIdBySpec.get(r.class_spec_key);
     if (!classId) continue; // defensive — should always resolve after step 0c
     for (const m of r.src.marks) {
       const subjectId = subjectsByKey.get(normSubject(m.subject));
       if (!subjectId) continue; // defensive
+      if (
+        !Number.isFinite(m.obtained) ||
+        !Number.isFinite(m.max_marks) ||
+        m.max_marks <= 0 ||
+        m.obtained < 0 ||
+        m.obtained > m.max_marks
+      ) {
+        invalidMarks.push(
+          `${r.src.admission_no || r.src.student_name || r.src.raw_class} — ${m.subject} (${m.exam}): ${m.obtained}/${m.max_marks}`
+        );
+        continue;
+      }
       const exam = m.exam === "Half Yearly" ? halfExam : annualExam;
       resultsPayload.push({
         student_id: r.student_id,
@@ -431,8 +447,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 4. Bulk upsert in chunks.
+  // 4. Bulk insert in chunks. `ignoreDuplicates` means an existing
+  // (student, subject, exam) row is left untouched — this keeps re-uploads
+  // idempotent and, critically, prevents a re-import from overwriting the
+  // original row's import_batch_id (which would orphan the first batch from
+  // revert) or silently clobbering finalized/published marks.
   let committed = 0;
+  let skippedExisting = 0;
   const insertErrors: string[] = [];
   for (let i = 0; i < resultsPayload.length; i += 500) {
     const chunk = resultsPayload.slice(i, i + 500);
@@ -440,13 +461,16 @@ export async function POST(req: NextRequest) {
       .from("results")
       .upsert(chunk, {
         onConflict: "student_id,subject_id,exam_type_id",
+        ignoreDuplicates: true,
       })
       .select("id");
     if (chunkErr) {
       insertErrors.push(chunkErr.message);
       continue;
     }
-    committed += (inserted ?? []).length;
+    const insertedCount = (inserted ?? []).length;
+    committed += insertedCount;
+    skippedExisting += chunk.length - insertedCount;
   }
   if (insertErrors.length > 0 && committed === 0) {
     return NextResponse.json(
@@ -462,6 +486,9 @@ export async function POST(req: NextRequest) {
       error_rows: errorRows.length,
       results_to_create: resultsPayload.length,
       committed,
+      skipped_existing: skippedExisting,
+      invalid_marks_skipped: invalidMarks.length,
+      invalid_marks_sample: invalidMarks.slice(0, 20),
       dry_run: false,
       batch_id: batchId,
       unmapped_classes: [],

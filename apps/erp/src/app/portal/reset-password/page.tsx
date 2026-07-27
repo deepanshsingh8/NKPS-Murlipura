@@ -62,13 +62,20 @@ export default function ResetPasswordPage() {
       if (error) {
         toast.error(error.message);
       } else {
-        // Clear must_change_password flag if it was set, so middleware
-        // doesn't bounce the user back to /portal/change-password.
+        // Clear must_change_password flag if it was set, so middleware doesn't
+        // bounce the user back to /portal/change-password. This column is locked
+        // against direct writes from the browser client (migration 061), so it
+        // must go through an API route backed by the service-role client.
         if (updateData.user) {
-          await supabase
-            .from("profiles")
-            .update({ must_change_password: false })
-            .eq("id", updateData.user.id);
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          if (session?.access_token) {
+            await fetch("/api/portal/complete-password-change", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${session.access_token}` },
+            });
+          }
         }
         await supabase.auth.signOut();
         setSuccess(true);

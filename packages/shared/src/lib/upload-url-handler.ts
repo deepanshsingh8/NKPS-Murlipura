@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
+import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
+import type { FeatureKey } from "@nkps/shared/lib/permissions";
+import { rateLimit } from "@nkps/shared/lib/rate-limit";
 
 // Generic signed-upload-URL handler. Each app (apps/cms, apps/erp) mounts its
 // own /api/upload-url route as a thin wrapper that calls
 // createUploadUrlHandler with its own bucket allowlist. Keeping the handler
 // here ensures both apps stay in lockstep on auth, validation, and signing.
 
+// Max signed-URL mints per actor per hour. Bounds quota/egress abuse from a
+// compromised or curious editor account.
+const MAX_MINTS_PER_HOUR = 120;
+
 export interface BucketRule {
   exts: string[];
   description: string;
+  // Editor capability required to upload to this bucket. Admins always pass.
+  // Required so an editor with an unrelated grant can't mint URLs for a bucket
+  // they have no business writing to.
+  featureKey: FeatureKey;
 }
 
 export interface UploadUrlConfig {
@@ -26,36 +36,59 @@ export function createUploadUrlHandler(config: UploadUrlConfig) {
   const { bucketRules } = config;
 
   return async function POST(request: NextRequest) {
-    const admin = await verifyAdminOrEditor();
-    if (!admin) {
+    let body: { bucket?: unknown; fileName?: unknown };
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+
+    const { bucket, fileName } = body;
+
+    if (!bucket || !fileName) {
+      return NextResponse.json(
+        { error: "Missing bucket or fileName" },
+        { status: 400 }
+      );
+    }
+
+    if (typeof bucket !== "string" || typeof fileName !== "string") {
+      return NextResponse.json(
+        { error: "bucket and fileName must be strings" },
+        { status: 400 }
+      );
+    }
+
+    const rule = bucketRules[bucket];
+    if (!rule) {
+      return NextResponse.json(
+        { error: `Uploads to '${bucket}' are not allowed` },
+        { status: 403 }
+      );
+    }
+
+    // Authorize against the capability THIS bucket requires (not just "any
+    // editor"). Admins bypass; editors need the matching grant.
+    const auth = await verifyAdminOrEditorWithUser(rule.featureKey);
+    if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const { admin, user } = auth;
+
+    const limit = rateLimit({
+      name: "upload-url",
+      key: user.id,
+      max: MAX_MINTS_PER_HOUR,
+      windowSeconds: 3600,
+    });
+    if (!limit.ok) {
+      return NextResponse.json(
+        { error: "Too many upload requests. Try again later." },
+        { status: 429 }
+      );
     }
 
     try {
-      const { bucket, fileName } = await request.json();
-
-      if (!bucket || !fileName) {
-        return NextResponse.json(
-          { error: "Missing bucket or fileName" },
-          { status: 400 }
-        );
-      }
-
-      if (typeof bucket !== "string" || typeof fileName !== "string") {
-        return NextResponse.json(
-          { error: "bucket and fileName must be strings" },
-          { status: 400 }
-        );
-      }
-
-      const rule = bucketRules[bucket];
-      if (!rule) {
-        return NextResponse.json(
-          { error: `Uploads to '${bucket}' are not allowed` },
-          { status: 403 }
-        );
-      }
-
       // Reject path traversal and absolute paths up front. Storage paths must
       // be a flat filename or a forward-slash path with no `..` segments.
       if (

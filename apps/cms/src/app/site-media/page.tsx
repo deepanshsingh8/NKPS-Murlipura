@@ -13,6 +13,7 @@ import {
   Pencil,
   ImageIcon,
   Lock,
+  icons as lucideIcons,
 } from "lucide-react";
 import { adminFetch, adminDelete, adminPatch } from "@nkps/shared/lib/admin-api";
 import { uploadToStorage } from "@nkps/shared/lib/supabase/upload";
@@ -499,6 +500,9 @@ function SectionCardItem({
   onToggle: () => void;
   onResetText: () => void;
 }) {
+  // Icon-only cards (why_choose_us, facilities_preview, activities, campus_facilities)
+  // carry a Lucide icon name instead of an image_url — render it in the thumbnail.
+  const CardIcon = card.icon ? lucideIcons[card.icon as keyof typeof lucideIcons] : undefined;
   return (
     <div
       className={cn(
@@ -517,6 +521,8 @@ function SectionCardItem({
         <div className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-muted shrink-0 flex items-center justify-center">
           {card.section === "testimonials" && card.initials ? (
             <span className="text-sm font-semibold text-navy-900 dark:text-white">{card.initials}</span>
+          ) : CardIcon ? (
+            <CardIcon className="h-5 w-5 text-navy-900 dark:text-white" />
           ) : (
             <ImageIcon className="h-4 w-4 text-gray-300" />
           )}
@@ -903,9 +909,8 @@ export default function AdminSiteMediaPage() {
   const visibleFields = dialogSection
     ? [...SECTION_FIELD_MAP[dialogSection].required, ...SECTION_FIELD_MAP[dialogSection].optional]
     : [];
-  // Sections where image is optional. `accolades` ships imageless defaults and
-  // renders an icon fallback on the homepage, so an image must not be forced.
-  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements", "accolades"];
+  // Sections where image is optional
+  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements"];
   const isImageRequired = !editing && !imageOptionalSections.includes(dialogSection);
 
   return (

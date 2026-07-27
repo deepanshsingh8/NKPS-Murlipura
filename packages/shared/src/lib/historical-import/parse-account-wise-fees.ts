@@ -80,12 +80,16 @@ function parseMonthCell(cell: string, month: MonthCol): ParsedFeePayment[] {
   // the previous match by anchoring on the colon/semi at the END of each rec.
   //
   // Use a global regex that captures one record at a time.
-  const re = /(\d+(?:\.\d+)?)\s*\|\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\|\s*(\d+)\s*[:;]/g;
+  // The amount may be written with thousands separators ("1,200"). Allow
+  // commas in the capture and strip them before parsing — otherwise the regex
+  // stops at the first comma, the whole record fails to match, and that
+  // payment is silently dropped (understating the imported balance).
+  const re = /([\d,]+(?:\.\d+)?)\s*\|\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\|\s*(\d+)\s*[:;]/g;
   const out: ParsedFeePayment[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const [, amountStr, dateStr, receipt] = m;
-    const amount = Number(amountStr);
+    const amount = Number(amountStr.replace(/,/g, ""));
     // Skip zero/invalid amounts. The old software sometimes records "0 | date |
     // receipt#" as a bookkeeping marker (e.g. waivers, fee-write-offs) but the
     // ERP's amount_positive constraint forbids non-waiver zero rows, so we

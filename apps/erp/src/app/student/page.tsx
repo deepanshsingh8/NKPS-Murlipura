@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@nkps/shared/lib/utils";
 import { UpcomingEvents } from "@nkps/shared/components/UpcomingEvents";
+import { StudentLinkPrompt } from "@/components/StudentLinkPrompt";
 import type { Profile } from "@nkps/shared/types";
 
 interface StudentStats {
@@ -151,6 +152,11 @@ export default function StudentDashboard() {
           Here is a summary of your academic progress.
         </p>
       </div>
+
+      {/* Account not yet linked to a student record — prompt to self-connect. */}
+      {profile && !profile.student_id && (
+        <StudentLinkPrompt onLinked={() => window.location.reload()} />
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">

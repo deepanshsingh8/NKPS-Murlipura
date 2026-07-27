@@ -54,10 +54,10 @@ interface AdmissionTrend {
 }
 
 interface TransportAudit {
-  total: number;
-  unverified: number;
-  overridden: number;
-  mismatch: number;
+  usingTransport: number;
+  oneSide: number;
+  unassignedBus: number;
+  pendingChangeRequests: number;
 }
 
 // Every block is optional — the server omits blocks the caller can't see.
@@ -616,8 +616,9 @@ export function DashboardAnalytics() {
         </div>
       )}
 
-      {/* Transport audit — surfaces unverified + overridden + mismatch
-          counts so admin can spot cheating without digging through rows. */}
+      {/* Transport overview — stop-based model (migration 074): adoption,
+          one-side riders, opted-in students still missing a bus, and change
+          requests awaiting office review. */}
       {data.transportAudit && (
         <div className="erp-stat-card md:col-span-2">
           <div className="flex items-center gap-3 mb-4">
@@ -626,116 +627,104 @@ export function DashboardAnalytics() {
             </div>
             <div>
               <h3 className="text-sm font-semibold text-navy-900 dark:text-white">
-                Transport Audit
+                Transport
               </h3>
               <p className="text-[11px] text-gray-400">
-                Pickup verifications + slab overrides for the current year
+                Stop assignments + change requests for the current year
               </p>
             </div>
-            {(data.transportAudit.mismatch > 0 ||
-              data.transportAudit.overridden > 0) && (
+            {(data.transportAudit.unassignedBus > 0 ||
+              data.transportAudit.pendingChangeRequests > 0) && (
               <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded">
                 <ShieldAlert className="h-3 w-3" />
                 Review
               </span>
             )}
           </div>
-          {data.transportAudit.total === 0 ? (
+          {data.transportAudit.usingTransport === 0 ? (
             <p className="text-xs text-gray-400 text-center py-4">
               No students opted in to transport yet
             </p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Link
-                href="/fees/transport"
+                href="/transport/assignments"
                 className="rounded-lg border border-gray-200 dark:border-border p-3 hover:bg-gray-50 dark:hover:bg-muted/40 transition-colors"
               >
                 <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
-                  Total
+                  Using transport
                 </p>
                 <p className="text-2xl font-bold tabular-nums text-navy-900 dark:text-white">
-                  {data.transportAudit.total}
+                  {data.transportAudit.usingTransport}
                 </p>
                 <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                  using transport
+                  opted in this year
                 </p>
               </Link>
               <Link
-                href="/people/students?has_transport=1&verified=0"
+                href="/transport/assignments"
+                className="rounded-lg border border-gray-200 dark:border-border p-3 hover:bg-gray-50 dark:hover:bg-muted/40 transition-colors"
+              >
+                <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
+                  One-side
+                </p>
+                <p className="text-2xl font-bold tabular-nums text-navy-900 dark:text-white">
+                  {data.transportAudit.oneSide}
+                </p>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                  pickup or drop only
+                </p>
+              </Link>
+              <Link
+                href="/transport/assignments"
                 className={cn(
                   "rounded-lg border p-3 transition-colors",
-                  data.transportAudit.unverified > 0
+                  data.transportAudit.unassignedBus > 0
                     ? "border-amber-200 bg-amber-50/50 hover:bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20"
                     : "border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-muted/40"
                 )}
               >
                 <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
-                  Unverified
+                  No bus assigned
                 </p>
                 <p
                   className={cn(
                     "text-2xl font-bold tabular-nums",
-                    data.transportAudit.unverified > 0
+                    data.transportAudit.unassignedBus > 0
                       ? "text-amber-700 dark:text-amber-400"
                       : "text-navy-900 dark:text-white"
                   )}
                 >
-                  {data.transportAudit.unverified}
+                  {data.transportAudit.unassignedBus}
                 </p>
                 <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                  awaiting pickup confirm
+                  opted in, awaiting bus
                 </p>
               </Link>
               <Link
-                href="/people/students?slab_overridden=1"
+                href="/transport/changes"
                 className={cn(
                   "rounded-lg border p-3 transition-colors",
-                  data.transportAudit.overridden > 0
+                  data.transportAudit.pendingChangeRequests > 0
                     ? "border-violet-200 bg-violet-50/50 hover:bg-violet-50 dark:border-violet-900/40 dark:bg-violet-900/20"
                     : "border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-muted/40"
                 )}
               >
                 <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
-                  Slab overridden
+                  Pending change requests
                 </p>
                 <p
                   className={cn(
                     "text-2xl font-bold tabular-nums",
-                    data.transportAudit.overridden > 0
+                    data.transportAudit.pendingChangeRequests > 0
                       ? "text-violet-700 dark:text-violet-400"
                       : "text-navy-900 dark:text-white"
                   )}
                 >
-                  {data.transportAudit.overridden}
+                  {data.transportAudit.pendingChangeRequests}
                 </p>
                 <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                  manual reassignment
-                </p>
-              </Link>
-              <Link
-                href="/people/students?pickup_mismatch=1"
-                className={cn(
-                  "rounded-lg border p-3 transition-colors",
-                  data.transportAudit.mismatch > 0
-                    ? "border-rose-200 bg-rose-50/50 hover:bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20"
-                    : "border-gray-200 dark:border-border hover:bg-gray-50 dark:hover:bg-muted/40"
-                )}
-              >
-                <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
-                  Pickup mismatch
-                </p>
-                <p
-                  className={cn(
-                    "text-2xl font-bold tabular-nums",
-                    data.transportAudit.mismatch > 0
-                      ? "text-rose-700 dark:text-rose-400"
-                      : "text-navy-900 dark:text-white"
-                  )}
-                >
-                  {data.transportAudit.mismatch}
-                </p>
-                <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                  &gt; 1 km drift from address
+                  awaiting office review
                 </p>
               </Link>
             </div>

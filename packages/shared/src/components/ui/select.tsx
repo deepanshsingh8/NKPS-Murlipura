@@ -6,13 +6,59 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@nkps/shared/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
+// Flatten a node's rendered text so we can use it as a trigger label.
+function flattenNode(node: React.ReactNode): string {
+  if (node == null || node === false || node === true) return ""
+  if (typeof node === "string" || typeof node === "number") return String(node)
+  if (Array.isArray(node)) return node.map(flattenNode).join("")
+  if (React.isValidElement(node)) {
+    return flattenNode((node.props as { children?: React.ReactNode }).children)
+  }
+  return ""
+}
+
+// Walk the JSX tree and collect { value, label } for every <SelectItem>.
+// base-ui's <SelectValue/> resolves the trigger label from the Root's `items`
+// prop; without it the trigger falls back to the raw value (a UUID or enum).
+// Deriving `items` here means callers never have to remember to pass it.
+function collectSelectItems(
+  node: React.ReactNode,
+  acc: Array<{ value: unknown; label: string }>
+) {
+  React.Children.forEach(node, (child) => {
+    if (!React.isValidElement(child)) return
+    if (child.type === SelectItem) {
+      const props = child.props as { value: unknown; label?: string; children?: React.ReactNode }
+      const label = props.label != null ? String(props.label) : flattenNode(props.children).trim()
+      acc.push({ value: props.value, label })
+      return
+    }
+    const childChildren = (child.props as { children?: React.ReactNode }).children
+    if (childChildren != null) collectSelectItems(childChildren, acc)
+  })
+}
+
 function Select<Value = string, Multiple extends boolean | undefined = false>({
   items,
+  children,
   ...props
 }: SelectPrimitive.Root.Props<Value, Multiple> & {
   items?: Array<{ value: Value; label: string }> | Record<string, string>
 }) {
-  return <SelectPrimitive.Root items={items} {...props} />
+  // Explicit `items` always wins; otherwise derive from <SelectItem> children.
+  let resolvedItems = items
+  if (resolvedItems === undefined) {
+    const acc: Array<{ value: unknown; label: string }> = []
+    collectSelectItems(children, acc)
+    if (acc.length > 0) {
+      resolvedItems = acc as Array<{ value: Value; label: string }>
+    }
+  }
+  return (
+    <SelectPrimitive.Root items={resolvedItems} {...props}>
+      {children}
+    </SelectPrimitive.Root>
+  )
 }
 
 

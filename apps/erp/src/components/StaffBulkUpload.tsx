@@ -65,6 +65,7 @@ interface ParsedRow {
   date_of_birth: string;
   address: string;
   qualifications: string;
+  license_number: string;
   errors: string[];
 }
 
@@ -159,6 +160,18 @@ const COLUMN_ALIASES: Record<string, string[]> = {
     "staff type",
     "group",
     "department type",
+  ],
+  license_number: [
+    "license number",
+    "licence number",
+    "license no",
+    "licence no",
+    "driving license",
+    "driving licence",
+    "dl number",
+    "dl no",
+    "license",
+    "licence",
   ],
 };
 
@@ -349,6 +362,7 @@ export function StaffBulkUpload({
               date_of_birth: "",
               address: "",
               qualifications: "",
+              license_number: "",
               errors: [],
             };
 
@@ -424,6 +438,7 @@ export function StaffBulkUpload({
             date_of_birth: r.date_of_birth || undefined,
             address: r.address || undefined,
             qualifications: r.qualifications || undefined,
+            license_number: r.license_number || undefined,
           })),
         }),
       });
@@ -474,6 +489,7 @@ export function StaffBulkUpload({
         "DOB (DD/MM/YYYY)",
         "Address",
         "Qualifications",
+        "License Number (Bus Drivers only)",
       ],
       [
         "Rahul Sharma",
@@ -484,6 +500,7 @@ export function StaffBulkUpload({
         "15/03/1985",
         "123, Main Street, Jaipur",
         "M.Sc., B.Ed.",
+        "",
       ],
       [
         "Priya Gupta",
@@ -494,6 +511,18 @@ export function StaffBulkUpload({
         "",
         "",
         "",
+        "",
+      ],
+      [
+        "Suresh Yadav",
+        "Bus Driver",
+        "Bus Driver",
+        "",
+        "9876543212",
+        "",
+        "",
+        "",
+        "RJ14 20190001234",
       ],
     ]);
 
@@ -506,6 +535,7 @@ export function StaffBulkUpload({
       { wch: 18 },
       { wch: 30 },
       { wch: 20 },
+      { wch: 28 },
     ];
 
     const wb = XLSX.utils.book_new();
@@ -643,6 +673,7 @@ export function StaffBulkUpload({
                       <TableHead>Phone</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Qualifications</TableHead>
+                      <TableHead>License No.</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-10"></TableHead>
                     </TableRow>
@@ -681,6 +712,9 @@ export function StaffBulkUpload({
                         </TableCell>
                         <TableCell className="text-gray-600">
                           {row.qualifications || "—"}
+                        </TableCell>
+                        <TableCell className="text-gray-600">
+                          {row.license_number || "—"}
                         </TableCell>
                         <TableCell>
                           {row.errors.length > 0 ? (

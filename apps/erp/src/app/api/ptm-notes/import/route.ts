@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
+import { getTeacherIdForUser, teacherCanAccessClass } from "@/lib/teacher-scope";
 import * as XLSX from "xlsx";
 
 interface ParsedRow {
@@ -116,6 +118,21 @@ export async function POST(request: NextRequest) {
   }
   if (!classId) {
     return NextResponse.json({ error: "class_id is required" }, { status: 400 });
+  }
+
+  // Teacher scope: a teacher may only import PTM notes for a class they teach
+  // or are class teacher of. Admins and ptm_notes-editors skip this (they
+  // passed the role/grant gate above). Without it, any teacher could pass an
+  // arbitrary class_id and write notes for a class they have no relation to.
+  if (profile.role === "teacher") {
+    const admin = createAdminClient();
+    const teacherId = await getTeacherIdForUser(admin, user.id);
+    if (!teacherId || !(await teacherCanAccessClass(admin, teacherId, classId))) {
+      return NextResponse.json(
+        { error: "You can only import PTM notes for your own classes" },
+        { status: 403 }
+      );
+    }
   }
 
   const { data: enrollments } = await supabase

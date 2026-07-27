@@ -20,7 +20,7 @@ import {
 import { Badge } from "@nkps/shared/components/ui/badge";
 import { Button } from "@nkps/shared/components/ui/button";
 import { toast } from "sonner";
-import { Download, BarChart3 } from "lucide-react";
+import { Download, BarChart3, AlertTriangle } from "lucide-react";
 
 interface SubjectResult {
   subject_id: string;
@@ -61,6 +61,7 @@ export default function StudentResultsPage() {
   const [rollNumber, setRollNumber] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  const [dues, setDues] = useState<{ total: number; hasOutstanding: boolean } | null>(null);
 
   useEffect(() => {
     async function fetchResults() {
@@ -84,6 +85,12 @@ export default function StudentResultsPage() {
         return;
       }
       setStudentId(sid);
+
+      // Fee-dues gate: outstanding dues lock the result download.
+      fetch(`/api/students/dues?student_id=${sid}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setDues(d))
+        .catch(() => {});
 
       // Fetch report card via API using the students table ID
       const res = await fetch(
@@ -126,7 +133,7 @@ export default function StudentResultsPage() {
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        toast.error(body.error ?? "Failed to download report card");
+        toast.error(body.message ?? body.error ?? "Failed to download report card");
         return;
       }
       const blob = await res.blob();
@@ -173,12 +180,36 @@ export default function StudentResultsPage() {
           variant="outline"
           className="border-navy-900 dark:border-white text-navy-900 dark:text-white hover:bg-navy-900/5 dark:hover:bg-white/5"
           onClick={handleDownload}
-          disabled={downloading || !selectedExam || exams.length === 0}
+          disabled={
+            downloading ||
+            !selectedExam ||
+            exams.length === 0 ||
+            Boolean(dues?.hasOutstanding)
+          }
         >
           <Download className="h-4 w-4 mr-2" />
-          {downloading ? "Preparing…" : "Download Report Card"}
+          {dues?.hasOutstanding
+            ? "Locked — dues pending"
+            : downloading
+              ? "Preparing…"
+              : "Download Report Card"}
         </Button>
       </div>
+
+      {dues?.hasOutstanding && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">
+              Result download locked
+            </p>
+            <p className="text-sm text-red-600 dark:text-red-400 mt-0.5">
+              Clear your outstanding fee dues of ₹{dues.total.toLocaleString("en-IN")} to
+              download your report card. Your results remain visible below.
+            </p>
+          </div>
+        </div>
+      )}
 
       {exams.length === 0 ? (
         <Card className="bg-white dark:bg-card rounded-2xl">

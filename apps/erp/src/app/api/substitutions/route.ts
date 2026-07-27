@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
+import { findSubstituteConflict } from "@/lib/substitution-availability";
 
 const upsertSchema = z.object({
   absence_id: z.string().uuid(),
@@ -107,6 +108,18 @@ export async function POST(request: NextRequest) {
       { error: "That period does not belong to the absent teacher." },
       { status: 400 }
     );
+  }
+
+  // Availability re-check: the UI suggests only free teachers, but the write
+  // path must not trust the client — refuse to assign a substitute who is
+  // absent or already booked (regular class or another sub) at that time.
+  const conflict = await findSubstituteConflict(admin, {
+    substituteTeacherId: parsed.data.substitute_teacher_id,
+    absenceId: parsed.data.absence_id,
+    timetablePeriodId: parsed.data.timetable_period_id,
+  });
+  if (conflict) {
+    return NextResponse.json({ error: conflict }, { status: 409 });
   }
 
   // upsert on UNIQUE(absence_id, timetable_period_id).

@@ -1,21 +1,8 @@
 "use client";
 
 import { StudentSidebar } from "@/components/portal/StudentSidebar";
-import { SidebarProvider, useSidebar } from "@nkps/shared/components/providers/SidebarProvider";
-import { cn } from "@nkps/shared/lib/utils";
-
-function StudentLayoutInner({ children }: { children: React.ReactNode }) {
-  const { collapsed } = useSidebar();
-
-  return (
-    <div className="flex min-h-screen bg-gray-50">
-      <StudentSidebar />
-      <main className={cn("flex-1 p-8 transition-all duration-300", collapsed ? "ml-[72px]" : "ml-64")}>
-        {children}
-      </main>
-    </div>
-  );
-}
+import { SidebarProvider } from "@nkps/shared/components/providers/SidebarProvider";
+import { AppShell } from "@nkps/shared/components/AppShell";
 
 export default function StudentLayout({
   children,
@@ -24,7 +11,9 @@ export default function StudentLayout({
 }) {
   return (
     <SidebarProvider>
-      <StudentLayoutInner>{children}</StudentLayoutInner>
+      <AppShell sidebar={<StudentSidebar />} title="Student Portal">
+        {children}
+      </AppShell>
     </SidebarProvider>
   );
 }

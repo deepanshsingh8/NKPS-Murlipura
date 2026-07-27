@@ -4,8 +4,10 @@ import {
   resolveEffectiveFeeStructures,
   sumAnnualized,
   annualizedAmount,
+  resolveTransportLine,
+  type StopFeeLookup,
 } from "@/lib/fees";
-import type { FeeStructure, TransportFareSlab } from "@nkps/shared/types";
+import type { FeeStructure, TransportDirection } from "@nkps/shared/types";
 import type { FeatureKey } from "@nkps/shared/lib/permissions";
 
 // Each analytics block maps to the permission that gates privileged access to
@@ -43,32 +45,11 @@ export async function GET() {
   const wantFees = can("fees");
   const wantStudents = can("students");
 
-  // Haversine helper — used by the transport-audit block below to flag
-  // verified pickups whose actual GPS reading drifts too far from the
-  // address parents claimed.
-  function haversineKm(
-    aLat: number,
-    aLng: number,
-    bLat: number,
-    bLng: number
-  ) {
-    const R = 6371;
-    const toRad = (d: number) => (d * Math.PI) / 180;
-    const dLat = toRad(bLat - aLat);
-    const dLng = toRad(bLng - aLng);
-    const lat1 = toRad(aLat);
-    const lat2 = toRad(bLat);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-    return 2 * R * Math.asin(Math.sqrt(a));
-  }
-
   const [
     attendanceRes,
     feePaymentsRes,
     feeStructuresRes,
-    transportSlabsRes,
+    stopFeesRes,
     enrollmentRes,
     admissionsRes,
   ] = await Promise.all([
@@ -102,10 +83,13 @@ export async function GET() {
             .eq("is_active", true)
         : Promise.resolve({ data: null }),
 
+      // Stop-based transport pricing (migration 074): each opted-in student's
+      // expected transport fee comes from their bus stop's per-year rate, so
+      // the expected-total calc needs the active stop fees for the year.
       wantFees && currentYearId
         ? admin
-            .from("transport_fare_slabs")
-            .select("id, amount, frequency, is_active")
+            .from("bus_stop_fees")
+            .select("bus_stop_id, amount, frequency, is_active, bus_stops(name)")
             .eq("academic_year_id", currentYearId)
             .eq("is_active", true)
         : Promise.resolve({ data: null }),
@@ -118,7 +102,7 @@ export async function GET() {
         ? admin
             .from("student_enrollments")
             .select(
-              "class_id, stream_id, has_transport, transport_slab_id, status, classes!inner(name, section, academic_year_id), streams(name, code)"
+              "class_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, classes!inner(name, section, academic_year_id), streams(name, code)"
             )
             .eq("classes.academic_year_id", currentYearId)
             .eq("status", "active")
@@ -195,7 +179,9 @@ export async function GET() {
     class_id: string;
     stream_id: string | null;
     has_transport: boolean | null;
-    transport_slab_id: string | null;
+    bus_stop_id: string | null;
+    transport_direction: TransportDirection | null;
+    transport_fee_override: number | null;
     classes:
       | { name: string; section: string }
       | { name: string; section: string }[]
@@ -218,16 +204,27 @@ export async function GET() {
       structuresByClass.set(fs.class_name, list);
     }
 
-    const slabsById = new Map<
-      string,
-      Pick<TransportFareSlab, "id" | "amount" | "frequency" | "is_active">
-    >();
-    for (const s of (transportSlabsRes.data ?? []) as Pick<
-      TransportFareSlab,
-      "id" | "amount" | "frequency" | "is_active"
-    >[]) {
-      slabsById.set(s.id, s);
-    }
+    // Stop-based transport fees: one active rate per stop per year. Shape the
+    // rows into StopFeeLookup so resolveTransportLine can bill the stop rate
+    // (or the per-student override for one-side riders).
+    const stopFees: StopFeeLookup[] = (
+      (stopFeesRes.data ?? []) as unknown as {
+        bus_stop_id: string;
+        amount: number | string;
+        frequency: string;
+        is_active: boolean;
+        bus_stops: { name: string } | { name: string }[] | null;
+      }[]
+    ).map((f) => {
+      const stop = Array.isArray(f.bus_stops) ? f.bus_stops[0] : f.bus_stops;
+      return {
+        bus_stop_id: f.bus_stop_id,
+        stop_name: stop?.name ?? "",
+        amount: f.amount,
+        frequency: f.frequency,
+        is_active: f.is_active,
+      };
+    });
 
     let totalExpected = 0;
     for (const e of enrollments) {
@@ -241,10 +238,14 @@ export async function GET() {
         });
         totalExpected += sumAnnualized(effective);
       }
-      if (e.has_transport && e.transport_slab_id) {
-        const slab = slabsById.get(e.transport_slab_id);
-        if (slab) totalExpected += annualizedAmount(slab);
-      }
+      const transportLine = resolveTransportLine({
+        hasTransport: !!e.has_transport,
+        busStopId: e.bus_stop_id,
+        direction: e.transport_direction ?? "both",
+        feeOverride: e.transport_fee_override,
+        stopFees,
+      });
+      if (transportLine) totalExpected += annualizedAmount(transportLine);
     }
 
     response.feeCollection = {
@@ -313,63 +314,38 @@ export async function GET() {
     response.admissionTrend = admissionTrend;
   }
 
-  // ── Transport audit (gated on fees) ──
-  // Numbers the admin wants at a glance: how many transport students are
-  // unverified, how many slabs got overridden, and a coarse mismatch count
-  // where the verified GPS coords drifted far from the claimed address.
+  // ── Transport overview (gated on fees) ──
+  // Stop-based model (migration 074): the operational signals worth surfacing
+  // are adoption (opted in), one-side riders, opted-in students still without
+  // a bus assigned, and change requests awaiting office review.
   if (wantFees && currentYearId) {
-    const { data: rows } = await admin
-      .from("student_enrollments")
-      .select(
-        "id, has_transport, pickup_verified_at, transport_slab_overridden_at, pickup_lat, pickup_lng, pickup_verified_lat, pickup_verified_lng, classes!inner(academic_year_id)"
-      )
-      .eq("classes.academic_year_id", currentYearId)
-      .eq("status", "active")
-      .eq("has_transport", true);
+    const activeYearTransport = () =>
+      admin
+        .from("student_enrollments")
+        .select("id, classes!inner(academic_year_id)", {
+          count: "exact",
+          head: true,
+        })
+        .eq("classes.academic_year_id", currentYearId)
+        .eq("status", "active");
 
-    type AuditRow = {
-      id: string;
-      pickup_verified_at: string | null;
-      transport_slab_overridden_at: string | null;
-      pickup_lat: number | null;
-      pickup_lng: number | null;
-      pickup_verified_lat: number | null;
-      pickup_verified_lng: number | null;
-    };
-
-    const auditRows = (rows ?? []) as unknown as AuditRow[];
-    const total = auditRows.length;
-    const unverified = auditRows.filter((r) => r.pickup_verified_at == null).length;
-    const overridden = auditRows.filter(
-      (r) => r.transport_slab_overridden_at != null
-    ).length;
-
-    // "Mismatch" = verified at coords more than 1km from the claimed address.
-    // Cheap proxy for cheating until we wire in a richer audit trail.
-    const MISMATCH_THRESHOLD_KM = 1;
-    let mismatch = 0;
-    for (const r of auditRows) {
-      if (
-        r.pickup_lat != null &&
-        r.pickup_lng != null &&
-        r.pickup_verified_lat != null &&
-        r.pickup_verified_lng != null
-      ) {
-        const d = haversineKm(
-          Number(r.pickup_lat),
-          Number(r.pickup_lng),
-          Number(r.pickup_verified_lat),
-          Number(r.pickup_verified_lng)
-        );
-        if (d > MISMATCH_THRESHOLD_KM) mismatch++;
-      }
-    }
+    const [usingRes, oneSideRes, unassignedRes, pendingRes] = await Promise.all([
+      activeYearTransport().eq("has_transport", true),
+      activeYearTransport()
+        .eq("has_transport", true)
+        .neq("transport_direction", "both"),
+      activeYearTransport().eq("has_transport", true).is("bus_id", null),
+      admin
+        .from("transport_change_requests")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "pending"),
+    ]);
 
     response.transportAudit = {
-      total,
-      unverified,
-      overridden,
-      mismatch,
+      usingTransport: usingRes.count ?? 0,
+      oneSide: oneSideRes.count ?? 0,
+      unassignedBus: unassignedRes.count ?? 0,
+      pendingChangeRequests: pendingRes.count ?? 0,
     };
   }
 

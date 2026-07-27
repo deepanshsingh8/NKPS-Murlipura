@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
     // 7. Fetch all classes in the target academic year
     const { data: targetClasses } = await admin
       .from("classes")
-      .select("id, name, section")
+      .select("id, name, section, stream_id")
       .eq("academic_year_id", target_academic_year_id);
 
     if (!targetClasses || targetClasses.length === 0) {
@@ -174,7 +174,9 @@ export async function POST(request: NextRequest) {
         const newEnrollments = passed.map((e) => ({
           student_id: e.student_id,
           class_id: targetClass.id,
-          stream_id: e.stream_id,
+          // Stream follows the TARGET class, not the source enrollment.
+          stream_id: targetClass.stream_id ?? null,
+          academic_year_id: target_academic_year_id,
           status: "active" as const,
         }));
 
@@ -233,7 +235,9 @@ export async function POST(request: NextRequest) {
         const retainEnrollments = failed.map((e) => ({
           student_id: e.student_id,
           class_id: retainClass.id,
-          stream_id: e.stream_id,
+          // Stream follows the TARGET (retain) class, not the source enrollment.
+          stream_id: retainClass.stream_id ?? null,
+          academic_year_id: target_academic_year_id,
           status: "active" as const,
         }));
 

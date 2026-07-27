@@ -68,6 +68,22 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Guard: block if any row in the batch is currently published. Imported rows
+  // are written is_published=true but are usually never folded into a
+  // marksheet_publication, so the publication guard below misses them — yet
+  // students/parents have already seen these marks live on the results page.
+  // Require the admin to unpublish first, mirroring the marksheet guard.
+  const publishedRows = rows.filter((r) => r.is_published);
+  if (publishedRows.length > 0) {
+    return NextResponse.json(
+      {
+        error: `Cannot revert: ${publishedRows.length} result row(s) in this batch are currently published and may have been seen by students/parents. Unpublish them first.`,
+        published_row_count: publishedRows.length,
+      },
+      { status: 409 }
+    );
+  }
+
   // Guard: block if any row was included in a marksheet publication.
   // marksheet_publications stores its batch in `result_ids text[]` (per
   // migration 041); we look for any publication intersecting our row IDs.

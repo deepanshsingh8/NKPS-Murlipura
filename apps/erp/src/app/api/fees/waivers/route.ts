@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
 import { feeWaiverSchema } from "@nkps/shared/lib/validations";
-import { generateReceiptNumber } from "@nkps/shared/lib/password";
+import { validateWaiver, buildWaiverRow } from "@/lib/fee-waiver";
 
 // POST /api/fees/waivers
 // Records a fee waiver as a fee_payments row with payment_method='waiver',
@@ -9,14 +9,17 @@ import { generateReceiptNumber } from "@nkps/shared/lib/password";
 // "no dues" the same way a real receipt does, but the row is unmistakably
 // distinguished by payment_method='waiver' for audit/reporting.
 //
-// The DB CHECK (`fee_payments_waiver_consistent`) enforces these invariants
-// — this endpoint just packages the call cleanly for the admin UI.
+// A waiver clears dues exactly like a refund reverses a payment, so the same
+// privilege rule applies: admins record directly; editors must file a change
+// request (action='insert') for an admin to approve. Both paths enforce the
+// cap (≤ outstanding) and dedup (one active waiver per student/structure/month)
+// via validateWaiver.
 export async function POST(request: Request) {
   const auth = await verifyAdminOrEditorWithUser("fees");
   if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const { admin, user } = auth;
+  const { admin, user, role } = auth;
 
   const body = await request.json();
   const parsed = feeWaiverSchema.safeParse(body);
@@ -29,40 +32,51 @@ export async function POST(request: Request) {
   const { student_id, fee_structure_id, waiver_amount, waiver_reason, month } =
     parsed.data;
 
-  // Pull the structure's academic year so the waiver row joins the dues
-  // compute (which filters fee_payments.academic_year_id directly).
-  const { data: structure } = await admin
-    .from("fee_structures")
-    .select("academic_year_id")
-    .eq("id", fee_structure_id)
-    .maybeSingle();
-  if (!structure) {
-    return NextResponse.json(
-      { error: "Fee structure not found" },
-      { status: 400 }
-    );
+  const check = await validateWaiver(admin, {
+    student_id,
+    fee_structure_id,
+    waiver_amount,
+    waiver_reason,
+    month,
+  });
+  if (!check.ok) {
+    return NextResponse.json({ error: check.error }, { status: 400 });
   }
 
-  // Receipt number is still generated for waivers — it's the easiest way to
-  // reference the entry in dues lists / parent-facing screens.
-  const receipt_number = generateReceiptNumber();
+  const waiverRow = buildWaiverRow(
+    { student_id, fee_structure_id, waiver_amount, waiver_reason, month },
+    check.academic_year_id!,
+    user.id
+  );
+
+  // Editors can't clear dues directly — file an insert change request instead.
+  if (role === "editor") {
+    const { error: reqErr } = await admin.from("fee_change_requests").insert({
+      target_table: "fee_payments",
+      target_id: null,
+      action: "insert",
+      current_snapshot: null,
+      proposed_changes: waiverRow,
+      reason: `Waiver: ${waiver_reason}`,
+      requested_by: user.id,
+    });
+    if (reqErr) {
+      console.error("[fees.waivers.POST] change-request insert:", reqErr);
+      return NextResponse.json(
+        { error: "Failed to file waiver change request" },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({
+      success: true,
+      pending: true,
+      message: "Waiver submitted for admin approval.",
+    });
+  }
 
   const { data: payment, error } = await admin
     .from("fee_payments")
-    .insert({
-      student_id,
-      fee_structure_id,
-      academic_year_id: structure.academic_year_id,
-      amount_paid: 0,
-      payment_method: "waiver",
-      waiver_amount,
-      waiver_reason,
-      month: month || null,
-      receipt_number,
-      payment_date: new Date().toISOString().split("T")[0],
-      status: "paid",
-      recorded_by: user.id,
-    })
+    .insert(waiverRow)
     .select()
     .single();
 

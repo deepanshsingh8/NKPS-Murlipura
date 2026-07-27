@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { studentSchema } from "@nkps/shared/lib/validations";
+import {
+  buildStudentRecord,
+  studentsInsertKeys,
+} from "@nkps/shared/lib/student-template";
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,12 +15,26 @@ export async function GET(request: NextRequest) {
     const classId = request.nextUrl.searchParams.get("class_id");
 
     if (!classId) {
-      // Fetch all students with their enrollment/class info
+      // Fetch all students with their enrollment/class info.
+      //
+      // Gate on `is_alumni`, NOT `is_active`. `is_active` is flipped false when
+      // an enrollment goes terminated/exited (see api/students/status), so
+      // filtering on it silently hides those students from the listing — and
+      // therefore from name/admission-no search, which runs client-side over
+      // this list. Admins must be able to find a student regardless of status.
+      // Alumni (is_alumni=true) stay excluded; they have a dedicated dialog and
+      // number in the thousands. `IS NOT TRUE` keeps rows where is_alumni is
+      // false OR null (the column is nullable with a false default).
+      //
+      // .range(0, 9999) pushes past PostgREST's 1000-row default cap so the now
+      // larger list (active + passed/failed + terminated/exited) isn't silently
+      // truncated.
       const { data: allStudents, error } = await admin
         .from("students")
         .select("*")
-        .eq("is_active", true)
-        .order("full_name", { ascending: true });
+        .not("is_alumni", "is", true)
+        .order("full_name", { ascending: true })
+        .range(0, 9999);
 
       if (error) {
         console.error("Fetch all students error:", error);
@@ -50,7 +68,7 @@ export async function GET(request: NextRequest) {
       const { data: enrollments, error: enrollError } = await admin
         .from("student_enrollments")
         .select(
-          "student_id, roll_number, roll_number_manual, id, class_id, stream_id, status, academic_year_id, updated_at, has_transport, transport_slab_id, transport_slab_suggested_id, transport_slab_overridden_at, pickup_verified_at, pickup_lat, pickup_lng, pickup_verified_lat, pickup_verified_lng, classes(name, section)"
+          "student_id, roll_number, roll_number_manual, id, class_id, stream_id, status, academic_year_id, updated_at, has_transport, bus_stop_id, transport_direction, classes(name, section)"
         )
         .range(0, 9999);
       if (enrollError) {
@@ -93,14 +111,8 @@ export async function GET(request: NextRequest) {
         const e = enrollment as
           | (typeof enrollment & {
               has_transport?: boolean | null;
-              transport_slab_id?: string | null;
-              transport_slab_suggested_id?: string | null;
-              transport_slab_overridden_at?: string | null;
-              pickup_verified_at?: string | null;
-              pickup_lat?: number | null;
-              pickup_lng?: number | null;
-              pickup_verified_lat?: number | null;
-              pickup_verified_lng?: number | null;
+              bus_stop_id?: string | null;
+              transport_direction?: string | null;
               roll_number_manual?: boolean;
             })
           | undefined;
@@ -115,14 +127,8 @@ export async function GET(request: NextRequest) {
           class_name: cls?.name ?? null,
           class_section: cls?.section ?? null,
           has_transport: e?.has_transport ?? false,
-          transport_slab_id: e?.transport_slab_id ?? null,
-          transport_slab_suggested_id: e?.transport_slab_suggested_id ?? null,
-          transport_slab_overridden_at: e?.transport_slab_overridden_at ?? null,
-          pickup_verified_at: e?.pickup_verified_at ?? null,
-          pickup_lat: e?.pickup_lat ?? null,
-          pickup_lng: e?.pickup_lng ?? null,
-          pickup_verified_lat: e?.pickup_verified_lat ?? null,
-          pickup_verified_lng: e?.pickup_verified_lng ?? null,
+          bus_stop_id: e?.bus_stop_id ?? null,
+          transport_direction: e?.transport_direction ?? null,
         };
       });
 
@@ -133,7 +139,7 @@ export async function GET(request: NextRequest) {
     const { data: enrollments, error: enrollError } = await admin
       .from("student_enrollments")
       .select(
-        "id, student_id, roll_number, roll_number_manual, class_id, stream_id, status, has_transport, transport_slab_id, transport_slab_suggested_id, transport_slab_overridden_at, pickup_verified_at, pickup_lat, pickup_lng, pickup_verified_lat, pickup_verified_lng"
+        "id, student_id, roll_number, roll_number_manual, class_id, stream_id, status, has_transport, bus_stop_id, transport_direction"
       )
       .eq("class_id", classId);
 
@@ -184,14 +190,8 @@ export async function GET(request: NextRequest) {
       const e = enrollment as
         | (typeof enrollment & {
             has_transport?: boolean | null;
-            transport_slab_id?: string | null;
-            transport_slab_suggested_id?: string | null;
-            transport_slab_overridden_at?: string | null;
-            pickup_verified_at?: string | null;
-            pickup_lat?: number | null;
-            pickup_lng?: number | null;
-            pickup_verified_lat?: number | null;
-            pickup_verified_lng?: number | null;
+            bus_stop_id?: string | null;
+            transport_direction?: string | null;
             roll_number_manual?: boolean;
           })
         | undefined;
@@ -204,14 +204,8 @@ export async function GET(request: NextRequest) {
         stream_id: enrollment?.stream_id ?? null,
         enrollment_status: enrollment?.status ?? null,
         has_transport: e?.has_transport ?? false,
-        transport_slab_id: e?.transport_slab_id ?? null,
-        transport_slab_suggested_id: e?.transport_slab_suggested_id ?? null,
-        transport_slab_overridden_at: e?.transport_slab_overridden_at ?? null,
-        pickup_verified_at: e?.pickup_verified_at ?? null,
-        pickup_lat: e?.pickup_lat ?? null,
-        pickup_lng: e?.pickup_lng ?? null,
-        pickup_verified_lat: e?.pickup_verified_lat ?? null,
-        pickup_verified_lng: e?.pickup_verified_lng ?? null,
+        bus_stop_id: e?.bus_stop_id ?? null,
+        transport_direction: e?.transport_direction ?? null,
       };
     });
 
@@ -233,7 +227,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { class_id, roll_number, roll_number_manual, stream_id, ...studentFields } = body;
+    // stream_id is intentionally NOT taken from the client: a student's stream
+    // is a property of their class (a stream-bound senior class carries its own
+    // stream_id; lower classes have none). We derive it from the class below so
+    // the enrollment can never hold a stream that contradicts the class. Any
+    // client-sent stream_id falls into studentFields and is stripped by zod.
+    const { class_id, roll_number, roll_number_manual, ...studentFields } = body;
 
     const result = studentSchema.safeParse(studentFields);
     if (!result.success) {
@@ -243,24 +242,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Insert student
+    // Insert student — every registry-declared column, blank → null.
+    const insertRecord = buildStudentRecord(result.data as Record<string, unknown>, [
+      ...studentsInsertKeys(),
+      "indian_national",
+    ]);
+    // Blank admission date on create should fall back to the DB default
+    // (CURRENT_DATE), not overwrite it with NULL.
+    if (insertRecord.admission_date === null) {
+      delete insertRecord.admission_date;
+    }
     const { data: student, error: studentError } = await admin
       .from("students")
-      .insert({
-        admission_no: result.data.admission_no.trim(),
-        full_name: result.data.full_name.trim(),
-        father_name: result.data.father_name?.trim() || null,
-        mother_name: result.data.mother_name?.trim() || null,
-        date_of_birth: result.data.date_of_birth || null,
-        gender: result.data.gender || null,
-        address: result.data.address?.trim() || null,
-        phone: result.data.phone?.trim() || null,
-        email: result.data.email?.trim() || null,
-        blood_group: result.data.blood_group || null,
-        category: result.data.category?.trim() || null,
-        aadhar_number: result.data.aadhar_number?.trim() || null,
-        previous_school: result.data.previous_school?.trim() || null,
-      })
+      .insert(insertRecord)
       .select("id")
       .single();
 
@@ -279,7 +273,7 @@ export async function POST(request: NextRequest) {
     if (class_id && student) {
       const { data: classRow, error: classLookupError } = await admin
         .from("classes")
-        .select("academic_year_id")
+        .select("academic_year_id, stream_id")
         .eq("id", class_id)
         .single();
 
@@ -299,7 +293,8 @@ export async function POST(request: NextRequest) {
           academic_year_id: classRow.academic_year_id,
           roll_number: roll_number ? parseInt(roll_number, 10) : null,
           roll_number_manual: roll_number_manual === true,
-          stream_id: stream_id || null,
+          // Stream follows the class, authoritatively (see destructure note).
+          stream_id: classRow.stream_id ?? null,
         });
 
       if (enrollError) {
@@ -333,15 +328,64 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { id, enrollment_id, roll_number, roll_number_manual, class_id, stream_id, ...fields } = body;
+    // stream_id is derived from the class, never trusted from the client (see
+    // the POST note) — a client-sent stream_id lands in `fields` and zod strips it.
+    const { id, enrollment_id, roll_number, roll_number_manual, class_id, ...fields } = body;
 
     if (!id) {
       return NextResponse.json({ error: "Student id required" }, { status: 400 });
     }
 
+    // The current row: used to (a) preserve a stored non-Indian nationality when
+    // the Indian-National toggle says NO, and (b) tolerate unchanged legacy
+    // values the strict schema would otherwise reject (below).
+    const { data: current } = await admin
+      .from("students")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    // Validate + whitelist: only registry-declared student columns may be
+    // updated, and only the keys the caller actually sent (partial update).
+    // Anything else (is_alumni, is_active, photo_url, …) has its own route.
+    let effectiveFields = fields as Record<string, unknown>;
+    let parsed = studentSchema.partial().safeParse(effectiveFields);
+    if (!parsed.success && current) {
+      // The edit form resends every field, so a single legacy value that
+      // predates the strict schema (e.g. a bulk-imported non-10-digit mobile)
+      // would otherwise block every unrelated edit. Drop the failing fields
+      // that are UNCHANGED from what's stored, then re-validate. A genuinely
+      // new invalid value differs from stored, so it stays rejected.
+      const failedKeys = Object.keys(parsed.error.flatten().fieldErrors ?? {});
+      const norm = (x: unknown) => (x === null || x === undefined ? "" : String(x).trim());
+      const unchangedFailing = failedKeys.filter(
+        (k) => norm(effectiveFields[k]) === norm((current as Record<string, unknown>)[k])
+      );
+      if (unchangedFailing.length > 0) {
+        effectiveFields = Object.fromEntries(
+          Object.entries(effectiveFields).filter(([k]) => !unchangedFailing.includes(k))
+        );
+        parsed = studentSchema.partial().safeParse(effectiveFields);
+      }
+    }
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid data", details: parsed.error.flatten() },
+        { status: 400 }
+      );
+    }
+    const providedKeys = Object.keys(effectiveFields).filter((k) =>
+      k === "indian_national" || studentsInsertKeys().includes(k)
+    );
+    const updateRecord = buildStudentRecord(
+      parsed.data as Record<string, unknown>,
+      providedKeys,
+      (current as Record<string, unknown> | null) ?? undefined
+    );
+
     const { error } = await admin
       .from("students")
-      .update({ ...fields, updated_at: new Date().toISOString() })
+      .update({ ...updateRecord, updated_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) {
@@ -363,7 +407,7 @@ export async function PATCH(request: NextRequest) {
 
         const { data: classRow, error: classLookupError } = await admin
           .from("classes")
-          .select("academic_year_id")
+          .select("academic_year_id, stream_id")
           .eq("id", class_id)
           .single();
 
@@ -375,9 +419,9 @@ export async function PATCH(request: NextRequest) {
           );
         }
         enrollmentUpdate.academic_year_id = classRow.academic_year_id;
-      }
-      if (stream_id !== undefined) {
-        enrollmentUpdate.stream_id = stream_id || null;
+        // Stream follows the (possibly changed) class. When class_id isn't part
+        // of this edit the stream stays as-is — it can only change with the class.
+        enrollmentUpdate.stream_id = classRow.stream_id ?? null;
       }
 
       if (Object.keys(enrollmentUpdate).length > 0) {
@@ -399,7 +443,7 @@ export async function PATCH(request: NextRequest) {
       // tripping the UNIQUE(student_id, class_id) constraint.
       const { data: classRow, error: classLookupError } = await admin
         .from("classes")
-        .select("academic_year_id")
+        .select("academic_year_id, stream_id")
         .eq("id", class_id)
         .single();
 
@@ -430,7 +474,8 @@ export async function PATCH(request: NextRequest) {
         academic_year_id: classRow.academic_year_id,
         roll_number: roll_number ? parseInt(roll_number, 10) : null,
         roll_number_manual: roll_number_manual === true,
-        stream_id: stream_id || null,
+        // Stream follows the class, authoritatively (see the POST note).
+        stream_id: classRow.stream_id ?? null,
         status: "active" as const,
       };
 

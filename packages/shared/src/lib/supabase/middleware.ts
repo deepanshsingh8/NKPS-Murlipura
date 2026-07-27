@@ -60,7 +60,7 @@ function isProtectedRoute(pathname: string): boolean {
   if (isPortalPublic(pathname)) return false;
   if (pathname.startsWith("/auth/")) return false;
   // The PWA offline fallback must be reachable with no session — the service
-  // worker precaches it and serves it when a navigation fails offline.
+  // worker precaches it, and it renders no user data.
   if (pathname === "/offline") return false;
   return true;
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { nonScholasticAssessmentsBulkSchema } from "@nkps/shared/lib/validations";
 import {
   getTeacherIdForUser,
@@ -209,9 +210,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // Editors (role 'staff') hold the `non_scholastic_entry` permission but the
+    // table has no RLS policy for their role, so the RLS-bound cookie client
+    // silently drops their writes. Execute the write/clear on the service-role
+    // client. All auth/permission/teacher-scope checks above remain on the
+    // cookie client and are unchanged.
+    const admin = createAdminClient();
+
     let upsertedCount = 0;
     if (toUpsert.length > 0) {
-      const { error: upsertErr } = await supabase
+      const { error: upsertErr } = await admin
         .from("non_scholastic_assessments")
         .upsert(toUpsert, {
           onConflict: "student_id,exam_type_id,sub_subject_id",
@@ -236,7 +244,7 @@ export async function POST(request: Request) {
         bySub.get(c.sub_subject_id)!.push(c.student_id);
       }
       for (const [subSubjectId, studentIds] of bySub.entries()) {
-        const { error: delErr, count } = await supabase
+        const { error: delErr, count } = await admin
           .from("non_scholastic_assessments")
           .delete({ count: "exact" })
           .eq("exam_type_id", exam_type_id)

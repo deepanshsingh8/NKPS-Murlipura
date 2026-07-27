@@ -1,7 +1,8 @@
 import type {
   EffectiveFeeLine,
+  FeeFrequency,
   FeeStructure,
-  TransportFareSlab,
+  TransportDirection,
   TransportFeeLine,
 } from "@nkps/shared/types";
 
@@ -29,7 +30,7 @@ export function sumAnnualized(structures: Annualizable[]): number {
 // stream and a given fee_type, the class-wide (stream_id NULL) structure for
 // the same fee_type is hidden. Structures belonging to other streams are
 // dropped. Transport rows shouldn't exist in fee_structures any more (they
-// live in transport_fare_slabs after migration 050) — but we filter defensively.
+// live in bus_stop_fees after migration 074) — but we filter defensively.
 export function resolveEffectiveFeeStructures(
   structures: FeeStructure[],
   opts: { studentStreamId: string | null }
@@ -53,31 +54,51 @@ export function resolveEffectiveFeeStructures(
   );
 }
 
-// Synthesize a transport fee line from the student's selected slab. Returns
-// null if the student isn't opted in or the slab isn't found / inactive.
+// A per-year fee row for a stop, joined with its stop name.
+export type StopFeeLookup = {
+  bus_stop_id: string;
+  stop_name: string;
+  amount: number | string;
+  frequency: string;
+  is_active: boolean;
+};
+
+// Synthesize a transport fee line from the student's assigned bus stop.
+//
+// Fee is the stop's flat amount, UNLESS the student has a one-side facility
+// (direction != 'both'), in which case the per-student custom override is the
+// billed amount. Returns null if the student isn't opted in, has no stop, or
+// the stop has no active fee for the year.
 export function resolveTransportLine(opts: {
   hasTransport: boolean;
-  transportSlabId: string | null;
-  slabs: Pick<
-    TransportFareSlab,
-    "id" | "name" | "amount" | "frequency" | "is_active"
-  >[];
+  busStopId: string | null;
+  direction: TransportDirection;
+  feeOverride: number | null;
+  stopFees: StopFeeLookup[];
 }): TransportFeeLine | null {
-  const { hasTransport, transportSlabId, slabs } = opts;
-  if (!hasTransport || !transportSlabId) return null;
-  const slab = slabs.find((s) => s.id === transportSlabId && s.is_active);
-  if (!slab) return null;
+  const { hasTransport, busStopId, direction, feeOverride, stopFees } = opts;
+  if (!hasTransport || !busStopId) return null;
+  const fee = stopFees.find((f) => f.bus_stop_id === busStopId && f.is_active);
+  if (!fee) return null;
+
+  const isOneSide = direction !== "both";
+  const amount =
+    isOneSide && feeOverride != null ? Number(feeOverride) : Number(fee.amount);
+
   return {
-    kind: "transport_slab",
-    id: slab.id,
+    kind: "transport_stop",
+    id: fee.bus_stop_id,
     fee_type: "Transport",
-    amount: Number(slab.amount),
-    frequency: slab.frequency,
+    amount,
+    frequency: fee.frequency as FeeFrequency,
     due_date: null,
     late_fee_percent: 0,
     late_fee_fixed_amount: 0,
+    late_fee_per_day: 0,
+    late_fee_max: null,
     stream_id: null,
-    slab_name: slab.name,
+    stop_name: fee.stop_name,
+    direction,
   };
 }
 
@@ -88,11 +109,10 @@ export function resolveEffectiveFeeLines(opts: {
   structures: FeeStructure[];
   studentStreamId: string | null;
   hasTransport: boolean;
-  transportSlabId: string | null;
-  slabs: Pick<
-    TransportFareSlab,
-    "id" | "name" | "amount" | "frequency" | "is_active"
-  >[];
+  busStopId: string | null;
+  direction: TransportDirection;
+  feeOverride: number | null;
+  stopFees: StopFeeLookup[];
 }): EffectiveFeeLine[] {
   const academic = resolveEffectiveFeeStructures(opts.structures, {
     studentStreamId: opts.studentStreamId,

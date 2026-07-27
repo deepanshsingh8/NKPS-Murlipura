@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
+import { extractStoragePath } from "@nkps/shared/lib/storage-paths";
 
 export async function POST(request: NextRequest) {
   const admin = await verifyAdminOrEditor("gallery");
@@ -54,14 +55,20 @@ export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
 
-    // Bulk delete: body.items = [{ id, src }, ...]
+    // Bulk delete: body.items = [{ id }, ...]. We IGNORE any client-supplied
+    // src and re-derive the storage path from the DB row, so a crafted body
+    // can't point the delete at an arbitrary object.
     if (Array.isArray(body.items) && body.items.length > 0) {
-      const items = body.items as { id: string; src: string }[];
-      const fileNames = items.map((item) => {
-        const parts = item.src.split("/");
-        return parts[parts.length - 1];
-      });
+      const items = body.items as { id: string }[];
       const ids = items.map((item) => item.id);
+
+      const { data: rows } = await admin
+        .from("gallery_images")
+        .select("src")
+        .in("id", ids);
+      const fileNames = (rows ?? [])
+        .map((r: { src: string | null }) => extractStoragePath(r.src, "gallery"))
+        .filter((p): p is string => !!p);
 
       // Delete DB rows first — if Storage removal fails later we can retry, but
       // an orphaned row pointing at a missing file shows broken images in the UI.
@@ -85,11 +92,16 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: true, deleted: ids.length });
     }
 
-    // Single delete
-    const { id, src } = body;
+    // Single delete. Re-derive the storage path from the DB row (not the
+    // client-supplied src) so the delete can't be aimed at another object.
+    const { id } = body;
 
-    const urlParts = (src as string).split("/");
-    const fileName = urlParts[urlParts.length - 1];
+    const { data: row } = await admin
+      .from("gallery_images")
+      .select("src")
+      .eq("id", id)
+      .maybeSingle();
+    const fileName = row ? extractStoragePath(row.src, "gallery") : null;
 
     const { error } = await admin
       .from("gallery_images")
@@ -101,6 +113,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Failed to delete image" }, { status: 500 });
     }
 
+    if (!fileName) {
+      return NextResponse.json({ success: true });
+    }
     const { error: storageError } = await admin.storage.from("gallery").remove([fileName]);
     if (storageError) {
       console.error("Gallery delete storage error:", storageError);

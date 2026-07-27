@@ -3,7 +3,9 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { promises as fs } from "fs";
 import path from "path";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { canViewReportCard } from "@/lib/report-card";
+import { getStudentOutstandingDues, dueGateApplies } from "@/lib/student-dues";
 import { getPdfTemplate } from "@/lib/pdf-templates";
 import { contentDispositionAttachment } from "@nkps/shared/lib/utils";
 import {
@@ -64,6 +66,23 @@ export async function GET(request: Request) {
     const allowed = await canViewReportCard(supabase, user.id, studentId);
     if (!allowed) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Fee-dues gate: students and parents can SEE the exam but cannot download
+    // the admit card while fees are outstanding. Admin/staff/teacher are never
+    // blocked. Use the service-role client so a parent (who lacks RLS read on
+    // the child's fee rows) is still evaluated correctly.
+    if (await dueGateApplies(supabase, user.id)) {
+      const dues = await getStudentOutstandingDues(createAdminClient(), studentId);
+      if (dues.hasOutstanding) {
+        return NextResponse.json(
+          {
+            error: "Outstanding fee dues",
+            message: `Admit card is locked until fees are cleared. Outstanding dues: ₹${dues.total.toLocaleString("en-IN")}.`,
+          },
+          { status: 403 }
+        );
+      }
     }
 
     // Resolve template — either requested ID or current default.

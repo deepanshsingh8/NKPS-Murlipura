@@ -178,9 +178,13 @@ export async function POST(request: Request) {
     if (t.employee_id) teacherByKey.set(t.employee_id.toLowerCase(), t);
   }
 
-  // Conflict tracking within the spreadsheet itself
-  const teacherSlotMap = new Map<string, number>(); // "day:period:teacher_id" → row_index
-  const classSlotMap = new Map<string, number>();   // "class_id:day:period"   → row_index
+  // Conflict tracking within the spreadsheet itself. Keyed by time-range
+  // overlap (not period_number) because classes run staggered schedules — the
+  // same period number is a different wall-clock time across classes.
+  const teacherIntervals = new Map<string, Array<{ start: string; end: string; row: number }>>(); // "day:teacher_id"
+  const classIntervals = new Map<string, Array<{ start: string; end: string; row: number }>>();   // "class_id:day"
+  const slotsOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
+    aStart < bEnd && aEnd > bStart;
 
   const preview: PreviewRow[] = [];
 
@@ -200,8 +204,10 @@ export async function POST(request: Request) {
     const day = parseDay(dayRaw);
     if (day == null) { messages.push(`Day "${dayRaw}" is not valid (use Monday–Saturday or 1–6)`); status = "error"; }
 
+    // Period 0 is the zero/pre-first period, so 0 is valid; only reject blanks
+    // and negatives.
     const periodNum = /^\d+$/.test(periodRaw) ? parseInt(periodRaw, 10) : NaN;
-    if (!Number.isInteger(periodNum) || periodNum < 1) { messages.push(`Period "${periodRaw}" must be a positive integer`); status = "error"; }
+    if (!Number.isInteger(periodNum) || periodNum < 0) { messages.push(`Period "${periodRaw}" must be 0 or a positive integer`); status = "error"; }
 
     const cls = parseClass(sectionRaw);
     let classRow: { id: string; name: string; section: string } | null = null;
@@ -235,22 +241,32 @@ export async function POST(request: Request) {
       status = "error";
     }
 
-    // Cross-row conflicts (within the spreadsheet)
-    if (status !== "error" && day != null && periodNum) {
+    // Cross-row conflicts (within the spreadsheet), by wall-clock overlap.
+    // Gated on having valid times rather than a truthy period number, so
+    // period 0 rows are checked too (the old `&& periodNum` skipped them).
+    if (status !== "error" && day != null && startTime && endTime) {
       if (teacherRow) {
-        const tk = `${day}:${periodNum}:${teacherRow.id}`;
-        if (teacherSlotMap.has(tk)) {
-          messages.push(`Teacher clash with row ${teacherSlotMap.get(tk)}`); status = "error";
+        const tk = `${day}:${teacherRow.id}`;
+        const clash = (teacherIntervals.get(tk) ?? []).find((s) =>
+          slotsOverlap(s.start, s.end, startTime, endTime)
+        );
+        if (clash) {
+          messages.push(`Teacher clash with row ${clash.row}`); status = "error";
         } else {
-          teacherSlotMap.set(tk, i + 2);
+          if (!teacherIntervals.has(tk)) teacherIntervals.set(tk, []);
+          teacherIntervals.get(tk)!.push({ start: startTime, end: endTime, row: i + 2 });
         }
       }
       if (classRow) {
-        const ck = `${classRow.id}:${day}:${periodNum}`;
-        if (classSlotMap.has(ck)) {
-          messages.push(`Same class+day+period as row ${classSlotMap.get(ck)}`); status = "error";
+        const ck = `${classRow.id}:${day}`;
+        const clash = (classIntervals.get(ck) ?? []).find((s) =>
+          slotsOverlap(s.start, s.end, startTime, endTime)
+        );
+        if (clash) {
+          messages.push(`Overlapping time for this class with row ${clash.row}`); status = "error";
         } else {
-          classSlotMap.set(ck, i + 2);
+          if (!classIntervals.has(ck)) classIntervals.set(ck, []);
+          classIntervals.get(ck)!.push({ start: startTime, end: endTime, row: i + 2 });
         }
       }
     }

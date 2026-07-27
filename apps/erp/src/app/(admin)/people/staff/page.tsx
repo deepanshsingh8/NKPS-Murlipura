@@ -43,6 +43,7 @@ import {
   Download,
   ChevronDown,
   UserPlus,
+  UserCheck,
   GraduationCap,
 } from "lucide-react";
 import {
@@ -62,25 +63,13 @@ import {
 } from "@nkps/shared/lib/photo-spec";
 import { StaffBulkUpload } from "@/components/StaffBulkUpload";
 import { CreatePortalUsersDialog } from "@/components/CreatePortalUsersDialog";
+import { useIsAdmin } from "@nkps/shared/hooks/useIsAdmin";
+import {
+  staffPortalRole,
+  isTeachingStaffCategory,
+} from "@nkps/shared/lib/staff-roles";
 import type { StaffMember, StaffCategory } from "@nkps/shared/types";
 import { downloadCSV, STAFF_CSV_COLUMNS } from "@/lib/csv-export";
-
-const CATEGORIES: { value: StaffCategory | "all"; label: string }[] = [
-  { value: "all", label: "All Categories" },
-  { value: "management", label: "Management" },
-  { value: "admin", label: "Administration" },
-  { value: "pgt", label: "PGT" },
-  { value: "tgt", label: "TGT" },
-  { value: "prt", label: "PRT" },
-  { value: "motherTeachers", label: "Mother Teachers" },
-  { value: "prePrimaryCoordinator", label: "Pre-primary Coordinator" },
-  { value: "primaryCoordinator", label: "Primary Coordinator" },
-  { value: "middleCoordinator", label: "Middle Coordinator" },
-  { value: "seniorCoordinator", label: "Senior Coordinator" },
-  { value: "additionalStaff", label: "Additional Staff" },
-  { value: "busDriver", label: "Bus Drivers" },
-  { value: "peon", label: "Peons" },
-];
 
 const CATEGORY_OPTIONS: { value: StaffCategory; label: string }[] = [
   { value: "management", label: "Management" },
@@ -96,6 +85,13 @@ const CATEGORY_OPTIONS: { value: StaffCategory; label: string }[] = [
   { value: "additionalStaff", label: "Additional Staff" },
   { value: "busDriver", label: "Bus Drivers" },
   { value: "peon", label: "Peons" },
+];
+
+// Filter dropdown = the same options plus an "all" sentinel; derive it so the
+// two lists can never drift out of sync.
+const CATEGORIES: { value: StaffCategory | "all"; label: string }[] = [
+  { value: "all", label: "All Categories" },
+  ...CATEGORY_OPTIONS,
 ];
 
 const categoryBadgeColors: Record<StaffCategory, string> = {
@@ -140,6 +136,10 @@ function getAvatarColor(name: string): string {
 }
 
 export default function AdminStaffPage() {
+  // Creating portal login accounts is admin-only (enforced server-side in
+  // /api/portal/bulk-create). Editors granted `staff` can manage staff records
+  // but not provision logins, so hide the "Create Users" action from them.
+  const isAdmin = useIsAdmin();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -155,6 +155,12 @@ export default function AdminStaffPage() {
     new Set()
   );
   const [convertingId, setConvertingId] = useState<string | null>(null);
+  // Lowercased emails of staff members who already have a portal login, so the
+  // per-row "Create login" action can hide for anyone already provisioned.
+  const [staffLoginEmails, setStaffLoginEmails] = useState<Set<string>>(
+    new Set()
+  );
+  const [creatingLoginId, setCreatingLoginId] = useState<string | null>(null);
 
   // Selection & bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -169,6 +175,7 @@ export default function AdminStaffPage() {
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [address, setAddress] = useState("");
   const [qualifications, setQualifications] = useState("");
+  const [licenseNumber, setLicenseNumber] = useState("");
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [existingPhotoUrl, setExistingPhotoUrl] = useState<string | null>(null);
   const [croppedPreviewUrl, setCroppedPreviewUrl] = useState<string | null>(null);
@@ -201,7 +208,34 @@ export default function AdminStaffPage() {
       console.error("Failed to fetch staff:", staffRes.error);
       toast.error("Failed to load staff members");
     } else {
-      setStaff((staffRes.data as StaffMember[]) || []);
+      const rows = (staffRes.data as StaffMember[]) || [];
+      setStaff(rows);
+      // Which staff already have a portal login? Both teacher- and staff-role
+      // logins carry the staff member's email, so an email match against
+      // profiles tells us who's already provisioned. (Auth normalizes emails
+      // to lowercase, so we compare lowercased.)
+      const emails = Array.from(
+        new Set(
+          rows
+            .map((r) => r.email?.trim().toLowerCase())
+            .filter((e): e is string => !!e)
+        )
+      );
+      if (emails.length > 0) {
+        const { data: profs } = await supabase
+          .from("profiles")
+          .select("email")
+          .in("email", emails);
+        setStaffLoginEmails(
+          new Set(
+            (profs ?? [])
+              .map((p) => (p.email as string | null)?.toLowerCase())
+              .filter((e): e is string => !!e)
+          )
+        );
+      } else {
+        setStaffLoginEmails(new Set());
+      }
     }
     if (!teacherLinkRes.error) {
       const ids = new Set<string>();
@@ -252,6 +286,68 @@ export default function AdminStaffPage() {
     [fetchStaff]
   );
 
+  // Provision a single portal login for a staff member. Routes through the same
+  // category-aware bulk-create endpoint (with one item) so the role logic
+  // (teaching → teacher, office → staff) lives in exactly one place.
+  const handleCreateLogin = useCallback(
+    async (member: StaffMember) => {
+      if (!member.email?.trim()) return;
+      const role = staffPortalRole(member.category);
+      const roleLabel = role === "teacher" ? "teacher" : "staff";
+      if (
+        !confirm(
+          `Create a ${roleLabel} login for "${member.name}"? A welcome email with temporary credentials will be sent to ${member.email}.`
+        )
+      ) {
+        return;
+      }
+      setCreatingLoginId(member.id);
+      try {
+        const res = await adminFetch("/api/portal/bulk-create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "staff",
+            items: [
+              {
+                id: member.id,
+                email: member.email.trim(),
+                fullName: member.name.trim(),
+                phone: member.phone || null,
+              },
+            ],
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          toast.error(data.error ?? "Failed to create login");
+          return;
+        }
+        if (data.created > 0) {
+          toast.success("Login created — welcome email sent");
+        } else {
+          const reason = data.results?.[0]?.error ?? "Could not create login";
+          toast.error(reason);
+        }
+        await fetchStaff();
+      } catch {
+        toast.error("Network error");
+      } finally {
+        setCreatingLoginId(null);
+      }
+    },
+    [fetchStaff]
+  );
+
+  // Does this staff member already have a portal login? (email present + a
+  // matching profiles row).
+  const hasLogin = useCallback(
+    (member: StaffMember) =>
+      !!member.email?.trim() &&
+      staffLoginEmails.has(member.email.trim().toLowerCase()),
+    [staffLoginEmails]
+  );
+
   useEffect(() => {
     fetchStaff();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,6 +362,7 @@ export default function AdminStaffPage() {
     setDateOfBirth("");
     setAddress("");
     setQualifications("");
+    setLicenseNumber("");
     setPhotoFile(null);
     setExistingPhotoUrl(null);
     if (croppedPreviewUrl) URL.revokeObjectURL(croppedPreviewUrl);
@@ -326,6 +423,7 @@ export default function AdminStaffPage() {
     setDateOfBirth(member.date_of_birth || "");
     setAddress(member.address || "");
     setQualifications(member.qualifications || "");
+    setLicenseNumber(member.license_number || "");
     setPhotoFile(null);
     setExistingPhotoUrl(member.photo_url);
     setDialogOpen(true);
@@ -354,6 +452,10 @@ export default function AdminStaffPage() {
         date_of_birth: dateOfBirth || null,
         address: address.trim() || null,
         qualifications: qualifications.trim() || null,
+        // License applies only to bus drivers; clear it for any other category
+        // so a stale value can't linger if the category is changed.
+        license_number:
+          category === "busDriver" ? licenseNumber.trim() || null : null,
       };
 
       if (editingId) {
@@ -584,16 +686,20 @@ export default function AdminStaffPage() {
           <span className="text-sm font-medium text-red-700">
             {selectedIds.size} selected
           </span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setPortalDialogOpen(true)}
-            className="gap-1"
-          >
-            <UserPlus className="h-3.5 w-3.5" />
-            Create Users
-          </Button>
-          <div className="w-px h-6 bg-red-200" />
+          {isAdmin && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setPortalDialogOpen(true)}
+                className="gap-1"
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                Create Users
+              </Button>
+              <div className="w-px h-6 bg-red-200" />
+            </>
+          )}
           <Button
             size="sm"
             variant="destructive"
@@ -691,9 +797,53 @@ export default function AdminStaffPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      {/* H16-B — convert-to-teacher action. Hidden when the
-                          staff_member already has a linked teachers row. */}
-                      {!teacherLinkedIds.has(member.id) && (
+                      {/* Portal login (admins only, and only for categories
+                          that get a login — bus drivers/peons don't):
+                          - green check when a login already exists;
+                          - "Create login" action when there's an email;
+                          - a muted "No email" hint when there isn't, so the
+                            missing action is explained rather than just absent. */}
+                      {hasLogin(member) ? (
+                        <span
+                          title="Has a portal login"
+                          className="inline-flex h-9 w-9 items-center justify-center text-green-600"
+                        >
+                          <UserCheck className="h-4 w-4" />
+                        </span>
+                      ) : isAdmin && staffPortalRole(member.category) !== null ? (
+                        member.email?.trim() ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleCreateLogin(member)}
+                            disabled={creatingLoginId === member.id}
+                            aria-label="Create login"
+                            title={`Create ${
+                              staffPortalRole(member.category) === "teacher"
+                                ? "teacher"
+                                : "staff"
+                            } login (sends a welcome email)`}
+                            className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                          >
+                            {creatingLoginId === member.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <UserPlus className="h-4 w-4" />
+                            )}
+                          </Button>
+                        ) : (
+                          <span
+                            title="Add an email (Edit) to create a login"
+                            className="whitespace-nowrap px-1 text-[11px] italic text-gray-400"
+                          >
+                            No email
+                          </span>
+                        )
+                      ) : null}
+                      {/* Convert-to-teacher: only for teaching categories that
+                          aren't already linked to a teachers row. */}
+                      {isTeachingStaffCategory(member.category) &&
+                        !teacherLinkedIds.has(member.id) && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -833,6 +983,17 @@ export default function AdminStaffPage() {
               />
             </div>
 
+            {category === "busDriver" && (
+              <div className="space-y-2">
+                <Label>Driving License Number</Label>
+                <Input
+                  placeholder="e.g. UP32 20230001234"
+                  value={licenseNumber}
+                  onChange={(e) => setLicenseNumber(e.target.value)}
+                />
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label>Profile Photo</Label>
 
@@ -937,7 +1098,14 @@ export default function AdminStaffPage() {
         onOpenChange={setPortalDialogOpen}
         type="staff"
         items={filtered
-          .filter((m) => selectedIds.has(m.id))
+          .filter(
+            (m) =>
+              selectedIds.has(m.id) &&
+              // Skip anyone who already has a login or whose category doesn't
+              // get one (bus drivers, peons) — no point offering them.
+              !hasLogin(m) &&
+              staffPortalRole(m.category) !== null
+          )
           .map((m) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone }))}
         onComplete={fetchStaff}
       />

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
+import { findSubstituteConflict } from "@/lib/substitution-availability";
 
 const updateSchema = z.object({
   substitute_teacher_id: z.string().uuid().optional(),
@@ -27,6 +28,34 @@ export async function PATCH(
   }
   if (Object.keys(parsed.data).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+  }
+
+  // Re-checking a changed substitute requires the row's absence + period, so
+  // load the existing row first (also gives us a clean 404).
+  const { data: existing, error: existingError } = await admin
+    .from("substitutions")
+    .select("absence_id, timetable_period_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (existingError) {
+    console.error("[substitutions.PATCH] load existing:", existingError);
+    return NextResponse.json({ error: "Failed to load substitution" }, { status: 500 });
+  }
+  if (!existing) {
+    return NextResponse.json({ error: "Substitution not found" }, { status: 404 });
+  }
+
+  // Availability re-check when the substitute is being changed — the write path
+  // must not trust the client and assign an absent or already-booked teacher.
+  if (parsed.data.substitute_teacher_id) {
+    const conflict = await findSubstituteConflict(admin, {
+      substituteTeacherId: parsed.data.substitute_teacher_id,
+      absenceId: existing.absence_id,
+      timetablePeriodId: existing.timetable_period_id,
+    });
+    if (conflict) {
+      return NextResponse.json({ error: conflict }, { status: 409 });
+    }
   }
 
   const { data, error } = await admin

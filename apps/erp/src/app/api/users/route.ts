@@ -4,6 +4,13 @@ import { createClient } from "@nkps/shared/lib/supabase/server";
 import { createUserSchema } from "@nkps/shared/lib/validations";
 import { generateSecurePassword } from "@nkps/shared/lib/password";
 import { rateLimit } from "@nkps/shared/lib/rate-limit";
+import {
+  linkProfileToStudent,
+  linkProfileToTeacher,
+  linkProfileToParent,
+  ensureTeacherRecord,
+} from "@/lib/identity/link";
+import { pickFreeAdmissionNo } from "@/lib/admission-no";
 
 export async function POST(request: Request) {
   try {
@@ -93,12 +100,36 @@ export async function POST(request: Request) {
         .eq("id", newUser.user.id);
     }
 
+    // For admin/staff role: these carry no domain link, so the student/teacher/
+    // parent branches below never run and the handle_new_user trigger's
+    // hardcoded 'student' default would otherwise stick. Set role explicitly.
+    // Service-role client bypasses the migration-061 self-update guard, and
+    // migration-068's role↔link trigger is satisfied by leaving every link null.
+    if ((role === "admin" || role === "staff") && newUser.user) {
+      const { error: roleError } = await supabase
+        .from("profiles")
+        .update({
+          role,
+          teacher_id: null,
+          student_id: null,
+          parent_id: null,
+        })
+        .eq("id", newUser.user.id);
+      if (roleError) {
+        console.error(`Failed to set role for ${role} account:`, roleError);
+      }
+    }
+
     // For student role: create a students record and link it to the profile
     if (role === "student" && newUser.user) {
+      // Collision-safe default admission number — a raw email local-part would
+      // fail the UNIQUE(admission_no) constraint when two "firstname@…" users
+      // exist, stranding this account as role='student' with no students row.
+      const admissionNo = await pickFreeAdmissionNo(supabase, email);
       const { data: studentRecord, error: studentError } = await supabase
         .from("students")
         .insert({
-          admission_no: email.split("@")[0], // default admission_no from email prefix
+          admission_no: admissionNo,
           full_name,
           email,
           phone: phone || null,
@@ -107,11 +138,8 @@ export async function POST(request: Request) {
         .single();
 
       if (!studentError && studentRecord) {
-        // Link the profile to the student record
-        await supabase
-          .from("profiles")
-          .update({ student_id: studentRecord.id })
-          .eq("id", newUser.user.id);
+        // Canonical link: sets role='student' + student_id in one update.
+        await linkProfileToStudent(supabase, newUser.user.id, studentRecord.id);
       } else {
         console.error("Failed to create student record:", studentError);
       }
@@ -159,10 +187,8 @@ export async function POST(request: Request) {
         .single();
 
       if (!teacherError && teacherRecord) {
-        await supabase
-          .from("profiles")
-          .update({ teacher_id: teacherRecord.id })
-          .eq("id", newUser.user.id);
+        // Canonical link: sets role='teacher' + teacher_id in one update.
+        await linkProfileToTeacher(supabase, newUser.user.id, teacherRecord.id);
       } else {
         console.error("Failed to create teacher record:", teacherError);
       }
@@ -182,10 +208,8 @@ export async function POST(request: Request) {
         .single();
 
       if (!parentError && parentRecord) {
-        await supabase
-          .from("profiles")
-          .update({ parent_id: parentRecord.id })
-          .eq("id", newUser.user.id);
+        // Canonical link: sets role='parent' + parent_id in one update.
+        await linkProfileToParent(supabase, newUser.user.id, parentRecord.id);
       } else {
         console.error("Failed to create parent record:", parentError);
       }
@@ -294,16 +318,72 @@ export async function PATCH(request: Request) {
 
     const supabase = createAdminClient();
 
-    const { error } = await supabase
-      .from("profiles")
-      .update({ role, updated_at: new Date().toISOString() })
-      .eq("id", id);
+    // Switching a login TO teacher requires a linked teacher record (migration
+    // 068). Staff-role accounts carry no teacher link and there's no
+    // teacher-linking UI, so this used to dead-end with "needs a linked teacher
+    // record first". Instead, self-heal: reuse the account's existing teacher
+    // record, or find-or-create one (by email) and link it atomically via the
+    // identity service. This is the common "created as staff by mistake, should
+    // be a teacher" repair.
+    if (role === "teacher") {
+      const { data: existing } = await supabase
+        .from("profiles")
+        .select("full_name, email, phone, teacher_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (!existing) {
+        return NextResponse.json({ error: "User not found" }, { status: 404 });
+      }
+
+      let teacherId = existing.teacher_id as string | null;
+      if (!teacherId) {
+        const ensured = await ensureTeacherRecord(supabase, {
+          email: (existing.email as string | null) ?? null,
+          fullName: (existing.full_name as string | null) ?? "Teacher",
+          phone: (existing.phone as string | null) ?? null,
+        });
+        if ("error" in ensured) {
+          return NextResponse.json(
+            { error: ensured.error },
+            { status: ensured.status }
+          );
+        }
+        teacherId = ensured.teacherId;
+      }
+
+      const linked = await linkProfileToTeacher(supabase, id, teacherId);
+      if (!linked.ok) {
+        return NextResponse.json({ error: linked.error }, { status: linked.status });
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    // Keep links consistent with the new role (migration 068 trigger): clear
+    // any domain link that the target role may not hold. student_id only for
+    // 'student'; parent_id only for 'parent'. If the new role REQUIRES a link
+    // it doesn't have (parent with no record), the trigger rejects it — we map
+    // that to an actionable message ('parent'/'student' have a Link-record UI).
+    const patch: Record<string, unknown> = {
+      role,
+      updated_at: new Date().toISOString(),
+    };
+    if (role !== "admin") patch.teacher_id = null;
+    if (role !== "student") patch.student_id = null;
+    if (role !== "parent") patch.parent_id = null;
+
+    const { error } = await supabase.from("profiles").update(patch).eq("id", id);
 
     if (error) {
       console.error("Update role error:", error);
+      const needsLink =
+        role === "parent" && /requires parent_id/.test(error.message ?? "");
       return NextResponse.json(
-        { error: "Failed to update role" },
-        { status: 500 }
+        {
+          error: needsLink
+            ? `Switching to ${role} needs a linked ${role} record first. Use "Create user" for a new ${role}, or the "Link record" tool.`
+            : "Failed to update role",
+        },
+        { status: needsLink ? 409 : 500 }
       );
     }
 

@@ -21,7 +21,7 @@ import {
 import { Badge } from "@nkps/shared/components/ui/badge";
 import { Button } from "@nkps/shared/components/ui/button";
 import { toast } from "sonner";
-import { Download, BarChart3, Users } from "lucide-react";
+import { Download, BarChart3, Users, AlertTriangle } from "lucide-react";
 
 interface ChildOption {
   student_id: string;
@@ -74,6 +74,7 @@ export default function ParentResultsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingResults, setLoadingResults] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [dues, setDues] = useState<{ total: number; hasOutstanding: boolean } | null>(null);
 
   // Fetch children on mount
   useEffect(() => {
@@ -118,8 +119,9 @@ export default function ParentResultsPage() {
           .from("student_enrollments")
           .select("classes(name, section)")
           .eq("student_id", student.id)
+          .order("enrollment_date", { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         const classInfo = enrollment?.classes as unknown as {
           name: string;
@@ -148,7 +150,17 @@ export default function ParentResultsPage() {
 
   // Fetch results when selected child changes
   useEffect(() => {
-    if (!selectedChild) return;
+    if (!selectedChild) {
+      setDues(null);
+      return;
+    }
+
+    // Fee-dues gate for the result download.
+    setDues(null);
+    fetch(`/api/students/dues?student_id=${selectedChild}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setDues(d))
+      .catch(() => {});
 
     async function fetchResults() {
       setLoadingResults(true);
@@ -196,7 +208,7 @@ export default function ParentResultsPage() {
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        toast.error(body.error ?? "Failed to download report card");
+        toast.error(body.message ?? body.error ?? "Failed to download report card");
         return;
       }
       const blob = await res.blob();
@@ -264,13 +276,38 @@ export default function ParentResultsPage() {
             variant="outline"
             className="border-navy-900 dark:border-white text-navy-900 dark:text-white hover:bg-navy-900/5 dark:hover:bg-white/5"
             onClick={handleDownload}
-            disabled={downloading || !selectedExam || exams.length === 0}
+            disabled={
+              downloading ||
+              !selectedExam ||
+              exams.length === 0 ||
+              Boolean(dues?.hasOutstanding)
+            }
           >
             <Download className="h-4 w-4 mr-2" />
-            {downloading ? "Preparing…" : "Download Report Card"}
+            {dues?.hasOutstanding
+              ? "Locked — dues pending"
+              : downloading
+                ? "Preparing…"
+                : "Download Report Card"}
           </Button>
         </div>
       </div>
+
+      {dues?.hasOutstanding && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">
+              Result download locked
+            </p>
+            <p className="text-sm text-red-600 dark:text-red-400 mt-0.5">
+              Clear the outstanding fee dues of ₹{dues.total.toLocaleString("en-IN")} for{" "}
+              {studentName || "this child"} to download the report card. Results stay
+              visible below.
+            </p>
+          </div>
+        </div>
+      )}
 
       {loadingResults ? (
         <div className="flex items-center justify-center h-32">

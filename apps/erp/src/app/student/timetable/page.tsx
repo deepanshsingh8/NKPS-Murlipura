@@ -116,6 +116,15 @@ export default function StudentTimetablePage() {
     [entries, todayDow]
   );
 
+  // Period rows are derived from the actual timetable (so a zero period shows
+  // and the grid scales past 8), falling back to the default 1–8 when empty.
+  const periodList = useMemo(() => {
+    const nums = Array.from(new Set(entries.map((e) => e.period_number))).sort(
+      (a, b) => a - b
+    );
+    return nums.length > 0 ? nums : PERIODS;
+  }, [entries]);
+
   const now = nowMinutes();
 
   const getEntry = (day: number, period: number) =>
@@ -251,10 +260,10 @@ export default function StudentTimetablePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {PERIODS.map((period) => (
+                  {periodList.map((period) => (
                     <tr key={period}>
                       <td className="border border-gray-200 dark:border-border bg-gray-50 dark:bg-muted px-3 py-2 text-center text-sm font-medium text-navy-900 dark:text-white">
-                        {period}
+                        {period === 0 ? "0" : period}
                       </td>
                       {DAY_NUMBERS.map((day) => {
                         const entry = getEntry(day, period);

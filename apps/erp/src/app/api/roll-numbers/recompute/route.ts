@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { verifyAdmin } from "@nkps/shared/lib/verify-admin";
+import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { computeRanksForClass } from "@/lib/final-result";
 
 type SortKey = "name" | "admission_no" | "previous_rank";
@@ -12,7 +12,7 @@ const recomputeSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const admin = await verifyAdmin();
+    const admin = await verifyAdminOrEditor("classes");
     if (!admin) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

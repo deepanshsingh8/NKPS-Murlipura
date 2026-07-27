@@ -35,33 +35,35 @@ export async function POST(request: Request) {
     const { full_name, email, phone, role, student_admission_no, relationship } = result.data;
     const supabase = createAdminClient();
 
-    // Check if email already exists as an active user
+    // Account-enumeration guard: this is a public, unauthenticated endpoint, so
+    // the response must look identical whether or not the email already has an
+    // account or a pending request. We branch internally (skip the insert when
+    // a profile/pending request already exists) but always return the same
+    // generic success — an attacker can't tell members from non-members. The
+    // trade-off (a returning user gets no "sign in instead" hint) was chosen
+    // deliberately over the leak.
+    const genericSuccess = NextResponse.json({ success: true });
+
     const { data: existingProfile } = await supabase
       .from("profiles")
       .select("id")
       .eq("email", email)
-      .single();
+      .maybeSingle();
 
-    if (existingProfile) {
-      return NextResponse.json(
-        { error: "An account with this email already exists. Please sign in instead." },
-        { status: 409 }
-      );
-    }
-
-    // Check if there's already a pending registration for this email
     const { data: existingRequest } = await supabase
       .from("registration_requests")
       .select("id")
       .eq("email", email)
       .eq("status", "pending")
-      .single();
+      .maybeSingle();
 
-    if (existingRequest) {
-      return NextResponse.json(
-        { error: "A registration request with this email is already pending review." },
-        { status: 409 }
+    if (existingProfile || existingRequest) {
+      // Nothing to do — don't create a duplicate request, don't email, don't
+      // reveal which case it was. Logged server-side for admin visibility only.
+      console.info(
+        `[register] suppressed duplicate registration for an existing ${existingProfile ? "account" : "pending request"}`
       );
+      return genericSuccess;
     }
 
     // Insert the registration request
@@ -92,7 +94,7 @@ export async function POST(request: Request) {
       console.error("Failed to send registration confirmation email:", emailError);
     }
 
-    return NextResponse.json({ success: true });
+    return genericSuccess;
   } catch (err) {
     console.error("Registration API error:", err);
     return NextResponse.json(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
@@ -31,7 +31,7 @@ import {
 } from "@nkps/shared/components/ui/tabs";
 import { Card, CardContent } from "@nkps/shared/components/ui/card";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Loader2, Search, CreditCard, Banknote, Download, Bus, FileSpreadsheet, ArrowLeft } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search, CreditCard, Banknote, Download, FileSpreadsheet, ArrowLeft } from "lucide-react";
 import { adminApi, adminFetch } from "@nkps/shared/lib/admin-api";
 import { downloadCSV } from "@/lib/csv-export";
 import { formatClassName } from "@nkps/shared/lib/utils";
@@ -40,24 +40,17 @@ import {
   resolveEffectiveFeeLines,
   FEE_FREQ_MULTIPLIER,
   annualizedAmount,
+  type StopFeeLookup,
 } from "@/lib/fees";
 import type {
   FeeStructure,
   FeePayment,
   Student,
   Stream,
-  TransportFareSlab,
   EffectiveFeeLine,
+  TransportDirection,
+  FeeFrequency,
 } from "@nkps/shared/types";
-import { TransportSlabsMap } from "./TransportSlabsMap";
-import {
-  AddressFareLookup,
-  type AddressFareLookupHandle,
-} from "./AddressFareLookup";
-import {
-  PlacesAutocompleteInput,
-  isGooglePlacesConfigured,
-} from "@nkps/shared/components/PlacesAutocompleteInput";
 import { HistoricalFeesImportDialog } from "@/components/HistoricalFeesImportDialog";
 
 const CLASS_NAMES = [
@@ -82,13 +75,6 @@ const STREAM_CLASSES = ["XI", "XII"];
 
 const FEE_TYPES = ["Tuition", "Lab", "Annual", "Other"];
 const FREQUENCIES = ["monthly", "quarterly", "annual", "one_time"] as const;
-const EMPTY_SLAB = {
-  name: "",
-  distance_km_min: "",
-  distance_km_max: "",
-  amount: "",
-  frequency: "monthly" as (typeof FREQUENCIES)[number],
-};
 const PAYMENT_METHODS = [
   "cash",
   "online",
@@ -104,7 +90,8 @@ const EMPTY_STRUCTURE = {
   frequency: "monthly" as (typeof FREQUENCIES)[number],
   due_date: "",
   late_fee_percent: "",
-  late_fee_fixed_amount: "",
+  late_fee_per_day: "",
+  late_fee_max: "",
 };
 
 interface ClassEntry {
@@ -125,14 +112,15 @@ interface DuesRow {
   expected: number;
   paid: number;
   // Late-fee surcharge auto-applied when at least one applicable fee
-  // structure has a due_date in the past. Computed as
-  //   max( amount * late_fee_percent/100, late_fee_fixed_amount )
-  // per overdue structure, then summed.
+  // structure has a due_date in the past. Computed per overdue structure as
+  //   min( max( amount * late_fee_percent/100, daysOverdue * late_fee_per_day ),
+  //        late_fee_max || Infinity )
+  // then summed.
   late_fee: number;
   dues: number;
 }
 
-export type FeesSection = "academic" | "transport" | "payments";
+export type FeesSection = "academic" | "payments";
 
 interface AdminFeesContentInnerProps {
   section: FeesSection;
@@ -194,47 +182,31 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
   >(null);
   const [selectedEnrollmentId, setSelectedEnrollmentId] = useState<string | null>(null);
   const [selectedClassLabel, setSelectedClassLabel] = useState<string>("");
+  // Transport state for the selected student. Stop/fee/bus assignment now
+  // lives in the standalone /transport section (migration 074); Payments only
+  // reads the assigned stop so the office can bill a transport payment.
   const [studentHasTransport, setStudentHasTransport] = useState(false);
-  const [studentTransportSlabId, setStudentTransportSlabId] = useState<
-    string | null
+  const [studentBusStopId, setStudentBusStopId] = useState<string | null>(null);
+  const [studentTransportDirection, setStudentTransportDirection] =
+    useState<TransportDirection>("both");
+  const [studentTransportFeeOverride, setStudentTransportFeeOverride] =
+    useState<number | null>(null);
+  // Resolved from bus_stop_fees for the current academic year — the stop's
+  // display name and its flat per-year fee (before any one-side override).
+  const [studentStopName, setStudentStopName] = useState("");
+  const [studentStopFeeAmount, setStudentStopFeeAmount] = useState<
+    number | null
   >(null);
-  // Pickup audit state — driven by Phase 3. Whatever's on the enrollment row
-  // becomes the baseline; the form lets admin edit, geocode, and save with
-  // server-side override-reason enforcement.
-  const [studentPickupAddress, setStudentPickupAddress] = useState("");
-  const [studentPickupLat, setStudentPickupLat] = useState<number | null>(null);
-  const [studentPickupLng, setStudentPickupLng] = useState<number | null>(null);
-const [studentOverrideReason, setStudentOverrideReason] = useState("");
-  const [studentVerifiedAt, setStudentVerifiedAt] = useState<string | null>(null);
-  const [geocoding, setGeocoding] = useState(false);
-  const [savingTransport, setSavingTransport] = useState(false);
-  const [togglingTransport, setTogglingTransport] = useState(false);
-
-  // Transport fare slab catalog (current academic year). Powers both the
-  // Transport sub-tab CRUD list and the per-student slab dropdown in Payments.
-  const [transportSlabs, setTransportSlabs] = useState<TransportFareSlab[]>([]);
-  const [slabsLoading, setSlabsLoading] = useState(true);
-  // Pickup pin set by the address-fare lookup. Stays null when the lookup
-  // hasn't been used; clearing the query clears the pin too.
-  const [pickupPin, setPickupPin] = useState<{
-    lat: number;
-    lng: number;
-    label: string;
-    distanceKm: number;
-  } | null>(null);
-  // Ref into the AddressFareLookup so map clicks can drop a pin without
-  // typing — the panel re-uses the same distance+slab pipeline.
-  const lookupRef = useRef<AddressFareLookupHandle | null>(null);
-  const [slabDialogOpen, setSlabDialogOpen] = useState(false);
-  const [slabDialogMode, setSlabDialogMode] = useState<"add" | "edit">("add");
-  const [editingSlabId, setEditingSlabId] = useState<string | null>(null);
-  const [slabSubmitting, setSlabSubmitting] = useState(false);
-  const [slabForm, setSlabForm] = useState(EMPTY_SLAB);
+  const [studentStopFeeFrequency, setStudentStopFeeFrequency] =
+    useState<FeeFrequency>("monthly");
   const [studentFeeStructures, setStudentFeeStructures] = useState<
     FeeStructure[]
   >([]);
   const [studentPayments, setStudentPayments] = useState<
-    (FeePayment & { fee_structure?: FeeStructure })[]
+    (FeePayment & {
+      fee_structure?: FeeStructure;
+      bus_stop?: { name: string } | null;
+    })[]
   >([]);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
 
@@ -262,9 +234,10 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
   const [recordPaymentOpen, setRecordPaymentOpen] = useState(false);
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [newPayment, setNewPayment] = useState({
-    // The dropdown encodes its choice as either "fs:<uuid>" or "slab:<uuid>";
-    // we decode at submit time. Keeps the state model simple and the UI
-    // single-select even though the underlying FK lives on two columns.
+    // The dropdown encodes its choice as either "fs:<uuid>" (fee_structure_id)
+    // or "stop:<uuid>" (bus_stop_id); we decode at submit time. Keeps the state
+    // model simple and the UI single-select even though the underlying FK lives
+    // on two columns.
     fee_target: "",
     amount_paid: "",
     payment_method: "cash" as (typeof PAYMENT_METHODS)[number],
@@ -334,24 +307,6 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     setStructuresLoading(false);
   }, [supabase, classFilter]);
 
-  const fetchTransportSlabs = useCallback(async () => {
-    if (!academicYearId) return;
-    setSlabsLoading(true);
-    const { data, error } = await supabase
-      .from("transport_fare_slabs")
-      .select("*")
-      .eq("academic_year_id", academicYearId)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: true });
-    if (error) {
-      toast.error("Failed to fetch transport slabs");
-      setSlabsLoading(false);
-      return;
-    }
-    setTransportSlabs((data as TransportFareSlab[]) ?? []);
-    setSlabsLoading(false);
-  }, [supabase, academicYearId]);
-
   useEffect(() => {
     fetchAcademicYear();
     fetchStreams();
@@ -360,10 +315,6 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
   useEffect(() => {
     fetchFeeStructures();
   }, [fetchFeeStructures]);
-
-  useEffect(() => {
-    fetchTransportSlabs();
-  }, [fetchTransportSlabs]);
 
   const streamById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -398,11 +349,13 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     setStudentSearch(student.full_name);
     setPaymentsLoading(true);
 
-    // Get active enrollment to determine class + stream + transport opt-in
+    // Get active enrollment to determine class + stream + transport opt-in.
+    // Transport assignment (stop/bus/direction) is managed in the /transport
+    // section; here we only read what we need to bill the assigned stop.
     const { data: enrollment } = await supabase
       .from("student_enrollments")
       .select(
-        "id, class_id, stream_id, has_transport, transport_slab_id, transport_slab_suggested_id, transport_slab_overridden_at, transport_slab_override_reason, pickup_address, pickup_lat, pickup_lng, pickup_verified_at, classes(name, section)"
+        "id, class_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, classes(name, section)"
       )
       .eq("student_id", student.id)
       .order("enrollment_date", { ascending: false })
@@ -412,30 +365,53 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     const classRaw = (enrollment?.classes as unknown as { name: string; section: string } | null) ?? null;
     const className = classRaw?.name ?? "";
     const streamId = enrollment?.stream_id ?? null;
+    const hasTransport = Boolean(enrollment?.has_transport);
+    const busStopId = (enrollment?.bus_stop_id as string | null) ?? null;
+    const direction =
+      (enrollment?.transport_direction as TransportDirection | null) ?? "both";
+    const feeOverride =
+      enrollment?.transport_fee_override != null
+        ? Number(enrollment.transport_fee_override)
+        : null;
     setSelectedStudentStreamId(streamId);
     setSelectedEnrollmentId(enrollment?.id ?? null);
-    setStudentHasTransport(Boolean(enrollment?.has_transport));
-    setStudentTransportSlabId(
-      (enrollment?.transport_slab_id as string | null) ?? null
-    );
-    setStudentPickupAddress(
-      (enrollment?.pickup_address as string | null) ?? ""
-    );
-    setStudentPickupLat(
-      enrollment?.pickup_lat != null ? Number(enrollment.pickup_lat) : null
-    );
-    setStudentPickupLng(
-      enrollment?.pickup_lng != null ? Number(enrollment.pickup_lng) : null
-    );
-    setStudentOverrideReason(
-      (enrollment?.transport_slab_override_reason as string | null) ?? ""
-    );
-    setStudentVerifiedAt(
-      (enrollment?.pickup_verified_at as string | null) ?? null
-    );
+    setStudentHasTransport(hasTransport);
+    setStudentBusStopId(busStopId);
+    setStudentTransportDirection(direction);
+    setStudentTransportFeeOverride(feeOverride);
     setSelectedClassLabel(
       classRaw ? `${classRaw.name}${classRaw.section ? " - " + classRaw.section : ""}` : ""
     );
+
+    // Resolve the stop's fee for the current academic year so Payments can
+    // offer a transport line. Only meaningful when the student is opted in
+    // and actually assigned to a stop.
+    if (hasTransport && busStopId && academicYearId) {
+      const { data: stopFee } = await supabase
+        .from("bus_stop_fees")
+        .select("amount, frequency, is_active, bus_stops(name)")
+        .eq("bus_stop_id", busStopId)
+        .eq("academic_year_id", academicYearId)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (stopFee) {
+        const stopMeta =
+          (stopFee.bus_stops as unknown as { name: string } | null) ?? null;
+        setStudentStopName(stopMeta?.name ?? "");
+        setStudentStopFeeAmount(Number(stopFee.amount));
+        setStudentStopFeeFrequency(
+          (stopFee.frequency as FeeFrequency) ?? "monthly"
+        );
+      } else {
+        setStudentStopName("");
+        setStudentStopFeeAmount(null);
+        setStudentStopFeeFrequency("monthly");
+      }
+    } else {
+      setStudentStopName("");
+      setStudentStopFeeAmount(null);
+      setStudentStopFeeFrequency("monthly");
+    }
 
     // Fetch fee structures for student's class. Filter by stream:
     //  - rows with stream_id IS NULL always apply
@@ -458,18 +434,22 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
       setStudentFeeStructures([]);
     }
 
-    // Fetch payment history
+    // Fetch payment history. Academic payments carry a fee_structure; transport
+    // payments carry a bus_stop (migration 074 replaced the old fare slab).
     const { data: payments } = await supabase
       .from("fee_payments")
-      .select("*, fee_structure:fee_structures(*)")
+      .select("*, fee_structure:fee_structures(*), bus_stop:bus_stops(name)")
       .eq("student_id", student.id)
       .order("payment_date", { ascending: false });
 
     setStudentPayments(
-      (payments as (FeePayment & { fee_structure?: FeeStructure })[]) ?? []
+      (payments as (FeePayment & {
+        fee_structure?: FeeStructure;
+        bus_stop?: { name: string } | null;
+      })[]) ?? []
     );
     setPaymentsLoading(false);
-  }, [supabase]);
+  }, [supabase, academicYearId]);
 
   // Re-fetch the full Student row by id (the roster select only carries a few
   // columns) and hand off to the existing detail loader.
@@ -491,12 +471,12 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     setSelectedEnrollmentId(null);
     setSelectedClassLabel("");
     setStudentHasTransport(false);
-    setStudentTransportSlabId(null);
-    setStudentPickupAddress("");
-    setStudentPickupLat(null);
-    setStudentPickupLng(null);
-    setStudentOverrideReason("");
-    setStudentVerifiedAt(null);
+    setStudentBusStopId(null);
+    setStudentTransportDirection("both");
+    setStudentTransportFeeOverride(null);
+    setStudentStopName("");
+    setStudentStopFeeAmount(null);
+    setStudentStopFeeFrequency("monthly");
     setStudentFeeStructures([]);
     setStudentPayments([]);
     setStudentSearch("");
@@ -590,226 +570,6 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     );
   }, [classStudents, classStudentSearch]);
 
-  // Compute the suggested slab id from current pickup coords. Used to drive
-  // the "differs from suggestion" badge + the override-reason requirement.
-  const computeSuggestedSlabId = useCallback(
-    (lat: number | null, lng: number | null): string | null => {
-      if (lat == null || lng == null) return null;
-      const R = 6371;
-      const toRad = (d: number) => (d * Math.PI) / 180;
-      const dLat = toRad(lat - 27.0688458);
-      const dLng = toRad(lng - 75.7495752);
-      const lat1 = toRad(27.0688458);
-      const lat2 = toRad(lat);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
-      const distanceKm = 2 * R * Math.asin(Math.sqrt(a));
-      const sorted = [...transportSlabs]
-        .filter((s) => s.is_active)
-        .sort(
-          (a, b) =>
-            Number(a.distance_km_min ?? 0) - Number(b.distance_km_min ?? 0)
-        );
-      for (const s of sorted) {
-        const min = s.distance_km_min == null ? 0 : Number(s.distance_km_min);
-        const max =
-          s.distance_km_max == null
-            ? Number.POSITIVE_INFINITY
-            : Number(s.distance_km_max);
-        if (distanceKm >= min && distanceKm <= max) return s.id;
-      }
-      return null;
-    },
-    [transportSlabs]
-  );
-
-  // Pre-save preview of the suggested slab. We don't trust this for the
-  // audit decision (server recomputes), but we do use it to drive the UI:
-  // show the suggestion vs. the current assignment, and only reveal the
-  // override-reason field when the two differ.
-  const currentSuggestedSlabId = useMemo(
-    () => computeSuggestedSlabId(studentPickupLat, studentPickupLng),
-    [computeSuggestedSlabId, studentPickupLat, studentPickupLng]
-  );
-  const isOverride =
-    currentSuggestedSlabId != null &&
-    studentTransportSlabId != null &&
-    currentSuggestedSlabId !== studentTransportSlabId;
-
-  // Geocode the pickup address via Nominatim (same flow as the slab map's
-  // address-lookup). Updates lat/lng + zoomed pin state.
-  const handleGeocodePickup = async () => {
-    const q = studentPickupAddress.trim();
-    if (q.length < 4) {
-      toast.error("Type a more specific address");
-      return;
-    }
-    setGeocoding(true);
-    try {
-      const url = new URL("https://nominatim.openstreetmap.org/search");
-      url.searchParams.set("q", q);
-      url.searchParams.set("format", "json");
-      url.searchParams.set("limit", "1");
-      url.searchParams.set("countrycodes", "in");
-      const res = await fetch(url.toString(), {
-        headers: { Accept: "application/json" },
-      });
-      const json = (await res.json()) as {
-        lat: string;
-        lon: string;
-        display_name: string;
-      }[];
-      if (!json.length) {
-        toast.error("Couldn't find that address");
-        return;
-      }
-      const lat = parseFloat(json[0].lat);
-      const lng = parseFloat(json[0].lon);
-      setStudentPickupLat(lat);
-      setStudentPickupLng(lng);
-      // Auto-snap the slab to the suggestion unless the admin has already
-      // diverged on purpose (override reason already set).
-      const suggested = computeSuggestedSlabId(lat, lng);
-      if (!studentOverrideReason && suggested) {
-        setStudentTransportSlabId(suggested);
-      }
-      toast.success("Address geocoded — slab suggestion updated");
-    } catch {
-      toast.error("Geocoding failed");
-    } finally {
-      setGeocoding(false);
-    }
-  };
-
-  // Save the transport assignment through the audit endpoint. Server
-  // re-derives the suggestion from coords and rejects an override without
-  // a reason — UI guards are convenience only.
-  const handleSaveTransport = async () => {
-    if (!selectedEnrollmentId) {
-      toast.error("No active enrollment to update");
-      return;
-    }
-    if (!studentTransportSlabId) {
-      toast.error("Pick a distance slab before opting in to transport");
-      return;
-    }
-    if (isOverride && studentOverrideReason.trim().length < 3) {
-      toast.error("Add a reason for overriding the suggested slab");
-      return;
-    }
-    setSavingTransport(true);
-    try {
-      const res = await adminFetch("/api/students/transport", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enrollment_id: selectedEnrollmentId,
-          has_transport: true,
-          pickup_address: studentPickupAddress.trim() || null,
-          pickup_lat: studentPickupLat,
-          pickup_lng: studentPickupLng,
-          slab_id: studentTransportSlabId,
-          override_reason: isOverride
-            ? studentOverrideReason.trim()
-            : null,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        toast.error(json.error || "Failed to save transport assignment");
-        return;
-      }
-      setStudentHasTransport(true);
-      if (!json.is_override) setStudentOverrideReason("");
-      // Pickup coords changed → server clears verification. Mirror locally.
-      setStudentVerifiedAt(null);
-      toast.success("Transport assignment saved");
-    } catch {
-      toast.error("Failed to save transport assignment");
-    } finally {
-      setSavingTransport(false);
-    }
-  };
-
-  const handleOptOutTransport = async () => {
-    if (!selectedEnrollmentId) return;
-    setTogglingTransport(true);
-    try {
-      const res = await adminFetch("/api/students/transport", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enrollment_id: selectedEnrollmentId,
-          has_transport: false,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        toast.error(json.error || "Failed to opt out");
-        return;
-      }
-      setStudentHasTransport(false);
-      setStudentTransportSlabId(null);
-      setStudentOverrideReason("");
-      toast.success("Transport removed for this student");
-    } catch {
-      toast.error("Failed to opt out");
-    } finally {
-      setTogglingTransport(false);
-    }
-  };
-
-  const handleVerifyPickup = async (verified: boolean) => {
-    if (!selectedEnrollmentId) return;
-    // Try to record GPS coords when verifying — these become the cheat
-    // detector when paired with the claimed pickup_lat/lng. Verification
-    // works without coords too (older browsers / denied permission).
-    let verifiedLat: number | null = null;
-    let verifiedLng: number | null = null;
-    if (verified && typeof navigator !== "undefined" && navigator.geolocation) {
-      try {
-        const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            timeout: 8000,
-            enableHighAccuracy: true,
-          })
-        );
-        verifiedLat = pos.coords.latitude;
-        verifiedLng = pos.coords.longitude;
-      } catch {
-        // Geolocation denied or unavailable — record verification anyway.
-      }
-    }
-    try {
-      const res = await adminFetch("/api/students/transport/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enrollment_id: selectedEnrollmentId,
-          verified,
-          verified_lat: verifiedLat,
-          verified_lng: verifiedLng,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        toast.error(json.error || "Failed to update verification");
-        return;
-      }
-      setStudentVerifiedAt(verified ? new Date().toISOString() : null);
-      toast.success(verified ? "Pickup verified" : "Verification cleared");
-    } catch {
-      toast.error("Failed to update verification");
-    }
-  };
-
-  const slabLabel = (slabId: string | null) => {
-    if (!slabId) return "—";
-    const s = transportSlabs.find((x) => x.id === slabId);
-    return s ? s.name : "—";
-  };
-
   const downloadReceipt = async (paymentId: string) => {
     try {
       const res = await adminFetch(
@@ -844,7 +604,7 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
       const { data: enrollments } = await supabase
         .from("student_enrollments")
         .select(
-          "id, student_id, stream_id, has_transport, transport_slab_id, status, students(id, full_name, admission_no, father_name, is_active)"
+          "id, student_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, students(id, full_name, admission_no, father_name, is_active)"
         )
         .eq("class_id", duesClassId)
         .eq("academic_year_id", academicYearId)
@@ -855,17 +615,34 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
         .eq("class_name", classMeta.name)
         .eq("academic_year_id", academicYearId)
         .eq("is_active", true);
-      // Slabs read off the catalog state (already loaded for current year).
-      // We don't refetch on every dues compute since the catalog rarely
-      // changes mid-session and `transportSlabs` is a top-level dependency
-      // anyway — see useEffect below.
-      const slabsById = new Map(transportSlabs.map((s) => [s.id, s]));
+      // Per-stop fees for the current year (stop-based model, migration 074).
+      // Keyed by bus_stop_id so each transport-using enrollment can price its
+      // assigned stop.
+      const { data: stopFeeRows } = await supabase
+        .from("bus_stop_fees")
+        .select("bus_stop_id, amount, frequency, is_active")
+        .eq("academic_year_id", academicYearId)
+        .eq("is_active", true);
+      type StopFeeRow = {
+        bus_stop_id: string;
+        amount: number;
+        frequency: string;
+        is_active: boolean;
+      };
+      const stopFeesById = new Map(
+        ((stopFeeRows as StopFeeRow[] | null) ?? []).map((f) => [
+          f.bus_stop_id,
+          f,
+        ])
+      );
 
       const studentIds = (enrollments ?? []).map((e) => e.student_id as string);
       type PayRow = {
         student_id: string;
+        fee_structure_id: string | null;
         amount_paid: number;
         waiver_amount: number;
+        refund_amount: number | null;
         status: string;
       };
       let payments: PayRow[] = [];
@@ -874,15 +651,18 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
         // instead of an INNER join through `fee_structures` — the join
         // dropped payments whose linked structure had been deleted, even
         // though those payments are still real cash receipts the school
-        // received. Refunded rows are excluded; waiver rows contribute via
-        // `waiver_amount` (their amount_paid is 0 by schema).
+        // received. Waiver rows contribute via `waiver_amount` (their
+        // amount_paid is 0 by schema). Refunded rows are INCLUDED: a partial
+        // refund flips status to 'refunded' while amount_paid stays put, so
+        // dropping them by status erased the whole receipt from paid totals
+        // and overstated dues. Each refunded row's net cash is settled below.
         const { data: pays } = await supabase
           .from("fee_payments")
           .select(
-            "student_id, amount_paid, waiver_amount, status"
+            "student_id, fee_structure_id, amount_paid, waiver_amount, refund_amount, status"
           )
           .in("student_id", studentIds)
-          .in("status", ["paid", "partial"])
+          .in("status", ["paid", "partial", "refunded"])
           .eq("academic_year_id", academicYearId);
         payments = (pays as unknown as PayRow[]) ?? [];
       }
@@ -902,39 +682,92 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
         const applicable = resolveEffectiveFeeStructures(allStructures, {
           studentStreamId: (e.stream_id as string | null) ?? null,
         });
-        const slab =
-          e.has_transport && e.transport_slab_id
-            ? slabsById.get(e.transport_slab_id as string)
+        // Transport dues: price the assigned stop's per-year fee. A one-side
+        // facility (direction != 'both') bills the per-student override when
+        // one is set; otherwise the flat stop fee applies.
+        const stopFee =
+          e.has_transport && e.bus_stop_id
+            ? stopFeesById.get(e.bus_stop_id as string)
             : undefined;
+        const transportAnnual = stopFee
+          ? annualizedAmount({
+              amount:
+                (e.transport_direction as string | null) !== "both" &&
+                e.transport_fee_override != null
+                  ? Number(e.transport_fee_override)
+                  : Number(stopFee.amount),
+              frequency: stopFee.frequency,
+            })
+          : 0;
         const expected =
           applicable.reduce(
             (sum, fs) =>
               sum + Number(fs.amount) * (FEE_FREQ_MULTIPLIER[fs.frequency] ?? 1),
             0
-          ) + (slab && slab.is_active ? annualizedAmount(slab) : 0);
-        // Late fee per overdue structure: pick the larger of the percent and
-        // the fixed-amount surcharge. Structures with no due_date or a
-        // future due_date contribute nothing. Ignored entirely if the
-        // student has no outstanding dues on the structure (covered by the
-        // outer `Math.max(0, expected - paid)` clamp + the per-structure
-        // overdue check).
+          ) + transportAnnual;
+        // Net settled cash per fee structure for this student, keyed by
+        // fee_structure_id (transport payments carry a null structure and are
+        // excluded — transport has no late fee). A partial refund leaves
+        // amount_paid intact, so net cash is `amount_paid - refund_amount`
+        // (never below 0 per row); waivers count as settled too. This lets the
+        // late-fee pass below ask "is THIS structure still owed?" rather than
+        // gating on the student's aggregate balance.
+        const paidByStructure = new Map<string, number>();
+        const studentPayments = payments.filter(
+          (p) => p.student_id === e.student_id
+        );
+        for (const p of studentPayments) {
+          if (!p.fee_structure_id) continue;
+          const net =
+            Math.max(0, Number(p.amount_paid) - Number(p.refund_amount ?? 0)) +
+            Number(p.waiver_amount ?? 0);
+          paidByStructure.set(
+            p.fee_structure_id,
+            (paidByStructure.get(p.fee_structure_id) ?? 0) + net
+          );
+        }
+        // Late fee per overdue structure: the larger of the one-time percent
+        // surcharge and the per-day surcharge accrued since the due date,
+        // capped at late_fee_max when set. Structures with no due_date or a
+        // future due_date contribute nothing. A structure that is individually
+        // fully settled contributes no late fee even when the student owes on
+        // another line (#11) — previously the whole late-fee sum was gated only
+        // on the student's aggregate balance, so a paid-on-time structure was
+        // still surcharged whenever any other fee remained due.
         const lateFee = applicable.reduce((sum, fs) => {
           if (!fs.due_date || fs.due_date >= today) return sum;
           const pct = Number(fs.late_fee_percent ?? 0);
-          const flat = Number(fs.late_fee_fixed_amount ?? 0);
-          if (pct === 0 && flat === 0) return sum;
-          const pctAmt = (Number(fs.amount) * pct) / 100;
-          return sum + Math.max(pctAmt, flat);
-        }, 0);
-        // `paid + waived` is what the dues view treats as settled. Refunded
-        // rows are already filtered out of `payments` above.
-        const paid = payments
-          .filter((p) => p.student_id === e.student_id)
-          .reduce(
-            (sum, p) =>
-              sum + Number(p.amount_paid) + Number(p.waiver_amount ?? 0),
-            0
+          const perDay = Number(fs.late_fee_per_day ?? 0);
+          if (pct === 0 && perDay === 0) return sum;
+          // Skip structures with no outstanding balance of their own.
+          const structureExpected =
+            Number(fs.amount) * (FEE_FREQ_MULTIPLIER[fs.frequency] ?? 1);
+          const structurePaid = paidByStructure.get(fs.id) ?? 0;
+          if (structurePaid >= structureExpected) return sum;
+          // Whole days elapsed from due_date to today (≥ 1 here, since the
+          // guard above already excluded due_date >= today).
+          const daysOverdue = Math.max(
+            0,
+            Math.floor(
+              (Date.parse(today) - Date.parse(fs.due_date)) / 86_400_000
+            )
           );
+          const pctAmt = (Number(fs.amount) * pct) / 100;
+          const perDayAmt = daysOverdue * perDay;
+          const raw = Math.max(pctAmt, perDayAmt);
+          const cap =
+            fs.late_fee_max != null ? Number(fs.late_fee_max) : Infinity;
+          return sum + Math.min(raw, cap);
+        }, 0);
+        // `paid + waived` is what the dues view treats as settled, summed
+        // across every structure + transport for the student-level balance.
+        const paid = studentPayments.reduce(
+          (sum, p) =>
+            sum +
+            Math.max(0, Number(p.amount_paid) - Number(p.refund_amount ?? 0)) +
+            Number(p.waiver_amount ?? 0),
+          0
+        );
         // Late fee only applies to the unpaid portion. Once a student has
         // covered the base expected amount, the surcharge stops accruing.
         const baseDues = Math.max(0, expected - paid);
@@ -960,7 +793,7 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     } finally {
       setDuesLoading(false);
     }
-  }, [supabase, duesClassId, academicYearId, classesList, transportSlabs]);
+  }, [supabase, duesClassId, academicYearId, classesList]);
 
   useEffect(() => {
     if (duesClassId) computeDues();
@@ -1029,196 +862,44 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     });
   }, [studentFeeStructures, selectedStudentStreamId]);
 
-  // Unified fee lines (academic + the student's selected transport slab).
+  // Unified fee lines (academic + the student's assigned transport stop).
   // The record-payment dropdown maps over this so transport sits alongside
-  // tuition / lab / annual without a separate UI affordance.
+  // tuition / lab / annual without a separate UI affordance. The stop's fee
+  // is resolved from bus_stop_fees (migration 074); a one-side facility bills
+  // the per-student override.
   const applicableFeeLines = useMemo<EffectiveFeeLine[]>(() => {
+    const stopFees: StopFeeLookup[] =
+      studentBusStopId && studentStopFeeAmount != null
+        ? [
+            {
+              bus_stop_id: studentBusStopId,
+              stop_name: studentStopName,
+              amount: studentStopFeeAmount,
+              frequency: studentStopFeeFrequency,
+              is_active: true,
+            },
+          ]
+        : [];
     return resolveEffectiveFeeLines({
       structures: studentFeeStructures,
       studentStreamId: selectedStudentStreamId,
       hasTransport: studentHasTransport,
-      transportSlabId: studentTransportSlabId,
-      slabs: transportSlabs,
+      busStopId: studentBusStopId,
+      direction: studentTransportDirection,
+      feeOverride: studentTransportFeeOverride,
+      stopFees,
     });
   }, [
     studentFeeStructures,
     selectedStudentStreamId,
     studentHasTransport,
-    studentTransportSlabId,
-    transportSlabs,
+    studentBusStopId,
+    studentTransportDirection,
+    studentTransportFeeOverride,
+    studentStopName,
+    studentStopFeeAmount,
+    studentStopFeeFrequency,
   ]);
-
-  const openAddSlab = () => {
-    setSlabDialogMode("add");
-    setEditingSlabId(null);
-    setSlabForm(EMPTY_SLAB);
-    setSlabDialogOpen(true);
-  };
-
-  const openEditSlab = (s: TransportFareSlab) => {
-    setSlabDialogMode("edit");
-    setEditingSlabId(s.id);
-    setSlabForm({
-      name: s.name,
-      distance_km_min: s.distance_km_min == null ? "" : String(s.distance_km_min),
-      distance_km_max: s.distance_km_max == null ? "" : String(s.distance_km_max),
-      amount: String(s.amount),
-      frequency: s.frequency,
-    });
-    setSlabDialogOpen(true);
-  };
-
-  const handleSaveSlab = async () => {
-    if (!academicYearId) {
-      toast.error("No current academic year found");
-      return;
-    }
-    const name = slabForm.name.trim();
-    if (!name) {
-      toast.error("Slab name is required");
-      return;
-    }
-    const amount = parseFloat(slabForm.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      toast.error("Enter a valid amount");
-      return;
-    }
-    const lo = slabForm.distance_km_min === ""
-      ? null
-      : Number(slabForm.distance_km_min);
-    const hi = slabForm.distance_km_max === ""
-      ? null
-      : Number(slabForm.distance_km_max);
-    if (lo !== null && (!Number.isFinite(lo) || lo < 0)) {
-      toast.error("Min km must be ≥ 0");
-      return;
-    }
-    if (hi !== null && (!Number.isFinite(hi) || hi < 0)) {
-      toast.error("Max km must be ≥ 0");
-      return;
-    }
-    if (lo !== null && hi !== null && hi < lo) {
-      toast.error("Max km must be ≥ min km");
-      return;
-    }
-
-    setSlabSubmitting(true);
-    const data: Record<string, unknown> = {
-      academic_year_id: academicYearId,
-      name,
-      distance_km_min: lo,
-      distance_km_max: hi,
-      amount,
-      frequency: slabForm.frequency,
-    };
-
-    const result = editingSlabId
-      ? await adminApi({
-          action: "update",
-          table: "transport_fare_slabs",
-          data,
-          match: { column: "id", value: editingSlabId },
-        })
-      : await adminApi({
-          action: "insert",
-          table: "transport_fare_slabs",
-          data,
-        });
-
-    if (!result.success) {
-      toast.error(
-        `Failed to ${editingSlabId ? "update" : "add"} slab: ${result.error}`
-      );
-    } else {
-      toast.success(editingSlabId ? "Slab updated" : "Slab added");
-      setSlabDialogOpen(false);
-      setSlabForm(EMPTY_SLAB);
-      setEditingSlabId(null);
-      fetchTransportSlabs();
-    }
-    setSlabSubmitting(false);
-  };
-
-  const handleDeleteSlab = async (id: string) => {
-    // Count students currently on this slab so the confirm dialog says
-    // exactly how many will be opted out. The trigger on transport_fare_slabs
-    // does the cascade automatically — we just want the user to know.
-    let dependentCount = 0;
-    try {
-      const { data } = await supabase.rpc("count_transport_slab_dependents", {
-        p_slab_id: id,
-      });
-      if (typeof data === "number") dependentCount = data;
-    } catch {
-      // RPC may not exist on legacy environments — fall back silently and
-      // let the trigger do its job. The user just won't see the count.
-    }
-
-    const studentClause =
-      dependentCount > 0
-        ? `\n\nThis will opt ${dependentCount} student${dependentCount === 1 ? "" : "s"} out of transport (their slab assignment will be cleared).`
-        : "";
-
-    if (
-      !confirm(
-        `Delete this transport slab? This cannot be undone.${studentClause}`
-      )
-    )
-      return;
-
-    const result = await adminApi({
-      action: "delete",
-      table: "transport_fare_slabs",
-      match: { column: "id", value: id },
-    });
-
-    if (result.success) {
-      toast.success(
-        dependentCount > 0
-          ? `Slab deleted. ${dependentCount} student${dependentCount === 1 ? "" : "s"} opted out of transport.`
-          : "Slab deleted"
-      );
-      fetchTransportSlabs();
-      return;
-    }
-
-    // FK violation = recorded payments still reference this slab (the
-    // student-enrollment cascade is handled by the trigger; only fee_payments
-    // can block the delete now). Offer to deactivate instead — that path
-    // ALSO runs the cascade, opting students out without losing the slab row
-    // that historical receipts link to.
-    const blockedByFK = (result.error ?? "").toLowerCase().includes("cannot delete");
-    if (
-      blockedByFK &&
-      confirm(
-        `Recorded payments still reference this slab, so it can't be deleted.\n\nDeactivate instead? It stays linked to old receipts but is hidden from new pickers${
-          dependentCount > 0
-            ? ` and ${dependentCount} student${dependentCount === 1 ? "" : "s"} will be opted out of transport`
-            : ""
-        }.`
-      )
-    ) {
-      const deact = await adminApi({
-        action: "update",
-        table: "transport_fare_slabs",
-        data: { is_active: false },
-        match: { column: "id", value: id },
-      });
-      if (!deact.success) {
-        toast.error(`Failed to deactivate: ${deact.error}`);
-        return;
-      }
-      toast.success(
-        dependentCount > 0
-          ? `Slab deactivated. ${dependentCount} student${dependentCount === 1 ? "" : "s"} opted out of transport.`
-          : "Slab deactivated"
-      );
-      fetchTransportSlabs();
-      return;
-    }
-
-    toast.error(`Failed to delete: ${result.error}`);
-  };
 
   const openAddStructure = () => {
     setStructureDialogMode("add");
@@ -1243,9 +924,11 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
       late_fee_percent: fs.late_fee_percent
         ? String(fs.late_fee_percent)
         : "",
-      late_fee_fixed_amount: fs.late_fee_fixed_amount
-        ? String(fs.late_fee_fixed_amount)
+      late_fee_per_day: fs.late_fee_per_day
+        ? String(fs.late_fee_per_day)
         : "",
+      late_fee_max:
+        fs.late_fee_max != null ? String(fs.late_fee_max) : "",
     });
     setStructureDialogOpen(true);
   };
@@ -1269,9 +952,14 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
     const lateFeePct = structureForm.late_fee_percent
       ? Number(structureForm.late_fee_percent)
       : 0;
-    const lateFeeFlat = structureForm.late_fee_fixed_amount
-      ? Number(structureForm.late_fee_fixed_amount)
+    const lateFeePerDay = structureForm.late_fee_per_day
+      ? Number(structureForm.late_fee_per_day)
       : 0;
+    // Empty = no cap (null); any entered value is the ceiling.
+    const lateFeeMax =
+      structureForm.late_fee_max.trim() === ""
+        ? null
+        : Number(structureForm.late_fee_max);
     if (
       !Number.isFinite(lateFeePct) ||
       lateFeePct < 0 ||
@@ -1281,8 +969,13 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
       setStructureSubmitting(false);
       return;
     }
-    if (!Number.isFinite(lateFeeFlat) || lateFeeFlat < 0) {
-      toast.error("Late fee flat amount must be ≥ 0");
+    if (!Number.isFinite(lateFeePerDay) || lateFeePerDay < 0) {
+      toast.error("Late fee per day must be ≥ 0");
+      setStructureSubmitting(false);
+      return;
+    }
+    if (lateFeeMax !== null && (!Number.isFinite(lateFeeMax) || lateFeeMax < 0)) {
+      toast.error("Max late fee must be ≥ 0");
       setStructureSubmitting(false);
       return;
     }
@@ -1296,7 +989,8 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
       due_date: structureForm.due_date || null,
       stream_id: supportsStream ? (structureForm.stream_id || null) : null,
       late_fee_percent: lateFeePct,
-      late_fee_fixed_amount: lateFeeFlat,
+      late_fee_per_day: lateFeePerDay,
+      late_fee_max: lateFeeMax,
     };
 
     const result = editingStructureId
@@ -1483,7 +1177,13 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
         toast.error(data.error ?? "Failed to record waiver");
         return;
       }
-      toast.success("Waiver recorded");
+      // Editors don't write directly — the server files a change request for an
+      // admin to approve, and responds with { pending: true }.
+      toast.success(
+        data.pending
+          ? data.message ?? "Waiver submitted for admin approval"
+          : "Waiver recorded"
+      );
       setWaiverOpen(false);
       setWaiverForm({
         fee_structure_id: "",
@@ -1511,11 +1211,11 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
       return;
     }
     // Decode the dropdown value: "fs:<uuid>" → fee_structure_id,
-    // "slab:<uuid>" → transport_slab_id. Server enforces the XOR.
+    // "stop:<uuid>" → bus_stop_id. Server enforces the XOR.
     const [kind, id] = newPayment.fee_target.split(":");
     const fkPayload =
-      kind === "slab"
-        ? { transport_slab_id: id }
+      kind === "stop"
+        ? { bus_stop_id: id }
         : { fee_structure_id: id };
 
     setPaymentSubmitting(true);
@@ -1606,17 +1306,11 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
   };
 
   const sectionTitle =
-    section === "academic"
-      ? "Academic Fees"
-      : section === "transport"
-        ? "Transport Slabs"
-        : "Payment Management";
+    section === "academic" ? "Academic Fees" : "Payment Management";
   const sectionSubtitle =
     section === "academic"
       ? "Tuition, lab, annual and other class-level fee structures."
-      : section === "transport"
-        ? "Distance-based slabs the bus service charges per student."
-        : "Record payments, refunds and dues by class.";
+      : "Record payments, refunds and dues by class.";
 
   return (
     <div>
@@ -1721,145 +1415,6 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
                             </TableCell>
                           </TableRow>
                         ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
-          </div>
-        </div>
-      )}
-
-      {section === "transport" && (
-        <div className="space-y-5">
-          {/* Visual context — concentric ring map showing every active slab
-              around the school. Drawn first so the slab table beneath reads
-              as a list view of what's already on the map. */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <div className="lg:col-span-2">
-              <TransportSlabsMap
-                slabs={transportSlabs}
-                pickupMarker={pickupPin}
-                onMapClick={(lat, lng) => {
-                  // Map click drops a pin via the lookup component, which
-                  // owns the distance/slab math + result panel. Keeps the
-                  // two entry points (typed address vs. pin drop) producing
-                  // identical UI feedback.
-                  lookupRef.current?.setResultFromCoords(lat, lng);
-                }}
-              />
-            </div>
-            <div>
-              <AddressFareLookup
-                ref={lookupRef}
-                slabs={transportSlabs}
-                onResult={setPickupPin}
-              />
-            </div>
-          </div>
-
-          {/* Transport — distance-based fare slabs */}
-          <div>
-              <Card className="bg-white dark:bg-card rounded-2xl shadow-sm mt-3">
-                <CardContent>
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <p className="text-sm font-medium text-navy-900 dark:text-white">
-                        Distance Slabs
-                      </p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Define fare bands once; assign each transport-using student to a slab.
-                      </p>
-                    </div>
-                    <Button
-                      className="bg-navy-900 hover:bg-navy-800 text-white"
-                      onClick={openAddSlab}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Slab
-                    </Button>
-                  </div>
-
-                  {slabsLoading ? (
-                    <div className="flex justify-center py-12">
-                      <Loader2 className="h-6 w-6 animate-spin text-navy-900 dark:text-white" />
-                    </div>
-                  ) : transportSlabs.length === 0 ? (
-                    <p className="text-center py-12 text-gray-500 dark:text-gray-400">
-                      No transport slabs defined yet.
-                    </p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Slab Name</TableHead>
-                          <TableHead>Distance (km)</TableHead>
-                          <TableHead>Amount</TableHead>
-                          <TableHead>Frequency</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="w-24 text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {transportSlabs.map((s) => {
-                          const lo = s.distance_km_min;
-                          const hi = s.distance_km_max;
-                          const dist =
-                            lo == null && hi == null
-                              ? "—"
-                              : lo != null && hi != null
-                              ? `${lo}–${hi}`
-                              : lo != null
-                              ? `≥ ${lo}`
-                              : `≤ ${hi}`;
-                          return (
-                            <TableRow key={s.id}>
-                              <TableCell className="font-medium">
-                                {s.name}
-                              </TableCell>
-                              <TableCell className="text-gray-600 dark:text-gray-300">
-                                {dist}
-                              </TableCell>
-                              <TableCell>
-                                {new Intl.NumberFormat("en-IN", {
-                                  style: "currency",
-                                  currency: "INR",
-                                  maximumFractionDigits: 0,
-                                }).format(s.amount)}
-                              </TableCell>
-                              <TableCell className="capitalize">
-                                {s.frequency.replace("_", " ")}
-                              </TableCell>
-                              <TableCell>
-                                {s.is_active ? (
-                                  <Badge className="bg-green-100 text-green-700 border-green-200">
-                                    Active
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="secondary">Inactive</Badge>
-                                )}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <div className="flex items-center justify-end gap-1">
-                                  <button
-                                    onClick={() => openEditSlab(s)}
-                                    className="text-blue-500 hover:text-blue-700 p-1"
-                                    aria-label="Edit transport slab"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteSlab(s.id)}
-                                    className="text-red-500 hover:text-red-700 p-1"
-                                    aria-label="Delete transport slab"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
                       </TableBody>
                     </Table>
                   )}
@@ -1992,218 +1547,6 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
                     </div>
                   </div>
 
-                  {/* Transport panel — Phase 3 audit-aware. Captures the
-                       claimed pickup address + geocodes it, computes the
-                       suggested slab, requires a reason when admin overrides.
-                       Verification (post-first-ride) gets its own action. */}
-                  {selectedEnrollmentId && (
-                    <div className="mb-4 p-4 rounded-lg border border-gray-200 dark:border-border bg-gray-50 dark:bg-muted/40 space-y-3">
-                      <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-950/30">
-                            <Bus className="h-4 w-4 text-blue-600" />
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-navy-900 dark:text-white">
-                              School Transport
-                            </p>
-                            <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                              Pickup address drives the slab. Overrides need a
-                              reason; verify the pickup after the first ride.
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {studentHasTransport && studentVerifiedAt ? (
-                            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400">
-                              Verified{" "}
-                              {new Date(
-                                studentVerifiedAt
-                              ).toLocaleDateString("en-IN")}
-                            </Badge>
-                          ) : studentHasTransport ? (
-                            <Badge className="bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400">
-                              Unverified
-                            </Badge>
-                          ) : null}
-                          {studentHasTransport && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() =>
-                                handleVerifyPickup(!studentVerifiedAt)
-                              }
-                              className="text-blue-600 hover:text-blue-700"
-                            >
-                              {studentVerifiedAt
-                                ? "Clear verification"
-                                : "Verify pickup"}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="md:col-span-2">
-                          <Label className="text-xs font-medium mb-1 block">
-                            Pickup address
-                          </Label>
-                          <div className="flex gap-2">
-                            {isGooglePlacesConfigured() ? (
-                              <PlacesAutocompleteInput
-                                value={studentPickupAddress}
-                                onValueChange={setStudentPickupAddress}
-                                onSelect={(place) => {
-                                  // Google's place_changed already has
-                                  // coords + a tidied formatted_address —
-                                  // skip the second geocode round-trip.
-                                  setStudentPickupAddress(place.address);
-                                  setStudentPickupLat(place.lat);
-                                  setStudentPickupLng(place.lng);
-                                  const suggested = computeSuggestedSlabId(
-                                    place.lat,
-                                    place.lng
-                                  );
-                                  if (!studentOverrideReason && suggested) {
-                                    setStudentTransportSlabId(suggested);
-                                  }
-                                }}
-                                bias={{
-                                  lat: 27.0688458,
-                                  lng: 75.7495752,
-                                  radiusMeters: 25_000,
-                                }}
-                                placeholder="Start typing the address…"
-                                className="flex-1"
-                                disabled={savingTransport}
-                              />
-                            ) : (
-                              <Input
-                                value={studentPickupAddress}
-                                onChange={(e) =>
-                                  setStudentPickupAddress(e.target.value)
-                                }
-                                placeholder="e.g. House 12, Tonk Road, Jaipur"
-                                className="flex-1"
-                                disabled={savingTransport}
-                              />
-                            )}
-                            {!isGooglePlacesConfigured() && (
-                              <Button
-                                variant="outline"
-                                onClick={handleGeocodePickup}
-                                disabled={
-                                  geocoding ||
-                                  studentPickupAddress.trim().length < 4
-                                }
-                              >
-                                {geocoding ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  "Locate"
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                          {studentPickupLat != null && studentPickupLng != null && (
-                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
-                              {studentPickupLat.toFixed(5)},{" "}
-                              {studentPickupLng.toFixed(5)}
-                            </p>
-                          )}
-                        </div>
-                        <div>
-                          <Label className="text-xs font-medium mb-1 block">
-                            Distance slab
-                          </Label>
-                          <select
-                            value={studentTransportSlabId ?? ""}
-                            onChange={(e) =>
-                              setStudentTransportSlabId(e.target.value || null)
-                            }
-                            disabled={
-                              savingTransport || transportSlabs.length === 0
-                            }
-                            className="w-full rounded-md border border-gray-300 dark:border-border px-3 py-2 text-sm dark:bg-muted"
-                          >
-                            <option value="">
-                              {transportSlabs.length === 0
-                                ? "No slabs defined"
-                                : "Select a slab…"}
-                            </option>
-                            {transportSlabs
-                              .filter((s) => s.is_active)
-                              .map((s) => (
-                                <option key={s.id} value={s.id}>
-                                  {s.name} — ₹{s.amount}
-                                  {s.frequency !== "one_time"
-                                    ? ` / ${s.frequency.replace("_", " ")}`
-                                    : ""}
-                                </option>
-                              ))}
-                          </select>
-                          {currentSuggestedSlabId && (
-                            <p className="text-[11px] mt-1">
-                              <span className="text-gray-400">Suggested:</span>{" "}
-                              <span
-                                className={
-                                  isOverride
-                                    ? "text-amber-700 dark:text-amber-400 font-medium"
-                                    : "text-emerald-700 dark:text-emerald-400 font-medium"
-                                }
-                              >
-                                {slabLabel(currentSuggestedSlabId)}
-                              </span>
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      {isOverride && (
-                        <div>
-                          <Label className="text-xs font-medium mb-1 block text-amber-700 dark:text-amber-400">
-                            Override reason (required)
-                          </Label>
-                          <Input
-                            value={studentOverrideReason}
-                            onChange={(e) =>
-                              setStudentOverrideReason(e.target.value)
-                            }
-                            placeholder="e.g. Parent confirmed actual pickup is at sibling's school nearby"
-                            disabled={savingTransport}
-                          />
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-end gap-2 pt-1">
-                        {studentHasTransport && (
-                          <Button
-                            variant="ghost"
-                            onClick={handleOptOutTransport}
-                            disabled={togglingTransport || savingTransport}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            Remove transport
-                          </Button>
-                        )}
-                        <Button
-                          onClick={handleSaveTransport}
-                          disabled={
-                            savingTransport ||
-                            !studentTransportSlabId ||
-                            (isOverride && studentOverrideReason.trim().length < 3)
-                          }
-                          className="bg-navy-900 hover:bg-navy-800 text-white"
-                        >
-                          {savingTransport && (
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          )}
-                          {studentHasTransport ? "Save changes" : "Opt in to transport"}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
                   {/* Fee structures for student's class (academic + transport) */}
                   {applicableFeeLines.length > 0 && (
                     <div className="mb-6">
@@ -2212,9 +1555,9 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {applicableFeeLines.map((line) => {
-                          const isSlab = line.kind === "transport_slab";
-                          const subtitle = isSlab
-                            ? `${line.frequency.replace("_", " ")} • ${line.slab_name}`
+                          const isTransport = line.kind === "transport_stop";
+                          const subtitle = isTransport
+                            ? `${line.frequency.replace("_", " ")} • ${line.stop_name}`
                             : `${line.frequency.replace("_", " ")}${
                                 line.stream_id && streamById[line.stream_id]
                                   ? ` • ${streamById[line.stream_id]}`
@@ -2275,7 +1618,9 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
                           <TableRow key={p.id}>
                             <TableCell>{p.payment_date}</TableCell>
                             <TableCell>
-                              {p.fee_structure?.fee_type ?? "--"}
+                              {p.bus_stop
+                                ? `Transport — ${p.bus_stop.name}`
+                                : p.fee_structure?.fee_type ?? "--"}
                             </TableCell>
                             <TableCell>
                               {new Intl.NumberFormat("en-IN", {
@@ -2753,7 +2098,7 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">
-                  Late Fee Flat ₹ (optional)
+                  Late Fee per Day ₹ (optional)
                 </Label>
                 <Input
                   className="h-9"
@@ -2761,18 +2106,38 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
                   min={0}
                   step="1"
                   placeholder="0"
-                  value={structureForm.late_fee_fixed_amount}
+                  value={structureForm.late_fee_per_day}
                   onChange={(e) =>
                     setStructureForm({
                       ...structureForm,
-                      late_fee_fixed_amount: e.target.value,
+                      late_fee_per_day: e.target.value,
                     })
                   }
                 />
               </div>
             </div>
+            <div className="space-y-1">
+              <Label className="text-xs font-medium">
+                Max Late Fee ₹ (optional)
+              </Label>
+              <Input
+                className="h-9"
+                type="number"
+                min={0}
+                step="1"
+                placeholder="No cap"
+                value={structureForm.late_fee_max}
+                onChange={(e) =>
+                  setStructureForm({
+                    ...structureForm,
+                    late_fee_max: e.target.value,
+                  })
+                }
+              />
+            </div>
             <p className="text-[10px] text-gray-500 dark:text-gray-400 -mt-1">
-              Applied per overdue structure: max(amount × %, flat). Leave both at 0 for no surcharge.
+              Charged per overdue structure: max(amount × %, days late × ₹/day),
+              capped at the max if set. Leave % and ₹/day at 0 for no surcharge.
             </p>
             <Button
               onClick={handleSaveStructure}
@@ -2788,128 +2153,6 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
                 "Save Changes"
               ) : (
                 "Add Fee Structure"
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add/Edit Transport Slab Dialog */}
-      <Dialog open={slabDialogOpen} onOpenChange={setSlabDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-                <Bus className="h-5 w-5 text-blue-600" />
-              </div>
-              <div>
-                <DialogTitle>
-                  {slabDialogMode === "edit"
-                    ? "Edit Transport Slab"
-                    : "Add Transport Slab"}
-                </DialogTitle>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Distance bands are optional metadata; the slab name is the label parents see.
-                </p>
-              </div>
-            </div>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">Slab Name</Label>
-              <Input
-                className="h-9"
-                placeholder="e.g. 0–5 km"
-                value={slabForm.name}
-                onChange={(e) =>
-                  setSlabForm({ ...slabForm, name: e.target.value })
-                }
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-medium">Min km (optional)</Label>
-                <Input
-                  className="h-9"
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  placeholder="0"
-                  value={slabForm.distance_km_min}
-                  onChange={(e) =>
-                    setSlabForm({
-                      ...slabForm,
-                      distance_km_min: e.target.value,
-                    })
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-medium">Max km (optional)</Label>
-                <Input
-                  className="h-9"
-                  type="number"
-                  min={0}
-                  step="0.1"
-                  placeholder="5"
-                  value={slabForm.distance_km_max}
-                  onChange={(e) =>
-                    setSlabForm({
-                      ...slabForm,
-                      distance_km_max: e.target.value,
-                    })
-                  }
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-medium">Amount</Label>
-                <Input
-                  className="h-9"
-                  type="number"
-                  min={0}
-                  placeholder="Enter amount"
-                  value={slabForm.amount}
-                  onChange={(e) =>
-                    setSlabForm({ ...slabForm, amount: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-medium">Frequency</Label>
-                <select
-                  value={slabForm.frequency}
-                  onChange={(e) =>
-                    setSlabForm({
-                      ...slabForm,
-                      frequency: e.target.value as (typeof FREQUENCIES)[number],
-                    })
-                  }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
-                >
-                  {FREQUENCIES.map((f) => (
-                    <option key={f} value={f}>
-                      {f.charAt(0).toUpperCase() + f.slice(1).replace("_", " ")}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <Button
-              onClick={handleSaveSlab}
-              disabled={slabSubmitting}
-              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white"
-            >
-              {slabSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : slabDialogMode === "edit" ? (
-                "Save Changes"
-              ) : (
-                "Add Slab"
               )}
             </Button>
           </div>
@@ -2945,21 +2188,23 @@ const [studentOverrideReason, setStudentOverrideReason] = useState("");
               >
                 <option value="">Select fee</option>
                 {applicableFeeLines.map((line) => {
-                  const isSlab = line.kind === "transport_slab";
-                  const value = `${isSlab ? "slab" : "fs"}:${line.id}`;
-                  const label = isSlab
-                    ? `${line.fee_type} (${line.slab_name})`
-                    : line.stream_id && streamById[line.stream_id]
-                    ? `${line.fee_type} (${streamById[line.stream_id]})`
-                    : line.fee_type;
+                  const isTransport = line.kind === "transport_stop";
+                  const value = `${isTransport ? "stop" : "fs"}:${line.id}`;
+                  const amountText = new Intl.NumberFormat("en-IN", {
+                    style: "currency",
+                    currency: "INR",
+                    maximumFractionDigits: 0,
+                  }).format(line.amount);
+                  const label = isTransport
+                    ? `Transport — ${line.stop_name} (${amountText})`
+                    : `${
+                        line.stream_id && streamById[line.stream_id]
+                          ? `${line.fee_type} (${streamById[line.stream_id]})`
+                          : line.fee_type
+                      } - ${amountText}`;
                   return (
                     <option key={value} value={value}>
-                      {label} -{" "}
-                      {new Intl.NumberFormat("en-IN", {
-                        style: "currency",
-                        currency: "INR",
-                        maximumFractionDigits: 0,
-                      }).format(line.amount)}
+                      {label}
                     </option>
                   );
                 })}

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
+import { teacherCanAccessClass, getTeacherStudentIds } from "@/lib/teacher-scope";
 
 export async function GET(request: Request) {
   try {
@@ -10,6 +12,37 @@ export async function GET(request: Request) {
 
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Authorize the caller before reading any remarks. The student_remarks RLS
+    // policy grants every teacher read access to all rows, so without an
+    // app-layer scope check a teacher could pass any class_id/student_id and
+    // read remarks for classes they don't teach. Admins and results-editors
+    // keep full access; teachers are restricted to their own classes/students.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, teacher_id")
+      .eq("id", user.id)
+      .single();
+    if (!profile) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    let teacherScopeId: string | null = null;
+    if (profile.role === "admin") {
+      // full access
+    } else if (profile.role === "teacher" && profile.teacher_id) {
+      teacherScopeId = profile.teacher_id as string;
+    } else {
+      const { data: perm } = await supabase
+        .from("editor_permissions")
+        .select("feature_key")
+        .eq("editor_id", user.id)
+        .eq("feature_key", "results")
+        .maybeSingle();
+      if (!perm) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     const { searchParams } = new URL(request.url);
@@ -27,6 +60,17 @@ export async function GET(request: Request) {
     // Class-scoped fetch: return all remarks for students in that class
     // for the given exam. Used by the teacher's remarks editor.
     if (classId) {
+      if (teacherScopeId) {
+        const ok = await teacherCanAccessClass(
+          createAdminClient(),
+          teacherScopeId,
+          classId
+        );
+        if (!ok) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      }
+
       const { data: enrollments } = await supabase
         .from("student_enrollments")
         .select("student_id")
@@ -48,6 +92,16 @@ export async function GET(request: Request) {
 
     // Single-student fetch
     if (studentId) {
+      if (teacherScopeId) {
+        const studentIds = await getTeacherStudentIds(
+          createAdminClient(),
+          teacherScopeId
+        );
+        if (!studentIds.has(studentId)) {
+          return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+      }
+
       const { data } = await supabase
         .from("student_remarks")
         .select("student_id, remark, updated_at")
@@ -148,6 +202,31 @@ export async function POST(request: Request) {
       }
     }
 
+    // Service-role client for the actual writes/deletes. student_remarks has
+    // no RLS policy for editors (role 'staff'), and its DELETE policy is
+    // admin-only — so on the cookie client an editor's upsert and a teacher's
+    // clear both silently affect 0 rows while the API reports success. All the
+    // auth/permission/class-teacher checks above stay on the cookie client.
+    const admin = createAdminClient();
+
+    // #14 — class-scoped tamper guard. When a class_id is supplied, a caller
+    // (notably a teacher who legitimately owns that class) can still pass
+    // entries[].student_id for students NOT enrolled in it; RLS on
+    // student_remarks doesn't scope by class, so those rows would be written.
+    // Restrict the batch to the class's active roster before any write.
+    let scopedEntries = entries;
+    if (classId) {
+      const { data: enrolled } = await admin
+        .from("student_enrollments")
+        .select("student_id")
+        .eq("class_id", classId)
+        .eq("status", "active");
+      const enrolledIds = new Set(
+        (enrolled ?? []).map((e) => e.student_id as string)
+      );
+      scopedEntries = entries.filter((e) => enrolledIds.has(e.student_id));
+    }
+
     // M10 — non-teacher capability holders (admin/staff/teacher-with-grant
     // who isn't the class teacher) can silently clobber a teacher's draft
     // remark. When the caller is anyone other than the canonical teacher
@@ -158,11 +237,14 @@ export async function POST(request: Request) {
     // for non-class-teachers, so reaching here as a teacher means this IS
     // the class teacher — they are the canonical author and always overwrite.
     if (profile.role !== "teacher" && !forceOverwrite) {
-      const studentIdsToWrite = entries
+      const studentIdsToWrite = scopedEntries
         .filter((e) => e.remark && e.remark.trim().length > 0)
         .map((e) => e.student_id);
       if (studentIdsToWrite.length > 0) {
-        const { data: existingRows } = await supabase
+        // Read on the admin client: editors (role staff) have no SELECT policy
+        // on student_remarks, so a cookie-scoped read here would return empty
+        // and silently no-op the draft-clobber 409 protection for them. (Audit #13/#29)
+        const { data: existingRows } = await admin
           .from("student_remarks")
           .select("student_id, remark, author_id")
           .eq("exam_type_id", examTypeId)
@@ -175,7 +257,7 @@ export async function POST(request: Request) {
           )
         );
         if (authorIds.length > 0) {
-          const { data: authors } = await supabase
+          const { data: authors } = await admin
             .from("profiles")
             .select("id, role")
             .in("id", authorIds);
@@ -188,7 +270,7 @@ export async function POST(request: Request) {
             (existingRows ?? []).map((r) => [r.student_id as string, r])
           );
           const conflicts: string[] = [];
-          for (const e of entries) {
+          for (const e of scopedEntries) {
             const existing = existingByStudent.get(e.student_id);
             if (!existing) continue;
             const existingAuthor = existing.author_id as string | null;
@@ -213,7 +295,7 @@ export async function POST(request: Request) {
     }
 
     // Split into upserts (non-empty) and deletes (empty/whitespace-only remarks)
-    const toUpsert = entries
+    const toUpsert = scopedEntries
       .filter((e) => e.remark && e.remark.trim().length > 0)
       .map((e) => ({
         student_id: e.student_id,
@@ -223,12 +305,12 @@ export async function POST(request: Request) {
         updated_at: new Date().toISOString(),
       }));
 
-    const toDeleteStudentIds = entries
+    const toDeleteStudentIds = scopedEntries
       .filter((e) => !e.remark || e.remark.trim().length === 0)
       .map((e) => e.student_id);
 
     if (toUpsert.length > 0) {
-      const { error } = await supabase
+      const { error } = await admin
         .from("student_remarks")
         .upsert(toUpsert, { onConflict: "student_id,exam_type_id" });
 
@@ -242,7 +324,7 @@ export async function POST(request: Request) {
     }
 
     if (toDeleteStudentIds.length > 0) {
-      const { error } = await supabase
+      const { error } = await admin
         .from("student_remarks")
         .delete()
         .eq("exam_type_id", examTypeId)

@@ -8,8 +8,13 @@ import {
 } from "@nkps/shared/components/ui/card";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Badge } from "@nkps/shared/components/ui/badge";
-import { Download, Loader2, IdCard, CalendarClock } from "lucide-react";
+import { Download, Loader2, IdCard, CalendarClock, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+
+interface DuesInfo {
+  total: number;
+  hasOutstanding: boolean;
+}
 
 interface ExamRow {
   id: string;
@@ -52,6 +57,7 @@ export default function StudentAdmitCardsPage() {
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [defaultTemplateExists, setDefaultTemplateExists] = useState(false);
+  const [dues, setDues] = useState<DuesInfo | null>(null);
 
   const fetchEverything = useCallback(async () => {
     const supabase = createClient();
@@ -69,6 +75,13 @@ export default function StudentAdmitCardsPage() {
     const sid = profile?.student_id as string | undefined;
     if (!sid) return;
     setStudentId(sid);
+
+    // Fee-dues gate: a student with outstanding dues can see exams but not
+    // download admit cards.
+    fetch(`/api/students/dues?student_id=${sid}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setDues(d))
+      .catch(() => {});
 
     const { data: studentRow } = await supabase
       .from("students")
@@ -168,7 +181,7 @@ export default function StudentAdmitCardsPage() {
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        toast.error(body.error ?? "Failed to download admit card");
+        toast.error(body.message ?? body.error ?? "Failed to download admit card");
         return;
       }
       await downloadFromResponse(
@@ -199,6 +212,21 @@ export default function StudentAdmitCardsPage() {
           {className && ` | ${className}`}
         </p>
       </div>
+
+      {dues?.hasOutstanding && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30 px-4 py-3">
+          <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-700 dark:text-red-300">
+              Admit card download locked
+            </p>
+            <p className="text-sm text-red-600 dark:text-red-400 mt-0.5">
+              Clear your outstanding fee dues of ₹{dues.total.toLocaleString("en-IN")} to
+              download admit cards. You can still view your exam schedule below.
+            </p>
+          </div>
+        </div>
+      )}
 
       {!defaultTemplateExists ? (
         <Card className="bg-white dark:bg-card rounded-2xl">
@@ -250,7 +278,7 @@ export default function StudentAdmitCardsPage() {
                 </div>
                 <Button
                   onClick={() => download(e.id, e.name)}
-                  disabled={downloading === e.id}
+                  disabled={downloading === e.id || Boolean(dues?.hasOutstanding)}
                   className="w-full bg-navy-900 text-white hover:bg-navy-900/90"
                   size="sm"
                 >
@@ -259,7 +287,11 @@ export default function StudentAdmitCardsPage() {
                   ) : (
                     <Download className="h-4 w-4 mr-2" />
                   )}
-                  {downloading === e.id ? "Preparing…" : "Download Admit Card"}
+                  {dues?.hasOutstanding
+                    ? "Locked — dues pending"
+                    : downloading === e.id
+                      ? "Preparing…"
+                      : "Download Admit Card"}
                 </Button>
               </CardContent>
             </Card>

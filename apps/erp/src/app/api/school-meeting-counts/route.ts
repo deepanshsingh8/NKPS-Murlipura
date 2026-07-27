@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
+import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
+import { getTeacherIdForUser, teacherCanAccessClass } from "@/lib/teacher-scope";
 import { schoolMeetingCountSchema } from "@nkps/shared/lib/validations";
 
 // GET /api/school-meeting-counts?academic_year_id=&exam_type_id=&class_id=
@@ -89,6 +91,27 @@ export async function PUT(request: Request) {
   }
   const { academic_year_id, exam_type_id, class_id, total_meetings } =
     parsed.data;
+
+  // Teacher scope: a teacher may only set the meeting count for a class they
+  // teach — never the school-wide (class_id NULL) figure, which is an admin
+  // configuration. Admins and ptm_notes-editors passed the gate above and may
+  // write any scope.
+  if (profile.role === "teacher") {
+    if (!class_id) {
+      return NextResponse.json(
+        { error: "Teachers can only set meeting counts for their own class, not school-wide" },
+        { status: 403 }
+      );
+    }
+    const admin = createAdminClient();
+    const teacherId = await getTeacherIdForUser(admin, user.id);
+    if (!teacherId || !(await teacherCanAccessClass(admin, teacherId, class_id))) {
+      return NextResponse.json(
+        { error: "You can only set meeting counts for your own classes" },
+        { status: 403 }
+      );
+    }
+  }
 
   // Find existing row (can't use onConflict on an expression index, so
   // do a read-then-write).

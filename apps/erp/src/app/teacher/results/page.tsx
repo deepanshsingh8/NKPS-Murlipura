@@ -303,6 +303,7 @@ export default function TeacherResultsPage() {
       .from("student_enrollments")
       .select("student_id, roll_number, students(full_name, admission_no)")
       .eq("class_id", selectedClassId)
+      .eq("status", "active")
       .order("roll_number", { ascending: true });
 
     const enrolledStudents: EnrolledStudent[] = (enrollments ?? []).map(

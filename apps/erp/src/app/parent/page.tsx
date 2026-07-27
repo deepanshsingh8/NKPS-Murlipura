@@ -162,8 +162,9 @@ export default function ParentDashboard() {
           .from("student_enrollments")
           .select("class_id, roll_number, classes(name, section, streams:stream_id(name))")
           .eq("student_id", student.id)
+          .order("enrollment_date", { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         const classInfo = enrollment?.classes as unknown as {
           name: string;

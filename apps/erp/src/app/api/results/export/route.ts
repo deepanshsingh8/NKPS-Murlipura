@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
-import { contentDispositionAttachment } from "@nkps/shared/lib/utils";
-
-function csvEscape(value: string | number | null | undefined): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
+import { contentDispositionAttachment, csvEscape } from "@nkps/shared/lib/utils";
 
 function safeFilename(...parts: string[]): string {
   return parts

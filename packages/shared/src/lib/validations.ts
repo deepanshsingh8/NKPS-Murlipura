@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  STUDENT_TEMPLATE_FIELDS,
+  getTemplateField,
+  normalizeEnum,
+  normalizeNumber,
+  normalizeYesNo,
+} from "./student-template";
 
 // Indian mobile: 10 digits starting with 6-9. We accept either the bare 10
 // digits or a `+91` / `0` / `91` prefix (then strip it for storage).
@@ -68,12 +75,66 @@ const admissionNoSchema = z
     "Admission number can only contain letters, digits, '-', '_' and '/' (max 32 chars)"
   );
 
+// ── Public enquiry hardening (Layer 1: free anti-fake checks) ───────────────
+// Goal: reject obviously-fake but well-formatted email/phone on the public
+// contact + admissions-enquiry forms. Kept separate from the ERP phone schemas
+// so internal staff data entry isn't affected. Ownership verification (OTP /
+// email confirmation) is a later layer — see tasks/email-phone-verification.md.
+
+// Disposable / temp-mail domains we refuse. Lowercase, no leading "@".
+export const DISPOSABLE_EMAIL_DOMAINS = new Set<string>([
+  "mailinator.com", "yopmail.com", "guerrillamail.com", "10minutemail.com",
+  "tempmail.com", "temp-mail.org", "throwawaymail.com", "getnada.com",
+  "trashmail.com", "sharklasers.com", "dispostable.com", "fakeinbox.com",
+  "maildrop.cc", "mintemail.com", "mailnesia.com", "mohmal.com",
+  "emailondeck.com", "moakt.com", "tempr.email", "spam4.me",
+]);
+
+export function emailDomain(email: string): string {
+  return email.slice(email.lastIndexOf("@") + 1).toLowerCase().trim();
+}
+
+// Obvious junk mobiles: all-same-digit or trivially sequential.
+const SEQUENTIAL_MOBILES = new Set<string>([
+  "1234567890", "0123456789", "9876543210", "0987654321",
+]);
+function isJunkMobile(num: string): boolean {
+  if (/^(\d)\1{9}$/.test(num)) return true; // 0000000000, 9999999999, …
+  if (SEQUENTIAL_MOBILES.has(num)) return true;
+  return false;
+}
+
+const enquiryEmailSchema = z
+  .string()
+  .min(1, "Email is required")
+  .email("Please enter a valid email")
+  .refine((v) => !DISPOSABLE_EMAIL_DOMAINS.has(emailDomain(v)), {
+    message: "Please use a permanent email — temporary email providers aren't accepted",
+  });
+
+const enquiryPhoneSchema = phoneRequiredSchema.refine(
+  (v) => {
+    const n = normalizeIndianMobile(v);
+    return n !== null && !isJunkMobile(n);
+  },
+  { message: "Please enter a real 10-digit mobile number" }
+);
+
 export const contactFormSchema = z.object({
-  fullName: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Please enter a valid email"),
-  phone: phoneRequiredSchema,
-  subject: z.string().min(1, "Please select a subject"),
-  message: z.string().min(10, "Message must be at least 10 characters"),
+  fullName: z
+    .string()
+    .min(2, "Name must be at least 2 characters")
+    .max(100, "Name must be at most 100 characters"),
+  email: enquiryEmailSchema,
+  phone: enquiryPhoneSchema,
+  subject: z
+    .string()
+    .min(1, "Please select a subject")
+    .max(120, "Subject must be at most 120 characters"),
+  message: z
+    .string()
+    .min(10, "Message must be at least 10 characters")
+    .max(5000, "Message must be at most 5000 characters"),
 });
 
 export type ContactFormData = z.infer<typeof contactFormSchema>;
@@ -331,11 +392,11 @@ const optionalTrimmedString = z
 export const feePaymentSchema = z
   .object({
     student_id: z.string().uuid("Invalid student"),
-    // Exactly one of fee_structure_id / transport_slab_id must be present.
+    // Exactly one of fee_structure_id / bus_stop_id must be present.
     // Enforced in the superRefine below. Transport payments are routed
-    // against a transport_fare_slabs row directly (migration 050).
+    // against a bus_stops row directly (migration 074).
     fee_structure_id: z.string().uuid("Invalid fee structure").optional(),
-    transport_slab_id: z.string().uuid("Invalid transport slab").optional(),
+    bus_stop_id: z.string().uuid("Invalid bus stop").optional(),
     amount_paid: z
       .number()
       .finite("Amount must be a valid number")
@@ -366,12 +427,12 @@ export const feePaymentSchema = z
   })
   .superRefine((val, ctx) => {
     const hasFs = Boolean(val.fee_structure_id);
-    const hasSlab = Boolean(val.transport_slab_id);
-    if (hasFs === hasSlab) {
+    const hasStop = Boolean(val.bus_stop_id);
+    if (hasFs === hasStop) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "Either fee_structure_id or transport_slab_id is required (not both)",
+          "Either fee_structure_id or bus_stop_id is required (not both)",
         path: ["fee_structure_id"],
       });
     }
@@ -428,42 +489,168 @@ export const feePaymentSchema = z
 
 export type FeePaymentData = z.infer<typeof feePaymentSchema>;
 
-// Migration 050 — transport fare slabs. Distance bands min/max are optional
-// metadata; the slab name is the canonical label shown to the user.
-export const transportFareSlabSchema = z
+// Migration 074 — stop-based transport. Fee attaches to a bus stop; students
+// boarding there pay that stop's flat fee.
+const transportFrequencyEnum = z.enum([
+  "monthly",
+  "quarterly",
+  "annual",
+  "one_time",
+]);
+const transportDirectionEnum = z.enum(["both", "pickup_only", "drop_only"]);
+
+export const busStopSchema = z.object({
+  name: z.string().trim().min(1, "Stop name is required").max(120),
+  area: optionalTrimmedString,
+  lat: z.number().min(-90).max(90).nullable().optional(),
+  lng: z.number().min(-180).max(180).nullable().optional(),
+  is_active: z.boolean().optional(),
+  sort_order: z.number().int().optional(),
+});
+export type BusStopData = z.infer<typeof busStopSchema>;
+
+export const busStopFeeSchema = z.object({
+  bus_stop_id: z.string().uuid("Invalid bus stop"),
+  academic_year_id: z.string().uuid("Invalid academic year"),
+  amount: z.number().positive("Amount must be > 0"),
+  frequency: transportFrequencyEnum.optional(),
+  is_active: z.boolean().optional(),
+});
+export type BusStopFeeData = z.infer<typeof busStopFeeSchema>;
+
+export const busSchema = z.object({
+  bus_number: z.string().trim().min(1, "Bus number is required").max(40),
+  registration_number: optionalTrimmedString,
+  capacity: z.number().int().positive("Capacity must be > 0").nullable().optional(),
+  driver_id: z.string().uuid("Invalid driver").nullable().optional(),
+  conductor_id: z.string().uuid("Invalid conductor").nullable().optional(),
+  is_active: z.boolean().optional(),
+  notes: optionalTrimmedString,
+});
+export type BusData = z.infer<typeof busSchema>;
+
+export const busRouteStopSchema = z.object({
+  bus_id: z.string().uuid("Invalid bus"),
+  bus_stop_id: z.string().uuid("Invalid bus stop"),
+  sort_order: z.number().int().nullable().optional(),
+});
+export type BusRouteStopData = z.infer<typeof busRouteStopSchema>;
+
+// Per-student transport assignment (opt-in, stop, bus, one-side facility).
+export const studentTransportAssignmentSchema = z
   .object({
-    academic_year_id: z.string().uuid("Invalid academic year"),
-    name: z.string().trim().min(1, "Slab name is required").max(100),
-    distance_km_min: z
+    enrollment_id: z.string().uuid("Invalid enrollment"),
+    has_transport: z.boolean(),
+    bus_stop_id: z.string().uuid("Invalid bus stop").nullable().optional(),
+    bus_id: z.string().uuid("Invalid bus").nullable().optional(),
+    transport_direction: transportDirectionEnum.optional(),
+    transport_fee_override: z
       .number()
-      .min(0, "Distance must be ≥ 0")
-      .max(999, "Distance too large")
+      .positive("Override must be > 0")
       .nullable()
       .optional(),
-    distance_km_max: z
-      .number()
-      .min(0, "Distance must be ≥ 0")
-      .max(999, "Distance too large")
-      .nullable()
-      .optional(),
-    amount: z.number().positive("Amount must be > 0"),
-    frequency: z.enum(["monthly", "quarterly", "annual", "one_time"]),
-    is_active: z.boolean().optional(),
-    sort_order: z.number().int().optional(),
+    pickup_address: optionalTrimmedString,
   })
   .superRefine((val, ctx) => {
-    const lo = val.distance_km_min ?? null;
-    const hi = val.distance_km_max ?? null;
-    if (lo !== null && hi !== null && hi < lo) {
+    if (val.has_transport && !val.bus_stop_id) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Max km must be ≥ min km",
-        path: ["distance_km_max"],
+        message: "A bus stop is required when transport is enabled",
+        path: ["bus_stop_id"],
+      });
+    }
+    // One-side facility always carries a custom amount (no half-fee rule).
+    if (
+      val.transport_direction &&
+      val.transport_direction !== "both" &&
+      (val.transport_fee_override === null ||
+        val.transport_fee_override === undefined)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "One-side facility needs a custom fee amount",
+        path: ["transport_fee_override"],
       });
     }
   });
+export type StudentTransportAssignmentData = z.infer<
+  typeof studentTransportAssignmentSchema
+>;
 
-export type TransportFareSlabData = z.infer<typeof transportFareSlabSchema>;
+// Transport change / amendment request (office or parent).
+export const transportChangeRequestSchema = z
+  .object({
+    enrollment_id: z.string().uuid("Invalid enrollment"),
+    change_type: z.enum([
+      "bus_change",
+      "stop_change",
+      "direction_change",
+      "drop",
+      "resume",
+    ]),
+    amended_bus_id: z.string().uuid("Invalid bus").nullable().optional(),
+    amended_stop_id: z.string().uuid("Invalid bus stop").nullable().optional(),
+    direction: transportDirectionEnum.nullable().optional(),
+    effective_from: z.string().min(1, "Start date is required"),
+    effective_to: z.string().nullable().optional(),
+    reason_code: z.enum([
+      "house_shifting",
+      "rented_house_change",
+      "bus_point_temporary_change",
+      "facility_dropped",
+      "one_side_facility",
+      "other",
+    ]),
+    reason_note: optionalTrimmedString,
+    application_url: optionalTrimmedString,
+  })
+  .superRefine((val, ctx) => {
+    if (
+      val.reason_code === "other" &&
+      (!val.reason_note || val.reason_note.trim().length < 3)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Please describe the reason",
+        path: ["reason_note"],
+      });
+    }
+    if (
+      val.effective_to &&
+      val.effective_from &&
+      val.effective_to < val.effective_from
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "End date must be on or after the start date",
+        path: ["effective_to"],
+      });
+    }
+    if (val.change_type === "bus_change" && !val.amended_bus_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select the amended bus",
+        path: ["amended_bus_id"],
+      });
+    }
+    if (val.change_type === "stop_change" && !val.amended_stop_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select the new stop",
+        path: ["amended_stop_id"],
+      });
+    }
+    if (val.change_type === "direction_change" && !val.direction) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select the direction",
+        path: ["direction"],
+      });
+    }
+  });
+export type TransportChangeRequestData = z.infer<
+  typeof transportChangeRequestSchema
+>;
 
 // Refund a previously-recorded payment. The endpoint validates that
 // `refund_amount` ≤ original `amount_paid`.
@@ -579,9 +766,15 @@ export const feeStructureSchema = z.object({
     message: "Please select a frequency",
   }),
   description: z.string().optional().or(z.literal("")),
-  // M9 — late fee config. Both default to 0 (no late fee).
+  // M9 — late fee config. All default to 0/no-cap (no late fee).
   late_fee_percent: z.number().finite().min(0).max(100).optional(),
+  // Legacy one-time flat surcharge — kept for backward compatibility, no longer
+  // surfaced in the form (superseded by late_fee_per_day, migration 080).
   late_fee_fixed_amount: z.number().finite().min(0).optional(),
+  // Per-day flat surcharge (₹/day past the due date).
+  late_fee_per_day: z.number().finite().min(0).optional(),
+  // Optional ceiling on the accrued late fee. null/omitted = uncapped.
+  late_fee_max: z.number().finite().min(0).nullable().optional(),
 });
 
 export type FeeStructureData = z.infer<typeof feeStructureSchema>;
@@ -591,7 +784,9 @@ export const timetablePeriodSchema = z.object({
   subject_id: z.string().uuid("Invalid subject"),
   teacher_id: z.string().uuid("Invalid teacher"),
   day_of_week: z.number().int().min(1).max(6, "Day must be between 1 (Monday) and 6 (Saturday)"),
-  period_number: z.number().int().positive("Period number must be positive"),
+  // Period 0 ("zero period" / pre-first period) is allowed, so the floor is 0,
+  // not 1.
+  period_number: z.number().int().min(0, "Period number cannot be negative"),
   start_time: z.string().min(1, "Start time is required"),
   end_time: z.string().min(1, "End time is required"),
 });
@@ -642,55 +837,209 @@ export const linkChildSchema = z.object({
 
 export type LinkChildData = z.infer<typeof linkChildSchema>;
 
+// Student claiming their own record at first login: admission number + DOB,
+// verified the same way as the parent link (no relationship needed).
+export const linkSelfStudentSchema = z.object({
+  admission_no: admissionNoSchema,
+  date_of_birth: dobBaseSchema,
+});
+
+export type LinkSelfStudentData = z.infer<typeof linkSelfStudentSchema>;
+
 // =============================================================
 // Student Records
 // =============================================================
+// The field set mirrors the UDISE+ student template registry
+// (lib/student-template.ts) — a module-init assertion below keeps the two
+// from drifting when a template field is added.
+
+const optionalText = z.string().optional().or(z.literal(""));
+
+/** YES/NO/Y/N/true/false/boolean → boolean; blank/unknown → dropped. */
+const yesNoField = z.preprocess((v) => {
+  if (v === "" || v === null || v === undefined) return undefined;
+  return normalizeYesNo(v);
+}, z.boolean().optional());
+
+/** Enum via the registry's alias-aware matcher; unknown → dropped (or kept
+ *  raw for lenient enums such as Social Category). */
+function enumField(key: string) {
+  const field = getTemplateField(key);
+  if (!field?.enumValues) throw new Error(`No enum registry entry for ${key}`);
+  const values = field.enumValues.map((ev) => ev.value);
+  return z.preprocess((v) => {
+    if (v === "" || v === null || v === undefined) return undefined;
+    return normalizeEnum(field, String(v));
+  }, field.lenientEnum
+    ? z.string().optional()
+    : z.string().refine((v) => values.includes(v), { message: `Invalid ${field.label}` }).optional());
+}
+
+/** "2,50,000" / "142 cm" / 76 → number in [min, max]; unparseable → dropped. */
+function numberField(min: number, max: number) {
+  return z.preprocess((v) => {
+    if (v === "" || v === null || v === undefined) return undefined;
+    if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+    return normalizeNumber(String(v));
+  }, z.number().min(min).max(max).optional());
+}
+
+/** Optional YYYY-MM-DD (any date, unlike DOB which must be in the past). */
+const dateOptionalSchema = z
+  .string()
+  .optional()
+  .refine(
+    (v) => !v || (/^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`))),
+    { message: "Date must be YYYY-MM-DD" }
+  );
+
+const mobileOptionalSchema = z
+  .string()
+  .regex(/^\d{10}$/, "Mobile number must be exactly 10 digits")
+  .optional()
+  .or(z.literal(""));
+
+const pincodeOptionalSchema = z
+  .string()
+  .regex(/^\d{6}$/, "Pin code must be exactly 6 digits")
+  .optional()
+  .or(z.literal(""));
+
+// UDISE+ profile fields shared by the single-student form schema and the
+// bulk-upload row schema. Booleans/enums/numbers coerce from sheet text.
+const udiseProfileFields = {
+  // General profile
+  name_as_per_aadhar: optionalText,
+  jan_aadhar_number: optionalText,
+  mother_occupation: optionalText,
+  mother_qualification: optionalText,
+  mother_mobile: mobileOptionalSchema,
+  mother_annual_income: numberField(0, 999_999_999),
+  father_occupation: optionalText,
+  father_qualification: optionalText,
+  father_mobile: mobileOptionalSchema,
+  father_annual_income: numberField(0, 999_999_999),
+  guardian_name: optionalText,
+  guardian_relation: optionalText,
+  guardian_mobile: mobileOptionalSchema,
+  present_pincode: pincodeOptionalSchema,
+  permanent_address: optionalText,
+  permanent_pincode: pincodeOptionalSchema,
+  mother_tongue: optionalText,
+  minority_group: enumField("minority_group"),
+  is_bpl: yesNoField,
+  is_ews: yesNoField,
+  is_cwsn: yesNoField,
+  cwsn_impairment_type: optionalText,
+  indian_national: yesNoField, // derived — mapped to `nationality` server-side
+  height_cm: numberField(1, 299),
+  weight_kg: numberField(1, 499),
+  religion: optionalText,
+  // Enrolment profile
+  admission_date: dateOptionalSchema,
+  is_rte: yesNoField,
+  medium_of_instruction: enumField("medium_of_instruction"),
+  previous_school_address: optionalText,
+  previous_school_block: optionalText,
+  previous_school_district: optionalText,
+  previous_school_state: optionalText,
+  previous_school_udise_code: optionalText,
+  previous_school_reason_for_leaving: optionalText,
+  previous_class_studied: optionalText,
+  previous_school_board: optionalText,
+  board_roll_number: optionalText,
+  board_percentage: numberField(0, 100),
+  last_session_attendance: optionalText,
+  is_staff_ward: yesNoField,
+  participates_ncc: yesNoField,
+  participates_nss: yesNoField,
+  participates_scouts: yesNoField,
+  participates_competitions: yesNoField,
+  distance_band: enumField("distance_band"),
+  parent_highest_education: enumField("parent_highest_education"),
+};
 
 export const studentSchema = z.object({
   admission_no: admissionNoSchema,
   full_name: z.string().min(2, "Full name must be at least 2 characters"),
-  father_name: z.string().optional().or(z.literal("")),
-  mother_name: z.string().optional().or(z.literal("")),
+  father_name: optionalText,
+  mother_name: optionalText,
   date_of_birth: dobOptionalSchema,
-  gender: z.enum(["male", "female", "other"]).optional(),
-  address: z.string().optional().or(z.literal("")),
-  phone: z.string().optional().or(z.literal("")),
+  // enumField (not bare z.enum): the admin form sends "" for a blank select,
+  // which z.enum(...).optional() rejects — making optional fields look
+  // mandatory. enumField maps blank/unknown to undefined instead.
+  gender: enumField("gender"),
+  address: optionalText,
+  phone: optionalText,
   email: z.string().email("Invalid email").optional().or(z.literal("")),
-  blood_group: z.enum(["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"]).optional(),
-  category: z.string().optional().or(z.literal("")),
-  aadhar_number: z.string().optional().or(z.literal("")),
-  previous_school: z.string().optional().or(z.literal("")),
+  blood_group: enumField("blood_group"),
+  category: enumField("category"),
+  aadhar_number: optionalText,
+  previous_school: optionalText,
+  ...udiseProfileFields,
 });
 
 export type StudentData = z.infer<typeof studentSchema>;
 
 export const enrollmentStatusSchema = z.enum(['active', 'passed', 'failed', 'terminated', 'exited']);
 
+// Bulk rows are forgiving (only admission/name/class are required; gender and
+// blood group arrive pre-normalized from the client but unknown values must
+// not fail a row). 500 rows per request — the client chunks larger files so
+// a 50-column sheet stays under the serverless request-body limit.
 export const studentBulkUploadSchema = z.object({
   students: z.array(
     z.object({
       admission_no: admissionNoSchema,
       full_name: z.string().min(2, "Name is required"),
       class_name: z.string().min(1, "Class is required"),
-      section: z.string().optional().or(z.literal("")),
-      stream: z.string().optional().or(z.literal("")),
-      father_name: z.string().optional().or(z.literal("")),
-      mother_name: z.string().optional().or(z.literal("")),
+      section: optionalText,
+      stream: optionalText,
+      subjects: optionalText, // raw comma/semicolon list, resolved server-side
+      father_name: optionalText,
+      mother_name: optionalText,
       date_of_birth: dobOptionalSchema,
-      gender: z.string().optional().or(z.literal("")),
-      phone: z.string().optional().or(z.literal("")),
-      address: z.string().optional().or(z.literal("")),
+      gender: optionalText,
+      phone: optionalText,
+      address: optionalText,
       roll_number: z.number().int().optional(),
-      email: z.string().optional().or(z.literal("")),
-      blood_group: z.string().optional().or(z.literal("")),
-      category: z.string().optional().or(z.literal("")),
-      aadhar_number: z.string().optional().or(z.literal("")),
-      previous_school: z.string().optional().or(z.literal("")),
+      email: optionalText,
+      blood_group: optionalText,
+      category: enumField("category"),
+      aadhar_number: optionalText,
+      previous_school: optionalText,
+      ...udiseProfileFields,
+      // Bulk sheets carry dirty phone data; row-level 10-digit enforcement
+      // would reject entire students over a typo. Keep these permissive here
+      // (the strict rules above still apply to the admin form).
+      mother_mobile: optionalText,
+      father_mobile: optionalText,
+      guardian_mobile: optionalText,
+      present_pincode: optionalText,
+      permanent_pincode: optionalText,
     })
-  ).min(1, "At least one student is required").max(5000, "Too many rows in one upload"),
+  ).min(1, "At least one student is required").max(500, "Too many rows in one request"),
 });
 
 export type StudentBulkUploadData = z.infer<typeof studentBulkUploadSchema>;
+
+// Registry ↔ schema drift guard: every template field must be representable
+// in a bulk row. Throws at module init (i.e. at build/dev time) if a field
+// was added to student-template.ts without a matching schema entry.
+{
+  const rowKeys = new Set(
+    Object.keys(studentBulkUploadSchema.shape.students.element.shape)
+  );
+  const missing = STUDENT_TEMPLATE_FIELDS.filter((f) => !rowKeys.has(f.key)).map(
+    (f) => f.key
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `studentBulkUploadSchema is missing template fields: ${missing.join(", ")} — ` +
+        "add them alongside the new entry in lib/student-template.ts"
+    );
+  }
+}
 
 // Staff bulk upload
 export const staffBulkUploadSchema = z.object({
@@ -705,6 +1054,7 @@ export const staffBulkUploadSchema = z.object({
       date_of_birth: dobOptionalSchema,
       address: z.string().optional().or(z.literal("")),
       qualifications: z.string().optional().or(z.literal("")),
+      license_number: z.string().optional().or(z.literal("")),
     })
   ).min(1, "At least one staff member is required").max(5000, "Too many rows in one upload"),
 });
@@ -741,13 +1091,22 @@ export const staffCreateSchema = z.object({
   name: z.string().trim().min(2, "Name is required").max(200),
   subject: z.string().trim().min(1, "Subject/designation is required").max(200),
   category: staffCategoryEnum,
-  photo_url: z.string().url().optional().or(z.literal("")),
+  // Accept null too: a fresh add with no photo sends `photo_url: null`
+  // (existingPhotoUrl defaults to null), which a plain `.optional()` union
+  // would reject with "Invalid data".
+  photo_url: z.string().url().nullish().or(z.literal("")),
   sort_order: z.number().int().min(0).max(100000).optional(),
-  email: z.string().email("Invalid email").optional().or(z.literal("")),
-  phone: phoneOptionalSchema.optional().or(z.literal("")),
-  date_of_birth: dobOptionalSchema,
-  address: optionalNullableString,
-  qualifications: optionalNullableString,
+  // The edit form sends `null` (not "") for optional fields the admin leaves
+  // blank or clears, so these must accept null in addition to ""/undefined —
+  // otherwise an otherwise-valid staff/teacher update is rejected with
+  // "Invalid data". null is written through to the (nullable) columns to
+  // clear them.
+  email: z.string().email("Invalid email").nullish().or(z.literal("")),
+  phone: phoneOptionalSchema.nullish().or(z.literal("")),
+  date_of_birth: dobOptionalSchema.nullable(),
+  address: optionalNullableString.nullable(),
+  qualifications: optionalNullableString.nullable(),
+  license_number: optionalNullableString.nullable(),
 });
 
 // PATCH allows any subset of the create fields (plus the row id, handled

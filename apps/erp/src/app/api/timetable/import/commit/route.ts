@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     if (!Number.isInteger(r.day_of_week) || r.day_of_week < 1 || r.day_of_week > 6) {
       return NextResponse.json({ error: `Row ${i + 1}: day_of_week must be 1..6` }, { status: 400 });
     }
-    if (!Number.isInteger(r.period_number) || r.period_number < 1) {
+    if (!Number.isInteger(r.period_number) || r.period_number < 0) {
       return NextResponse.json({ error: `Row ${i + 1}: period_number invalid` }, { status: 400 });
     }
     if (!r.start_time || !r.end_time || r.end_time <= r.start_time) {
@@ -47,23 +47,21 @@ export async function POST(request: Request) {
     }
   }
 
-  // Optional pre-wipe of (class_id, day, period) tuples we're about to write.
+  // Optional pre-wipe. "Replace" means replace this class's whole schedule for
+  // the days being imported — so we clear every period for each (class_id, day)
+  // in the batch, not only the period_numbers we're about to write. Otherwise a
+  // re-import with a changed layout (e.g. fewer/renumbered periods) leaves stale
+  // rows behind and merges into a corrupted timetable.
   if (replace) {
-    // Group by (class_id, day) for efficient deletes
-    const tuples = new Map<string, Set<number>>();
-    for (const r of rows) {
-      const key = `${r.class_id}:${r.day_of_week}`;
-      if (!tuples.has(key)) tuples.set(key, new Set());
-      tuples.get(key)!.add(r.period_number);
-    }
-    for (const [key, periods] of tuples) {
+    const classDays = new Set<string>();
+    for (const r of rows) classDays.add(`${r.class_id}:${r.day_of_week}`);
+    for (const key of classDays) {
       const [classId, dayStr] = key.split(":");
       const { error: delErr } = await admin
         .from("timetable_periods")
         .delete()
         .eq("class_id", classId)
-        .eq("day_of_week", Number(dayStr))
-        .in("period_number", [...periods]);
+        .eq("day_of_week", Number(dayStr));
       if (delErr) {
         return NextResponse.json({ error: `Pre-wipe failed: ${delErr.message}` }, { status: 400 });
       }
@@ -87,6 +85,21 @@ export async function POST(request: Request) {
     .from("timetable_periods")
     .upsert(insertRows, { onConflict: "class_id,day_of_week,period_number" });
   if (insErr) {
+    // The DB enforces "a teacher can't be in two overlapping periods" via the
+    // timetable_teacher_no_overlap EXCLUDE constraint. Surface that as a clear
+    // message instead of a raw constraint error.
+    if (
+      insErr.code === "23P01" ||
+      /timetable_teacher_no_overlap|exclusion/i.test(insErr.message ?? "")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "A teacher would be double-booked: two periods overlap in time. Fix the clashing rows (or use Replace) and re-import.",
+        },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: insErr.message }, { status: 400 });
   }
   return NextResponse.json({ ok: true, inserted: insertRows.length });

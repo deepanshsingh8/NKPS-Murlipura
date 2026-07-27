@@ -5,8 +5,17 @@ import { createUploadUrlHandler } from "@nkps/shared/lib/upload-url-handler";
 // (server-side direct upload, no signed URL needed).
 const BUCKET_RULES = {
   "staff-photos": {
-    exts: ["jpg", "jpeg", "png"],
-    description: "staff profile photos (JPG/PNG, ≤2 MB, 4:5 portrait)",
+    // webp included because uploadToStorage re-encodes raster photos to WebP
+    // client-side before minting the signed URL.
+    exts: ["jpg", "jpeg", "png", "webp"],
+    description: "staff profile photos (JPG/PNG/WebP, ≤2 MB, 4:5 portrait)",
+    featureKey: "staff" as const,
+  },
+  "transport-applications": {
+    // Office-uploaded scanned applications backing a transport change request.
+    exts: ["pdf", "jpg", "jpeg", "png"],
+    description: "transport change-request applications (PDF/JPG/PNG, ≤10 MB)",
+    featureKey: "transport" as const,
   },
 };
 

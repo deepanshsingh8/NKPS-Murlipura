@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, X } from "lucide-react";
 import { cn } from "@nkps/shared/lib/utils";
 import { SidebarProfileMenu } from "@nkps/shared/components/SidebarProfileMenu";
 import { SidebarTooltip } from "@nkps/shared/components/SidebarTooltip";
@@ -21,15 +21,18 @@ interface PortalSidebarProps {
 
 export function PortalSidebar({ title, role, navLinks, footerExtra }: PortalSidebarProps) {
   const pathname = usePathname();
-  const { collapsed, toggle } = useSidebar();
+  const { collapsed, toggle, mobileOpen, closeMobile } = useSidebar();
 
   const basePath = navLinks[0]?.href ?? "/";
 
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 h-screen bg-navy-900 flex flex-col z-40 transition-all duration-300 ease-in-out",
-        collapsed ? "w-[72px]" : "w-64"
+        "fixed left-0 top-0 h-screen bg-navy-900 flex flex-col z-40 transition-all duration-300 ease-in-out w-64",
+        // Desktop: collapse toggles between icon rail and full width.
+        collapsed ? "lg:w-[72px]" : "lg:w-64",
+        // Mobile: slide the drawer off-canvas unless it's open.
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}
     >
       {/* Header */}
@@ -49,10 +52,18 @@ export function PortalSidebar({ title, role, navLinks, footerExtra }: PortalSide
             </div>
             <button
               onClick={toggle}
-              className="flex items-center justify-center h-7 w-7 rounded-lg text-white/40 hover:bg-white/5 hover:text-white transition-colors shrink-0"
+              className="hidden lg:flex items-center justify-center h-7 w-7 rounded-lg text-white/40 hover:bg-white/5 hover:text-white transition-colors shrink-0"
               title="Collapse sidebar"
             >
               <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              onClick={closeMobile}
+              aria-label="Close menu"
+              className="lg:hidden flex items-center justify-center h-8 w-8 rounded-lg text-white/60 hover:bg-white/5 hover:text-white transition-colors shrink-0"
+              title="Close menu"
+            >
+              <X className="h-5 w-5" />
             </button>
           </>
         )}

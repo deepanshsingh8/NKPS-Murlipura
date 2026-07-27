@@ -43,6 +43,21 @@ interface ExistingPeriod {
   period_number: number;
   teacher_id: string | null;
   subject_id: string | null;
+  start_time: string;
+  end_time: string;
+}
+
+// Classes run on STAGGERED schedules — "period 3" in one class is a different
+// wall-clock time than "period 3" in another. Teacher clashes must therefore be
+// detected by time-range overlap, never by period_number equality. (Same rule
+// the substitution-suggest endpoint and the DB EXCLUDE constraint use.)
+function timesOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string
+): boolean {
+  return aStart < bEnd && aEnd > bStart;
 }
 
 export async function POST(request: Request) {
@@ -111,17 +126,31 @@ export async function POST(request: Request) {
   // since teachers can clash with classes outside the selected set.
   const { data: existingRaw } = await admin
     .from("timetable_periods")
-    .select("class_id, day_of_week, period_number, teacher_id, subject_id")
+    .select("class_id, day_of_week, period_number, teacher_id, subject_id, start_time, end_time")
     .in("day_of_week", days);
   const existing = (existingRaw as ExistingPeriod[]) ?? [];
 
-  // teacherBusy[day][period] = Set<teacher_id>
-  const teacherBusy = new Map<string, Set<string>>();
+  // teacherBusy[`${day}:${teacher_id}`] = list of occupied time ranges. A
+  // candidate slot clashes only when it overlaps one of these in wall-clock
+  // time, regardless of period_number.
+  const teacherBusy = new Map<string, Array<{ start: string; end: string }>>();
+  const markBusy = (day: number, teacherId: string, start: string, end: string) => {
+    const key = `${day}:${teacherId}`;
+    if (!teacherBusy.has(key)) teacherBusy.set(key, []);
+    teacherBusy.get(key)!.push({ start, end });
+  };
+  const teacherHasClash = (
+    day: number,
+    teacherId: string,
+    start: string,
+    end: string
+  ): boolean =>
+    (teacherBusy.get(`${day}:${teacherId}`) ?? []).some((b) =>
+      timesOverlap(b.start, b.end, start, end)
+    );
   for (const ex of existing) {
     if (!ex.teacher_id) continue;
-    const key = `${ex.day_of_week}:${ex.period_number}`;
-    if (!teacherBusy.has(key)) teacherBusy.set(key, new Set());
-    teacherBusy.get(key)!.add(ex.teacher_id);
+    markBusy(ex.day_of_week, ex.teacher_id, ex.start_time, ex.end_time);
   }
 
   let generated = 0;
@@ -174,10 +203,9 @@ export async function POST(request: Request) {
           // Subject-repeat check
           if (!allowSubjectRepeat && usedSubjectsToday.has(cs.subject_id)) continue;
 
-          // Teacher-conflict check (cross-class)
+          // Teacher-conflict check (cross-class), by wall-clock time overlap.
           if (cs.teacher_id) {
-            const busyKey = `${day}:${tp.position}`;
-            if (teacherBusy.get(busyKey)?.has(cs.teacher_id)) continue;
+            if (teacherHasClash(day, cs.teacher_id, tp.start_time, tp.end_time)) continue;
           }
 
           rowsToInsert.push({
@@ -191,9 +219,7 @@ export async function POST(request: Request) {
             is_break: false,
           });
           if (cs.teacher_id) {
-            const busyKey = `${day}:${tp.position}`;
-            if (!teacherBusy.has(busyKey)) teacherBusy.set(busyKey, new Set());
-            teacherBusy.get(busyKey)!.add(cs.teacher_id);
+            markBusy(day, cs.teacher_id, tp.start_time, tp.end_time);
           }
           usedSubjectsToday.add(cs.subject_id);
           cursor = (cursor + attempt + 1) % Math.max(1, csForClass.length);
