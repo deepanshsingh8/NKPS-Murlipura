@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
-import { Menu, X, Phone, Mail } from "lucide-react";
+import { Menu, X, Phone, Mail, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@nkps/shared/lib/utils";
 import { NAV_LINKS, SCHOOL } from "@nkps/shared/lib/constants";
@@ -18,8 +18,15 @@ import { getErpUrl } from "@nkps/shared/lib/cross-app";
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const pathname = usePathname();
   const isHome = pathname === "/";
+
+  // Primary links stay in the bar; the rest collapse into a "More" dropdown
+  // so the desktop nav doesn't crowd. NAV_LINKS stays the flat source of truth.
+  const primaryLinks = NAV_LINKS.slice(0, 6);
+  const moreLinks = NAV_LINKS.slice(6);
+  const moreActive = moreLinks.some((l) => l.href === pathname);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -33,6 +40,8 @@ export function Navbar() {
     // pathname is an external system (the URL); syncing UI to it is the intent.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMobileOpen(false);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMoreOpen(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -87,7 +96,7 @@ export function Navbar() {
               "bg-white/10 backdrop-blur-md"
             )}
           >
-            {NAV_LINKS.map((link) => {
+            {primaryLinks.map((link) => {
               const isActive = pathname === link.href;
               return (
                 <Link
@@ -110,6 +119,67 @@ export function Navbar() {
                 </Link>
               );
             })}
+
+            {/* "More" dropdown — collapses Gallery, Articles, Alumni, Contact */}
+            <div
+              className="relative"
+              onMouseEnter={() => setMoreOpen(true)}
+              onMouseLeave={() => setMoreOpen(false)}
+            >
+              <button
+                type="button"
+                onClick={() => setMoreOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                className={cn(
+                  "group relative flex items-center gap-1 px-4 py-2 text-sm font-medium rounded-full transition-all duration-300 cursor-pointer",
+                  moreActive || moreOpen
+                    ? "bg-white/20 text-white"
+                    : "text-white/70 hover:text-white"
+                )}
+              >
+                More
+                <ChevronDown
+                  className={cn(
+                    "h-3.5 w-3.5 transition-transform duration-300",
+                    moreOpen && "rotate-180"
+                  )}
+                />
+              </button>
+
+              <AnimatePresence>
+                {moreOpen && (
+                  <motion.div
+                    role="menu"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    className="absolute right-0 top-full mt-2 min-w-[12rem] rounded-2xl border border-gold-500/30 bg-navy-900/95 p-2 shadow-lg shadow-black/30 backdrop-blur-xl"
+                  >
+                    {moreLinks.map((link) => {
+                      const isActive = pathname === link.href;
+                      return (
+                        <Link
+                          key={link.href}
+                          href={link.href}
+                          role="menuitem"
+                          onClick={() => setMoreOpen(false)}
+                          className={cn(
+                            "block rounded-xl px-4 py-2.5 text-sm font-medium transition-colors duration-200",
+                            isActive
+                              ? "bg-white/15 text-white"
+                              : "text-white/70 hover:bg-white/10 hover:text-white"
+                          )}
+                        >
+                          {link.label}
+                        </Link>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
 
           {/* ERP Login + Mobile Hamburger */}
