@@ -1,6 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Playfair_Display } from "next/font/google";
 import { Toaster } from "@nkps/shared/components/ui/sonner";
+import { PWARegister } from "@nkps/shared/components/pwa/PWARegister";
+import { InstallPrompt } from "@nkps/shared/components/pwa/InstallPrompt";
 import "./globals.css";
 
 const inter = Inter({
@@ -20,6 +22,15 @@ const playfair = Playfair_Display({
 // Public-site routes live in apps/website/.
 export const metadata: Metadata = {
   title: "NKPS Admin",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "NKPS Portal",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0A3D2A",
 };
 
 export default function RootLayout({
@@ -29,6 +40,8 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable} ${playfair.variable}`}>
       <body className="min-h-screen antialiased">
         {children}
+        <PWARegister />
+        <InstallPrompt appName="NKPS Portal" />
         <Toaster position="top-right" richColors />
       </body>
     </html>

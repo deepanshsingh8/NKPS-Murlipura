@@ -11,6 +11,9 @@ export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const isLogin = pathname === "/login";
   const isChangePassword = pathname === "/change-password";
+  // The PWA offline fallback must be reachable with no session — the service
+  // worker precaches it and serves it when a navigation fails offline.
+  const isOffline = pathname === "/offline";
 
   let supabaseResponse = NextResponse.next({ request });
 
@@ -39,7 +42,7 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user && !isLogin) {
+  if (!user && !isLogin && !isOffline) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
