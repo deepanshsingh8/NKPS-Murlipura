@@ -5,11 +5,27 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@nkps/shared/lib/utils";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
 
+// Structured on the National Education Policy (NEP 2020) 5+3+3+4 framework:
+// Foundational (5 yrs), Preparatory (3 yrs), Middle (3 yrs) and Secondary (4 yrs).
 const levels = [
   {
-    tab: "Primary (I\u2013V)",
-    title: "Primary School",
-    range: "Class I to V",
+    tab: "Foundational (Nursery\u2013II)",
+    title: "Foundational Stage",
+    range: "Nursery to Class II \u00b7 5 years",
+    subjects: [
+      "English",
+      "Hindi",
+      "Numeracy",
+      "EVS",
+      "Art & Craft",
+      "Play-based Learning",
+    ],
+    accent: "bg-blue-600",
+  },
+  {
+    tab: "Preparatory (III\u2013V)",
+    title: "Preparatory Stage",
+    range: "Class III to V \u00b7 3 years",
     subjects: [
       "English",
       "Hindi",
@@ -18,12 +34,12 @@ const levels = [
       "Computer Science",
       "Art & Craft",
     ],
-    accent: "bg-blue-600",
+    accent: "bg-gold-500",
   },
   {
     tab: "Middle (VI\u2013VIII)",
-    title: "Middle School",
-    range: "Class VI to VIII",
+    title: "Middle Stage",
+    range: "Class VI to VIII \u00b7 3 years",
     subjects: [
       "English",
       "Hindi",
@@ -33,35 +49,24 @@ const levels = [
       "Sanskrit",
       "Computer Science",
     ],
-    accent: "bg-gold-500",
+    accent: "bg-blue-600",
   },
   {
-    tab: "Secondary (IX\u2013X)",
-    title: "Secondary School",
-    range: "Class IX to X",
+    tab: "Secondary (IX\u2013XII)",
+    title: "Secondary Stage",
+    range: "Class IX to XII \u00b7 4 years",
     subjects: [
       "English",
       "Hindi",
       "Mathematics",
       "Science",
       "Social Science",
-      "Information Technology",
-    ],
-    accent: "bg-blue-600",
-  },
-  {
-    tab: "Sr. Secondary (XI\u2013XII)",
-    title: "Senior Secondary School",
-    range: "Class XI to XII",
-    subjects: [
       "Physics",
       "Chemistry",
       "Biology",
-      "Mathematics",
       "Accountancy",
       "Economics",
       "Business Studies",
-      "English",
       "Computer Science",
     ],
     accent: "bg-gold-500",
@@ -76,7 +81,7 @@ export function CurriculumOverview() {
       <div className="page-container">
         <SectionHeading
           title="Our Curriculum"
-          subtitle="CBSE-affiliated comprehensive education from Nursery to Class XII"
+          subtitle="State Board affiliated comprehensive education from Nursery to Class XII, structured on the NEP 5+3+3+4 framework"
           light
         />
 

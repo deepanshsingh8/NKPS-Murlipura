@@ -20,7 +20,7 @@ import { buildMetadata } from "@nkps/shared/lib/seo";
 export const metadata: Metadata = buildMetadata({
   title: "Mandatory Public Disclosure — NK Public School, Murlipura",
   description:
-    "CBSE mandatory public disclosure for NK Public School, Murlipura, Jaipur — affiliation details, infrastructure, staff, results, documents and statutory information.",
+    "RBSE mandatory public disclosure for NK Public School, Murlipura, Jaipur — affiliation details, infrastructure, staff, results, documents and statutory information.",
   path: "/mandatory-public-disclosure",
 });
 
@@ -148,13 +148,13 @@ export default async function MandatoryPublicDisclosurePage() {
     <PageTransition>
       <PageHeader
         title="Mandatory Public Disclosure"
-        subtitle="As per CBSE requirements"
+        subtitle="As per RBSE requirements"
       />
 
       <section className="py-16 px-4 md:px-8 max-w-5xl mx-auto">
         <AnimatedSection>
           <p className="text-chalk-dim mb-8 text-sm">
-            The following information is published as per CBSE Affiliation
+            The following information is published as per RBSE Affiliation
             Bye-Laws and mandatory disclosure requirements. This information is
             updated periodically. Click on a section to view details.
           </p>

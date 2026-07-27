@@ -15,7 +15,7 @@ const stats = [
   { number: "Since 1985", label: "Founding Campus", icon: CalendarDays },
   { number: "40+", label: "Years of Legacy", icon: BookOpen },
   { number: "Nursery–XII", label: "Co-educational", icon: GraduationCap },
-  { number: "CBSE", label: "Affiliated", icon: Building2 },
+  { number: "State Board", label: "Affiliated", icon: Building2 },
 ];
 
 const INTERVAL = 7000;
@@ -394,7 +394,7 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
               >
                 <div className="liquid-glass border border-white/15 px-6 py-3.5 rounded-xl gold-glow-sm">
                   <p className="text-lg md:text-xl lg:text-2xl font-light text-white/90 tracking-tight">
-                    CBSE Affiliated&ensp;&middot;&ensp;Est. 1985&ensp;&middot;&ensp;Nursery&ndash;XII
+                    State Board Affiliated&ensp;&middot;&ensp;Est. 1985&ensp;&middot;&ensp;Nursery&ndash;XII
                   </p>
                 </div>
               </FadeIn>

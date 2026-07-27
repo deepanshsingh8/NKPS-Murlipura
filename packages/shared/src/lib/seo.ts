@@ -102,9 +102,9 @@ export const schoolJsonLd = {
       ],
       accreditedBy: {
         "@type": "EducationalOrganization",
-        name: "Central Board of Secondary Education",
-        alternateName: "CBSE",
-        url: "https://www.cbse.gov.in",
+        name: "Board of Secondary Education, Rajasthan",
+        alternateName: "RBSE",
+        url: "https://rajeduboard.rajasthan.gov.in",
         // Only assert an affiliation number once it is confirmed for the
         // Murlipura campus — never emit an empty or a sister-branch number.
         ...(SCHOOL.affiliationNumber
@@ -115,7 +115,7 @@ export const schoolJsonLd = {
         ? {
             identifier: {
               "@type": "PropertyValue",
-              propertyID: "CBSE Affiliation Number",
+              propertyID: "RBSE Affiliation Number",
               value: SCHOOL.affiliationNumber,
             },
           }

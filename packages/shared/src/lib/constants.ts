@@ -26,7 +26,7 @@ export const SCHOOL = {
   email: ["nkpsem@gmail.com", "nkpsjaipur@gmail.com"],
   whatsapp: "919785500042",
   officeHours: "Mon–Sat, 9:00 AM – 3:00 PM",
-  affiliation: "CBSE",
+  affiliation: "RBSE",
   affiliationNumber: "",
   geo: { lat: 26.9774, lng: 75.7884 },
   priceRange: "₹₹",

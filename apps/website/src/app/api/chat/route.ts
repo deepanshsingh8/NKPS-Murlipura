@@ -12,7 +12,7 @@ const BASE_SYSTEM_PROMPT = `You are the NK Public School Murlipura virtual assis
 - Full Name: NK Public School, Murlipura (English Medium)
 - Tagline: "A Relentless Quest for Excellence"
 - Founded: 1985 (the founding campus of the NKPS group)
-- Affiliation: CBSE (Central Board of Secondary Education) — affiliation number to be confirmed
+- Affiliation: State Board — RBSE (Board of Secondary Education, Rajasthan) — affiliation number to be confirmed
 - Classes: Nursery to Class XII
 - Streams at Senior Secondary (XI–XII): Science and Commerce
 - Co-educational, English medium
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
         getDisclosureBoardResults(),
       ]);
 
-      let disclosureSection = "\n\n## Mandatory Public Disclosure (CBSE)\n";
+      let disclosureSection = "\n\n## Mandatory Public Disclosure (RBSE)\n";
       disclosureSection += "Full details at: /mandatory-public-disclosure\n";
 
       const sectionLabels: Record<string, string> = {

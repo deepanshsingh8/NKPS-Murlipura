@@ -64,7 +64,7 @@ export function LeadershipGrid({ cards }: LeadershipGridProps = {}) {
                         alt={leader.name}
                         width={112}
                         height={112}
-                        className="object-cover w-full h-full"
+                        className="object-cover object-top w-full h-full"
                       />
                     ) : (
                       <div className="w-full h-full bg-gradient-to-br from-navy-800 to-navy-900 flex items-center justify-center">

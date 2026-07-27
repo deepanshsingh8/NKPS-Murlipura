@@ -14,8 +14,8 @@ export const ADMISSIONS_FAQS = [
     a: "Birth Certificate, previous school records and Transfer Certificate (Class I onwards), passport-size photographs of the child and parents, and Aadhaar Card copy. The school office will confirm any additional documents at the time of the application.",
   },
   {
-    q: "Is NK Public School CBSE affiliated?",
-    a: `Yes. NK Public School, Murlipura is a CBSE co-educational school in Jaipur${SCHOOL.affiliationNumber ? `, affiliation number ${SCHOOL.affiliationNumber}` : " (CBSE affiliation number available from the school office on request)"}. We offer classes from Nursery to Class XII following the CBSE curriculum.`,
+    q: "Is NK Public School State Board affiliated?",
+    a: `Yes. NK Public School, Murlipura is a State Board (RBSE) affiliated co-educational school in Jaipur${SCHOOL.affiliationNumber ? `, affiliation number ${SCHOOL.affiliationNumber}` : " (RBSE affiliation number available from the school office on request)"}. We offer classes from Nursery to Class XII following the RBSE based curriculum.`,
   },
   {
     q: "Does the school provide bus transport?",
@@ -27,6 +27,6 @@ export const ADMISSIONS_FAQS = [
   },
   {
     q: "What streams are offered in Class XI and XII?",
-    a: "We offer Science (with Biology and Mathematics streams), Commerce and Humanities at the senior secondary level, with subject combinations aligned to CBSE guidelines.",
+    a: "We offer Science (with Biology and Mathematics streams), Commerce and Humanities at the senior secondary level, with subject combinations aligned to RBSE guidelines.",
   },
 ];

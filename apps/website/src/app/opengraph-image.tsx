@@ -51,7 +51,7 @@ export default async function OpengraphImage() {
           >
             NK
           </div>
-          <span>CBSE Affiliated · Est. 1985</span>
+          <span>State Board Affiliated · Est. 1985</span>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
