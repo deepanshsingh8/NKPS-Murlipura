@@ -5,65 +5,47 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@nkps/shared/lib/utils";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
 
+// Structured on the National Education Policy (NEP 2020) 5+3+3+4 framework:
+// Foundational (5 yrs), Preparatory (3 yrs), Middle (3 yrs) and Secondary (4 yrs).
 const levels = [
   {
-    tab: "Primary (I\u2013V)",
-    title: "Primary School",
-    range: "Class I to V",
-    subjects: [
-      "English",
-      "Hindi",
-      "Mathematics",
-      "EVS",
-      "Computer Science",
-      "Art & Craft",
-    ],
+    tab: "Foundational (Nursery\u2013II)",
+    title: "Foundational Stage",
+    duration: "5 years",
+    ages: "3 to 8 years",
+    classes: "3 years of preschool + Class I & II",
+    focus:
+      "Play-based, activity-based learning and multi-level early childhood care.",
     accent: "bg-blue-600",
   },
   {
-    tab: "Middle (VI\u2013VIII)",
-    title: "Middle School",
-    range: "Class VI to VIII",
-    subjects: [
-      "English",
-      "Hindi",
-      "Mathematics",
-      "Science",
-      "Social Science",
-      "Sanskrit",
-      "Computer Science",
-    ],
+    tab: "Preparatory (III\u2013V)",
+    title: "Preparatory Stage",
+    duration: "3 years",
+    ages: "8 to 11 years",
+    classes: "Class III, IV and V",
+    focus:
+      "Play, discovery and interactive classroom learning, building foundational numeracy and literacy.",
     accent: "bg-gold-500",
   },
   {
-    tab: "Secondary (IX\u2013X)",
-    title: "Secondary School",
-    range: "Class IX to X",
-    subjects: [
-      "English",
-      "Hindi",
-      "Mathematics",
-      "Science",
-      "Social Science",
-      "Information Technology",
-    ],
+    tab: "Middle (VI\u2013VIII)",
+    title: "Middle Stage",
+    duration: "3 years",
+    ages: "11 to 14 years",
+    classes: "Class VI, VII and VIII",
+    focus:
+      "Experiential learning in the sciences, mathematics, arts, social sciences and humanities, with an introduction to vocational crafts and coding.",
     accent: "bg-blue-600",
   },
   {
-    tab: "Sr. Secondary (XI\u2013XII)",
-    title: "Senior Secondary School",
-    range: "Class XI to XII",
-    subjects: [
-      "Physics",
-      "Chemistry",
-      "Biology",
-      "Mathematics",
-      "Accountancy",
-      "Economics",
-      "Business Studies",
-      "English",
-      "Computer Science",
-    ],
+    tab: "Secondary (IX\u2013XII)",
+    title: "Secondary Stage",
+    duration: "4 years",
+    ages: "14 to 18 years",
+    classes: "Class IX to XII (two phases: IX\u2013X and XI\u2013XII)",
+    focus:
+      "Multidisciplinary study, critical thinking and flexibility, with no rigid separation between the science and commerce streams.",
     accent: "bg-gold-500",
   },
 ];
@@ -76,7 +58,7 @@ export function CurriculumOverview() {
       <div className="page-container">
         <SectionHeading
           title="Our Curriculum"
-          subtitle="CBSE-affiliated comprehensive education from Nursery to Class XII"
+          subtitle="State Board affiliated comprehensive education from Nursery to Class XII, structured on the NEP 5+3+3+4 framework"
           light
         />
 
@@ -120,30 +102,43 @@ export function CurriculumOverview() {
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-heading text-2xl font-bold text-chalk">
-                      {levels[activeTab].title}
-                    </h3>
-                    <p className="text-chalk-faint text-sm mt-1">
-                      {levels[activeTab].range}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h3 className="font-heading text-2xl font-bold text-chalk">
+                        {levels[activeTab].title}
+                      </h3>
+                      <span className="rounded-full border border-gold-500/30 bg-gold-500/15 px-3 py-1 text-xs font-semibold text-chalk-gold">
+                        {levels[activeTab].duration}
+                      </span>
+                    </div>
 
-                    {/* Subject badges */}
-                    <div className="flex flex-wrap gap-3 mt-6">
-                      {levels[activeTab].subjects.map((subject, idx) => (
-                        <motion.span
-                          key={subject}
-                          initial={{ opacity: 0, scale: 0.9 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          transition={{
-                            duration: 0.25,
-                            delay: idx * 0.04,
-                            ease: "easeOut",
-                          }}
-                          className="bg-white/[0.06] text-chalk-dim border border-chalk/15 rounded-full px-4 py-2 text-sm font-medium"
-                        >
-                          {subject}
-                        </motion.span>
-                      ))}
+                    {/* Classes + Ages */}
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="text-chalk-faint text-xs font-semibold uppercase tracking-wider">
+                          Classes
+                        </p>
+                        <p className="text-chalk-dim text-sm mt-1">
+                          {levels[activeTab].classes}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-chalk-faint text-xs font-semibold uppercase tracking-wider">
+                          Ages
+                        </p>
+                        <p className="text-chalk-dim text-sm mt-1">
+                          {levels[activeTab].ages}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Focus */}
+                    <div className="mt-5">
+                      <p className="text-chalk-faint text-xs font-semibold uppercase tracking-wider">
+                        Focus
+                      </p>
+                      <p className="text-chalk-dim text-sm mt-1 leading-relaxed">
+                        {levels[activeTab].focus}
+                      </p>
                     </div>
                   </div>
                 </div>

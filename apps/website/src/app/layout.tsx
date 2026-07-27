@@ -36,7 +36,7 @@ export const metadata: Metadata = {
     "NKPS Murlipura",
     "Best School in Murlipura Jaipur",
     "School in Arya Nagar Jaipur",
-    "CBSE School Murlipura",
+    "RBSE School Murlipura",
     "Schools near Murlipura",
     "Top School North Jaipur",
     "School Admissions Jaipur",

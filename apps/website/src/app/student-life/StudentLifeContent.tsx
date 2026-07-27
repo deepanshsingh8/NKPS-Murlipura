@@ -9,10 +9,8 @@ import {
   Brain,
   BookOpen,
   Cpu,
-  Trophy,
   Target,
   CircleDot,
-  Timer,
   TableProperties,
   Crown,
   Star,
@@ -47,12 +45,10 @@ interface StudentLifePageProps {
 }
 
 const sports = [
-  { name: "Cricket", icon: Trophy },
-  { name: "Football", icon: Target },
-  { name: "Basketball", icon: CircleDot },
-  { name: "Athletics", icon: Timer },
-  { name: "Table Tennis", icon: TableProperties },
+  { name: "Pickle Ball", icon: CircleDot },
+  { name: "Badminton", icon: Target },
   { name: "Chess", icon: Crown },
+  { name: "Table Tennis", icon: TableProperties },
 ];
 
 export function StudentLifeContent({
@@ -152,7 +148,7 @@ export function StudentLifeContent({
         <div className="mx-auto max-w-4xl">
           <AnimatedSection>
             <SectionHeading
-              title="Sports & Athletics"
+              title="Sports"
               subtitle="Building teamwork, discipline and physical fitness through sports"
               light
             />

@@ -62,10 +62,6 @@ const highlights = [
     title: "First Aid Room",
     description: "Fully equipped medical room with trained staff on standby",
   },
-  {
-    title: "Spacious Parking",
-    description: "Organized parking facility for staff and visitor vehicles",
-  },
 ];
 
 interface FacilitiesContentProps {

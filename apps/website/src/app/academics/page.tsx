@@ -8,9 +8,9 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Academics & CBSE Curriculum — NK Public School Jaipur",
+  title: "Academics & RBSE based Curriculum — NK Public School Jaipur",
   description:
-    "CBSE curriculum at NK Public School, Jaipur — structured pre-primary, primary, secondary and senior-secondary programs with experienced faculty in Science, Commerce and Humanities streams.",
+    "RBSE based curriculum at NK Public School, Jaipur — structured pre-primary, primary, secondary and senior-secondary programs with experienced faculty in Science, Commerce and Humanities streams.",
   path: "/academics",
 });
 
@@ -25,7 +25,7 @@ export default function AcademicsPage() {
       />
       <PageHeader
         title="Academics"
-        subtitle="Excellence in CBSE Education"
+        subtitle="Excellence in RBSE Education"
       />
       <CurriculumOverview />
 

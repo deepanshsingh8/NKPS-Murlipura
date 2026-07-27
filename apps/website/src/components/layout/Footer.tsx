@@ -52,13 +52,13 @@ export function Footer() {
               Nurturing Knowledge, Pursuing Success
             </p>
             <p className="mt-4 text-sm leading-relaxed text-gray-300">
-              A {SCHOOL.affiliation}-affiliated institution committed to academic excellence,
+              A State Board–affiliated institution committed to academic excellence,
               holistic development, and nurturing future leaders.
             </p>
-            {/* CBSE Badge */}
+            {/* Affiliation Badge */}
             <div className="mt-5 inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg px-3 py-2">
               <GraduationCap className="w-4 h-4 text-gold-400" />
-              <span className="text-xs font-medium text-gray-300">CBSE Affiliated</span>
+              <span className="text-xs font-medium text-gray-300">State Board Affiliated</span>
             </div>
             {(SCHOOL.social.facebook || SCHOOL.social.instagram || SCHOOL.social.youtube) && (
               <div className="mt-5 flex items-center gap-4">
