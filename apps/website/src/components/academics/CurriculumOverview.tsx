@@ -11,64 +11,41 @@ const levels = [
   {
     tab: "Foundational (Nursery\u2013II)",
     title: "Foundational Stage",
-    range: "Nursery to Class II \u00b7 5 years",
-    subjects: [
-      "English",
-      "Hindi",
-      "Numeracy",
-      "EVS",
-      "Art & Craft",
-      "Play-based Learning",
-    ],
+    duration: "5 years",
+    ages: "3 to 8 years",
+    classes: "3 years of preschool + Class I & II",
+    focus:
+      "Play-based, activity-based learning and multi-level early childhood care.",
     accent: "bg-blue-600",
   },
   {
     tab: "Preparatory (III\u2013V)",
     title: "Preparatory Stage",
-    range: "Class III to V \u00b7 3 years",
-    subjects: [
-      "English",
-      "Hindi",
-      "Mathematics",
-      "EVS",
-      "Computer Science",
-      "Art & Craft",
-    ],
+    duration: "3 years",
+    ages: "8 to 11 years",
+    classes: "Class III, IV and V",
+    focus:
+      "Play, discovery and interactive classroom learning, building foundational numeracy and literacy.",
     accent: "bg-gold-500",
   },
   {
     tab: "Middle (VI\u2013VIII)",
     title: "Middle Stage",
-    range: "Class VI to VIII \u00b7 3 years",
-    subjects: [
-      "English",
-      "Hindi",
-      "Mathematics",
-      "Science",
-      "Social Science",
-      "Sanskrit",
-      "Computer Science",
-    ],
+    duration: "3 years",
+    ages: "11 to 14 years",
+    classes: "Class VI, VII and VIII",
+    focus:
+      "Experiential learning in the sciences, mathematics, arts, social sciences and humanities, with an introduction to vocational crafts and coding.",
     accent: "bg-blue-600",
   },
   {
     tab: "Secondary (IX\u2013XII)",
     title: "Secondary Stage",
-    range: "Class IX to XII \u00b7 4 years",
-    subjects: [
-      "English",
-      "Hindi",
-      "Mathematics",
-      "Science",
-      "Social Science",
-      "Physics",
-      "Chemistry",
-      "Biology",
-      "Accountancy",
-      "Economics",
-      "Business Studies",
-      "Computer Science",
-    ],
+    duration: "4 years",
+    ages: "14 to 18 years",
+    classes: "Class IX to XII (two phases: IX\u2013X and XI\u2013XII)",
+    focus:
+      "Multidisciplinary study, critical thinking and flexibility, with no rigid separation between the science and commerce streams.",
     accent: "bg-gold-500",
   },
 ];
@@ -125,30 +102,43 @@ export function CurriculumOverview() {
 
                   {/* Content */}
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-heading text-2xl font-bold text-chalk">
-                      {levels[activeTab].title}
-                    </h3>
-                    <p className="text-chalk-faint text-sm mt-1">
-                      {levels[activeTab].range}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h3 className="font-heading text-2xl font-bold text-chalk">
+                        {levels[activeTab].title}
+                      </h3>
+                      <span className="rounded-full border border-gold-500/30 bg-gold-500/15 px-3 py-1 text-xs font-semibold text-chalk-gold">
+                        {levels[activeTab].duration}
+                      </span>
+                    </div>
 
-                    {/* Subject badges */}
-                    <div className="flex flex-wrap gap-3 mt-6">
-                      {levels[activeTab].subjects.map((subject, idx) => (
-                        <motion.span
-                          key={subject}
-                          initial={{ opacity: 0, scale: 0.9 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          transition={{
-                            duration: 0.25,
-                            delay: idx * 0.04,
-                            ease: "easeOut",
-                          }}
-                          className="bg-white/[0.06] text-chalk-dim border border-chalk/15 rounded-full px-4 py-2 text-sm font-medium"
-                        >
-                          {subject}
-                        </motion.span>
-                      ))}
+                    {/* Classes + Ages */}
+                    <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <p className="text-chalk-faint text-xs font-semibold uppercase tracking-wider">
+                          Classes
+                        </p>
+                        <p className="text-chalk-dim text-sm mt-1">
+                          {levels[activeTab].classes}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-chalk-faint text-xs font-semibold uppercase tracking-wider">
+                          Ages
+                        </p>
+                        <p className="text-chalk-dim text-sm mt-1">
+                          {levels[activeTab].ages}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Focus */}
+                    <div className="mt-5">
+                      <p className="text-chalk-faint text-xs font-semibold uppercase tracking-wider">
+                        Focus
+                      </p>
+                      <p className="text-chalk-dim text-sm mt-1 leading-relaxed">
+                        {levels[activeTab].focus}
+                      </p>
                     </div>
                   </div>
                 </div>
