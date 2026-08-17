@@ -10,6 +10,20 @@ covers what to redo when the transfer happens.
 > `nkpublicschool.com` and Gmail SMTP. This file supersedes it: the domain is
 > `.org` and email goes through Resend.
 
+> ### 🔴 Scope: `nkpublicschool.com` is a different deployment — do not touch it
+>
+> `.com` serves the **NKPS Rajawas** website from its own repo, its own Vercel
+> projects, and its own DNS (registrar via Wolkgeist/PDR, nameservers at
+> Tradelit). Nothing in this runbook changes it.
+>
+> `.com` is referenced here **only as a reference for conventions** — canonical
+> host, Resend record layout, launch checks — so the two campuses stay
+> consistent. Every DNS record, environment variable and Vercel setting
+> described below belongs to `nkpublicschool.org` and the Murlipura projects.
+>
+> The `.com` material in `_reference/tasks-rajawas/` is an archived copy for
+> reading. Don't edit it, and don't apply its DNS values anywhere.
+
 ---
 
 ## Why this can't be hosted on besthostservices
@@ -32,21 +46,28 @@ with fee/admissions workflows should be on **Pro ($20/month/member)**.
 
 ## Target architecture
 
-Three Vercel projects, one Supabase, one domain:
+Three Vercel projects, one Supabase, one domain.
 
-This mirrors the `nkpublicschool.com` (Rajawas) deployment so the two campuses
+The topology mirrors the `nkpublicschool.com` (Rajawas) deployment so the two campuses
 are operationally identical — same topology, same canonical-host convention,
 same email setup, same launch checks. Where a choice was already made for
 `.com`, this document follows it rather than re-deciding. The `.com` source
 records are `_reference/tasks-rajawas/domain-handover.md` and
 `_reference/tasks-rajawas/launch_day_checklist.md`.
 
-| Hostname | Vercel project | Root directory | What it is |
+The three Vercel projects already exist and are live on their `*.vercel.app`
+URLs, so the work below is attaching domains and finishing configuration — not
+creating projects.
+
+| Hostname | Vercel project | Current URL | Root directory |
 |---|---|---|---|
-| `www.nkpublicschool.org` **(canonical)** | `nkps-website` | `apps/website` | Public marketing site |
-| `nkpublicschool.org` | `nkps-website` | — | 301 redirect to `www` |
-| `cms.nkpublicschool.org` | `nkps-cms` | `apps/cms` | Content management |
-| `erp.nkpublicschool.org` | `nkps-erp` | `apps/erp` | Students, exams, fees, portals |
+| `www.nkpublicschool.org` **(canonical)** | `nkps-murlipura-website` | `nkps-murlipura-website.vercel.app` | `apps/website` |
+| `nkpublicschool.org` | `nkps-murlipura-website` | — (301 to `www`) | — |
+| `cms.nkpublicschool.org` | `nkps-murlipura-cms` | `nkps-murlipura-cms.vercel.app` | `apps/cms` |
+| `erp.nkpublicschool.org` | `nkps-murlipura-erp` | `nkps-murlipura-erp.vercel.app` | `apps/erp` |
+
+The website project name is confirmed; the cms/erp names above assume the same
+`nkps-murlipura-*` pattern — check them in the Vercel dashboard.
 
 **Canonical host is `www`**, matching `.com`. The apex is added to the same
 Vercel project and set to redirect. Keep this consistent — it decides
@@ -74,24 +95,41 @@ pnpm run build
 
 All four must pass. CI runs the same gates on every PR to `main`.
 
-## Step 1 — Create the three Vercel projects
+## Step 1 — Audit the existing Vercel projects
 
-For each of `nkps-website`, `nkps-cms`, `nkps-erp`:
+The projects exist and deploy, so Root Directory and build settings are already
+right. Confirm the rest, per project:
 
-1. Vercel dashboard → **Add New… → Project** → import `deepanshsingh8/NKPS-Murlipura`.
-2. **Project Name**: `nkps-website` / `nkps-cms` / `nkps-erp`.
-3. **Framework Preset**: Next.js (auto-detected).
-4. **Root Directory**: click *Edit* → `apps/website` / `apps/cms` / `apps/erp`.
-   This is the step people miss — the repo root is not a Next.js app, so a
-   project left at root will fail to build.
-5. **Build & Install commands**: leave every default. Vercel reads the root
-   `packageManager` field and runs `pnpm install` across the workspace.
-6. **Environment Variables**: add the variables from Step 2 before the first
-   deploy, scoped to *Production, Preview, Development*.
-7. Deploy. Confirm each one builds and its `*.vercel.app` URL loads.
+1. Settings → Git → **Production Branch** = `main`.
+2. Settings → Environment Variables → work through the Step 2 matrix. This is
+   where a live-but-unfinished project usually has gaps.
 
-Get all three green on their Vercel URLs **before** touching DNS. Then
-Settings → Git → **Production Branch** = `main`.
+### The cross-app URL trap
+
+`packages/shared/src/lib/cross-app.ts` falls back to **localhost** when its URL
+variables are unset:
+
+```ts
+export const getErpUrl = (path = "") =>
+  join(process.env.NEXT_PUBLIC_ERP_URL, path, "http://localhost:3003");
+```
+
+Unset in production, that silently breaks:
+
+| Where | File | Symptom |
+|---|---|---|
+| Website navbar → *Portal Login* | `apps/website/src/components/layout/Navbar.tsx:189` | Dead link to `localhost:3003` for every visitor |
+| Home page quick links | `apps/website/src/components/home/QuickLinks.tsx:21,28` | Same, for portal and CMS |
+| CMS login → *forgot password* | `apps/cms/src/app/login/page.tsx:29` | Dead link |
+| **Portal password-reset email** | `apps/erp/src/app/api/portal/forgot-password/route.ts:63` | The emailed reset link points at localhost — fails silently, users just can't reset |
+| Welcome / registration-approval emails | `apps/erp/src/app/api/users/route.ts:225`, `registrations/approve/route.ts:248` | Login link in the email points at localhost |
+
+**Quick check without the dashboard:** open the live website, right-click the
+*Portal Login* button → Copy Link Address. If it starts with `localhost`,
+`NEXT_PUBLIC_ERP_URL` is unset on the website project.
+
+Fix by setting all three URL variables in all three projects, then redeploy —
+environment-variable changes do not apply to existing deployments.
 
 ## Step 2 — Environment variables
 
@@ -128,10 +166,10 @@ editing any of these, trigger a redeploy (Deployments → ⋯ → Redeploy).
 
 In each Vercel project → **Settings → Domains**:
 
-- `nkps-website`: add `www.nkpublicschool.org`, then add `nkpublicschool.org`
+- `nkps-murlipura-website`: add `www.nkpublicschool.org`, then add `nkpublicschool.org`
   and set it to **redirect to `www.nkpublicschool.org` (301)**.
-- `nkps-cms`: add `cms.nkpublicschool.org`.
-- `nkps-erp`: add `erp.nkpublicschool.org`.
+- `nkps-murlipura-cms`: add `cms.nkpublicschool.org`.
+- `nkps-murlipura-erp`: add `erp.nkpublicschool.org`.
 
 Vercel then shows the exact records to create.
 

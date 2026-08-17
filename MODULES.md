@@ -134,9 +134,9 @@ rebuilt by a single push to `main`.
 
 | Subdomain | Vercel project | Root directory |
 |---|---|---|
-| `nkpublicschool.org` | `nkps-website` | `apps/website` |
-| `cms.nkpublicschool.org` | `nkps-cms` | `apps/cms` |
-| `erp.nkpublicschool.org` | `nkps-erp` | `apps/erp` |
+| `nkpublicschool.org` | `nkps-murlipura-website` | `apps/website` |
+| `cms.nkpublicschool.org` | `nkps-murlipura-cms` | `apps/cms` |
+| `erp.nkpublicschool.org` | `nkps-murlipura-erp` | `apps/erp` |
 
 Before any deploy, verify the branch:
 
