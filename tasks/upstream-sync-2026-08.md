@@ -277,20 +277,45 @@ policy is `public.get_user_role() = 'staff'`).
 13. Dry-run against a Supabase branch or a restored copy, never production first.
 
 **Phase 3 — Verification** ⬜ needs a real database
+
+**Where to run it: the PR's Vercel preview deployments.** All three projects
+build this branch on every push and are green (PR #12). If their Preview-scope
+environment variables point at the same Supabase project as Production — they
+do by default, since the July setup scoped every variable to *Production,
+Preview, Development* — the previews are the synced code against the real
+database, without merging anything. That is the whole of Phase 3, done safely.
+
+Two consequences of that:
+
+- **Order matters.** Run the consolidated SQL *first*. Until then the preview
+  ERP is running instalment-fee code against a schema with no `instalment_no`
+  column, so the fee screens will error. That is expected, not a regression.
+- **Once the SQL is run, production is already on the new schema.** The
+  migrations are additive (new nullable columns, additive RLS policies, a
+  widened CHECK), so the *current* production code keeps working — this is
+  what makes running the SQL before the merge safe rather than reckless.
+
+Checks, on the preview URLs:
+
 14. Fee schedule: create instalments, publish, check dues on admin, parent and
     student screens, generate a receipt.
 15. Sort/filter on a sample of the 25 touched list pages.
 16. Transport: assign by stop, follow the no-bus deep link.
-17. Staff role: confirm 084 restored student reads.
+17. Staff role: confirm 084 restored student reads — log in as a staff account
+    with a feature grant and check the transport screen lists enrollments.
 18. CMS: confirm holiday-homework, prospectus and change-password still work —
-    these are the ones the overlay is most likely to have eaten.
-19. Confirm `latest_updates` cards still render.
+    these are the ones the overlay was most likely to have eaten.
+19. CMS → Site Media → Student Life Page: confirm Student Council and House
+    Captains appear as editable sections, add one card, confirm it renders on
+    `/student-life` (both sections are hidden until a card exists).
+20. Confirm the NKPS Agent widget opens and shows Murlipura's phone and
+    WhatsApp number, not Rajawas's.
 
 **Phase 4 — Ship** ⬜
-20. One PR. Body lists the upstream SHA, the feature groups, and the DB script
-    that has to be run.
-21. Run the consolidated script **before** merging, so the deploy doesn't land
-    code that needs columns the DB lacks.
+21. PR #12 is open as a **draft** — it lists the upstream SHA, the feature
+    groups and the DB script, and stays draft until Phase 3 passes.
+22. Order: run the consolidated script → verify on the previews → land the
+    `.org` domain cutover → mark #12 ready → merge.
 
 ---
 
