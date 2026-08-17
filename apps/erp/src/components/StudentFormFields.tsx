@@ -6,7 +6,7 @@
 // registry (lib/student-template.ts) so the form can't drift from the bulk
 // template or the per-student export.
 
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
@@ -24,6 +24,7 @@ import {
   indianNationalFromNationality,
   studentsInsertKeys,
 } from "@nkps/shared/lib/student-template";
+import type { StudentTemplateField } from "@nkps/shared/lib/student-template";
 import type { Stream } from "@nkps/shared/types";
 
 export interface StudentFormClassOption {
@@ -103,6 +104,154 @@ export function buildStudentPayload(form: StudentFormState): Record<string, unkn
   return payload;
 }
 
+// ── Memoised field controls ──────────────────────────────────────────────────
+// The form renders ~70 controls, ~25 of them Selects. Without memoisation every
+// keystroke re-rendered all of them (and re-walked each Select's child tree to
+// derive its `items`), which on a mobile CPU showed up as text lagging visibly
+// behind typing. Each control below re-renders only when its OWN value, error
+// or disabled state changes, so a keystroke now costs one field, not seventy.
+//
+// For that to hold, every prop must be a primitive or a stable reference:
+//   * `field`        — the registry object, a module-level singleton
+//   * `setFormData`  — the useState setter, stable for the component's lifetime
+//   * `value`/`error`/`disabled` — primitives compared by value
+// `items` is passed to every Select explicitly so the wrapper can skip the
+// recursive collectSelectItems() walk over its children.
+
+type SetStudentForm = React.Dispatch<React.SetStateAction<StudentFormState>>;
+
+interface FieldControlProps {
+  fieldKey: string;
+  field: StudentTemplateField;
+  value: string;
+  error?: string;
+  disabled: boolean;
+  setFormData: SetStudentForm;
+}
+
+const ERROR_RING = "border-red-500 focus-visible:ring-red-500";
+
+const BOOLEAN_ITEMS = [
+  { value: "none", label: "—" },
+  { value: "YES", label: "Yes" },
+  { value: "NO", label: "No" },
+];
+
+function FieldError({ error }: { error?: string }) {
+  if (!error) return null;
+  return <p className="text-[11px] text-red-600 mt-1">{error}</p>;
+}
+
+const StudentTextField = memo(function StudentTextField({
+  fieldKey,
+  field,
+  value,
+  error,
+  disabled,
+  setFormData,
+}: FieldControlProps) {
+  const onChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const next = e.target.value;
+      setFormData((prev) => ({
+        ...prev,
+        fields: { ...prev.fields, [fieldKey]: next },
+      }));
+    },
+    [fieldKey, setFormData]
+  );
+
+  const required = field.required ?? false;
+
+  return (
+    <div>
+      <Label htmlFor={fieldKey} className="text-xs font-medium">
+        {field.label + (required ? " *" : "")}
+      </Label>
+      <Input
+        id={fieldKey}
+        className={`h-9 mt-1 ${error ? ERROR_RING : ""}`}
+        type={
+          field.kind === "date"
+            ? "date"
+            : field.kind === "number" || field.kind === "integer"
+              ? "number"
+              : "text"
+        }
+        step={field.kind === "number" ? "any" : undefined}
+        value={value}
+        onChange={onChange}
+        required={required}
+        disabled={disabled}
+        placeholder={disabled ? "—" : undefined}
+      />
+      <FieldError error={error} />
+    </div>
+  );
+});
+
+const StudentSelectField = memo(function StudentSelectField({
+  fieldKey,
+  field,
+  value,
+  error,
+  setFormData,
+}: FieldControlProps) {
+  const isBoolean = field.kind === "boolean";
+
+  const items = useMemo(() => {
+    if (isBoolean) return BOOLEAN_ITEMS;
+    const options = [...(field.enumValues ?? [])];
+    // Lenient enums (Social Category) may hold a legacy free-text value —
+    // keep it selectable instead of silently discarding it.
+    if (value && !options.some((o) => o.value === value)) {
+      options.push({ value, label: value });
+    }
+    return [{ value: "none", label: "—" }, ...options];
+  }, [isBoolean, field.enumValues, value]);
+
+  const onValueChange = useCallback(
+    (val: string | null) => {
+      const next = !val || val === "none" ? "" : val;
+      setFormData((prev) => ({
+        ...prev,
+        fields: {
+          ...prev.fields,
+          [fieldKey]: next,
+          // CWSN off ⇒ impairment type no longer applies
+          ...(fieldKey === "is_cwsn" && next !== "YES"
+            ? { cwsn_impairment_type: "" }
+            : {}),
+        },
+      }));
+    },
+    [fieldKey, setFormData]
+  );
+
+  const required = field.required ?? false;
+
+  return (
+    <div>
+      <Label className="text-xs font-medium">
+        {field.label + (required ? " *" : "")}
+      </Label>
+      <Select value={value || "none"} items={items} onValueChange={onValueChange}>
+        <SelectTrigger className={`w-full mt-1 h-9 ${error ? ERROR_RING : ""}`}>
+          <SelectValue placeholder="—" />
+        </SelectTrigger>
+        <SelectContent>
+          {items.map((o) => (
+            <SelectItem key={o.value} value={o.value} label={o.label}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <FieldError error={error} />
+    </div>
+  );
+});
+
 interface StudentFormFieldsProps {
   formData: StudentFormState;
   setFormData: React.Dispatch<React.SetStateAction<StudentFormState>>;
@@ -125,8 +274,6 @@ export function StudentFormFields({
     enrolment: true,
   });
 
-  const updateField = (key: string, value: string) =>
-    setFormData((prev) => ({ ...prev, fields: { ...prev.fields, [key]: value } }));
   const updateMeta = (
     key: "class_id" | "stream_id" | "roll_number",
     value: string
@@ -152,8 +299,8 @@ export function StudentFormFields({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classStreamId, isHigherClass, formData.stream_id]);
 
-  const fieldError = (k: string): string | undefined => errors?.[k]?.[0];
   const errorRing = "border-red-500 focus-visible:ring-red-500";
+  const fieldError = (k: string): string | undefined => errors?.[k]?.[0];
 
   // Fields that only make sense when another field has a given value.
   const isFieldDisabled = (k: string): boolean => {
@@ -161,103 +308,24 @@ export function StudentFormFields({
     return false;
   };
 
-  // ── Generic registry-driven field control (plain render fn, NOT a nested
-  // component — a nested component would remount its Input on every render
-  // and drop focus while typing) ──
+  // Registry-driven field control. The actual inputs are memoised components
+  // (above) so typing in one field doesn't re-render the other ~70.
   const renderField = (k: string) => {
     const field = getTemplateField(k);
     if (!field) return null;
-    const required = field.required ?? false;
-    const value = formData.fields[k] ?? "";
-    const label = field.label + (required ? " *" : "");
-    const error = fieldError(k);
-    const disabled = isFieldDisabled(k);
-    const errorEl = error ? (
-      <p className="text-[11px] text-red-600 mt-1">{error}</p>
-    ) : null;
-
-    if (field.kind === "boolean") {
-      return (
-        <div>
-          <Label className="text-xs font-medium">{label}</Label>
-          <Select
-            value={value || "none"}
-            onValueChange={(val) => {
-              const next = !val || val === "none" ? "" : val;
-              setFormData((prev) => ({
-                ...prev,
-                fields: {
-                  ...prev.fields,
-                  [k]: next,
-                  // CWSN off ⇒ impairment type no longer applies
-                  ...(k === "is_cwsn" && next !== "YES"
-                    ? { cwsn_impairment_type: "" }
-                    : {}),
-                },
-              }));
-            }}
-          >
-            <SelectTrigger className={`w-full mt-1 h-9 ${error ? errorRing : ""}`}>
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none" label="—">—</SelectItem>
-              <SelectItem value="YES" label="Yes">Yes</SelectItem>
-              <SelectItem value="NO" label="No">No</SelectItem>
-            </SelectContent>
-          </Select>
-          {errorEl}
-        </div>
-      );
-    }
-
-    if (field.kind === "enum" && field.enumValues) {
-      const options = [...field.enumValues];
-      // Lenient enums (Social Category) may hold a legacy free-text value —
-      // keep it selectable instead of silently discarding it.
-      if (value && !options.some((o) => o.value === value)) {
-        options.push({ value, label: value });
-      }
-      return (
-        <div>
-          <Label className="text-xs font-medium">{label}</Label>
-          <Select
-            value={value || "none"}
-            onValueChange={(val) => updateField(k, !val || val === "none" ? "" : val)}
-          >
-            <SelectTrigger className={`w-full mt-1 h-9 ${error ? errorRing : ""}`}>
-              <SelectValue placeholder="—" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none" label="—">—</SelectItem>
-              {options.map((o) => (
-                <SelectItem key={o.value} value={o.value} label={o.label}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {errorEl}
-        </div>
-      );
-    }
-
+    const Control =
+      field.kind === "boolean" || (field.kind === "enum" && field.enumValues)
+        ? StudentSelectField
+        : StudentTextField;
     return (
-      <div>
-        <Label htmlFor={k} className="text-xs font-medium">{label}</Label>
-        <Input
-          id={k}
-          className={`h-9 mt-1 ${error ? errorRing : ""}`}
-          type={field.kind === "date" ? "date" : field.kind === "number" || field.kind === "integer" ? "number" : "text"}
-          step={field.kind === "number" ? "any" : undefined}
-          value={value}
-          onChange={(e) => updateField(k, e.target.value)}
-          required={required}
-          disabled={disabled}
-          placeholder={disabled ? "—" : undefined}
-        />
-        {errorEl}
-      </div>
+      <Control
+        fieldKey={k}
+        field={field}
+        value={formData.fields[k] ?? ""}
+        error={fieldError(k)}
+        disabled={isFieldDisabled(k)}
+        setFormData={setFormData}
+      />
     );
   };
 

@@ -32,6 +32,12 @@ import {
   TableRow,
 } from "@nkps/shared/components/ui/table";
 import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
+import {
   Plus,
   Pencil,
   Trash2,
@@ -263,6 +269,47 @@ export default function TimetablePage() {
     await fetchSchedules();
   };
 
+  const subjectNameById = new Map(allSubjects.map((s) => [s.id, s]));
+
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<ExamSchedule>>(
+    () => ({
+      subject: {
+        label: "Subject",
+        value: (s) =>
+          (s.subjects ?? subjectNameById.get(s.subject_id))?.name ?? null,
+        filter: "text",
+      },
+      date: {
+        label: "Date",
+        value: (s) =>
+          new Date(s.exam_date).toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+          }),
+        sortValue: (s) => s.exam_date,
+      },
+      time: {
+        label: "Time",
+        value: (s) =>
+          s.start_time && s.end_time
+            ? `${s.start_time.slice(0, 5)} – ${s.end_time.slice(0, 5)}`
+            : s.start_time
+              ? s.start_time.slice(0, 5)
+              : null,
+      },
+      room: { label: "Room", value: (s) => s.room },
+      notes: { label: "Notes", value: (s) => s.notes || null, filter: "text" },
+    }),
+    // subjectNameById is rebuilt each render from `allSubjects`; key the memo
+    // off the source list rather than the derived Map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allSubjects]
+  );
+
+  const table = useTableControls({ rows: schedules, columns });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -271,7 +318,6 @@ export default function TimetablePage() {
     );
   }
 
-  const subjectNameById = new Map(allSubjects.map((s) => [s.id, s]));
   const canAdd =
     selectedClassId && selectedExamTypeId && availableSubjectsForAdd.length > 0;
 
@@ -373,19 +419,32 @@ export default function TimetablePage() {
                 </p>
               </div>
             ) : (
+              <>
+              <TableFilterSummary
+                ctl={table}
+                total={schedules.length}
+                shown={table.rows.length}
+              />
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Subject</TableHead>
-                    <TableHead className="w-32">Date</TableHead>
-                    <TableHead className="w-36">Time</TableHead>
-                    <TableHead className="w-24">Room</TableHead>
-                    <TableHead>Notes</TableHead>
+                    <SortFilterHead ctl={table} col="subject" />
+                    <SortFilterHead ctl={table} col="date" className="w-32" />
+                    <SortFilterHead ctl={table} col="time" className="w-36" />
+                    <SortFilterHead ctl={table} col="room" className="w-24" />
+                    <SortFilterHead ctl={table} col="notes" />
                     <TableHead className="w-20 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {schedules.map((s) => {
+                  {table.rows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                        No slots match the column filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {table.rows.map((s) => {
                     const subject =
                       s.subjects ?? subjectNameById.get(s.subject_id);
                     return (
@@ -443,6 +502,7 @@ export default function TimetablePage() {
                   })}
                 </TableBody>
               </Table>
+              </>
             )}
           </CardContent>
         </Card>

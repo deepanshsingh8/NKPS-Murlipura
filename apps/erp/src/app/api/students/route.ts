@@ -29,12 +29,31 @@ export async function GET(request: NextRequest) {
       // .range(0, 9999) pushes past PostgREST's 1000-row default cap so the now
       // larger list (active + passed/failed + terminated/exited) isn't silently
       // truncated.
-      const { data: allStudents, error } = await admin
-        .from("students")
-        .select("*")
-        .not("is_alumni", "is", true)
-        .order("full_name", { ascending: true })
-        .range(0, 9999);
+      //
+      // The three queries below are independent, so they are issued together.
+      // Run sequentially they cost three round trips to Postgres before any
+      // byte reaches the client, which dominated the wait on this endpoint.
+      const [studentsRes, currentYearRes, enrollmentsRes] = await Promise.all([
+        admin
+          .from("students")
+          .select("*")
+          .not("is_alumni", "is", true)
+          .order("full_name", { ascending: true })
+          .range(0, 9999),
+        admin
+          .from("academic_years")
+          .select("id")
+          .eq("is_current", true)
+          .maybeSingle(),
+        admin
+          .from("student_enrollments")
+          .select(
+            "student_id, roll_number, roll_number_manual, id, class_id, stream_id, status, academic_year_id, updated_at, has_transport, bus_stop_id, transport_direction, classes(name, section)"
+          )
+          .range(0, 9999),
+      ]);
+
+      const { data: allStudents, error } = studentsRes;
 
       if (error) {
         console.error("Fetch all students error:", error);
@@ -58,19 +77,9 @@ export async function GET(request: NextRequest) {
       //
       // Explicit .range(0, 9999) pushes past PostgREST's default 1000-row cap
       // so schools with long enrollment history aren't silently truncated.
-      const { data: currentYear } = await admin
-        .from("academic_years")
-        .select("id")
-        .eq("is_current", true)
-        .maybeSingle();
-      const currentYearId = currentYear?.id ?? null;
+      const currentYearId = currentYearRes.data?.id ?? null;
 
-      const { data: enrollments, error: enrollError } = await admin
-        .from("student_enrollments")
-        .select(
-          "student_id, roll_number, roll_number_manual, id, class_id, stream_id, status, academic_year_id, updated_at, has_transport, bus_stop_id, transport_direction, classes(name, section)"
-        )
-        .range(0, 9999);
+      const { data: enrollments, error: enrollError } = enrollmentsRes;
       if (enrollError) {
         console.error("Fetch enrollments error:", enrollError);
         // Continue with empty merge rather than failing the whole list — the
@@ -163,13 +172,14 @@ export async function GET(request: NextRequest) {
       studentChunks.push(studentIds.slice(i, i + STUDENT_CHUNK));
     }
     type StudentRow = Record<string, unknown>;
+    // Chunks are independent — fetch them concurrently rather than one after
+    // another, so a large class costs one round trip instead of one per chunk.
+    const chunkResults = await Promise.all(
+      studentChunks.map((chunk) => admin.from("students").select("*").in("id", chunk))
+    );
     const studentsAll: StudentRow[] = [];
     let studentError: { message: string } | null = null;
-    for (const chunk of studentChunks) {
-      const { data, error } = await admin
-        .from("students")
-        .select("*")
-        .in("id", chunk);
+    for (const { data, error } of chunkResults) {
       if (error) {
         studentError = error;
         break;
@@ -185,8 +195,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Failed to fetch students" }, { status: 500 });
     }
 
+    const enrollmentByStudent = new Map(enrollments.map((e) => [e.student_id, e]));
+
     const merged = (students ?? []).map((s) => {
-      const enrollment = enrollments.find((e) => e.student_id === s.id);
+      const enrollment = enrollmentByStudent.get(s.id as string);
       const e = enrollment as
         | (typeof enrollment & {
             has_transport?: boolean | null;

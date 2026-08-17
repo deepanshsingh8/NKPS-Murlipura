@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
@@ -20,6 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Card, CardContent } from "@nkps/shared/components/ui/card";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, CalendarDays } from "lucide-react";
@@ -253,6 +259,40 @@ export default function AdminCalendarPage() {
     });
   };
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<CalendarEvent>>(
+    () => ({
+      title: { label: "Title", value: (e) => e.title, filter: "text" },
+      type: {
+        label: "Type",
+        value: (e) => EVENT_TYPE_LABELS[e.event_type] ?? e.event_type,
+      },
+      start_date: {
+        label: "Start Date",
+        value: (e) => formatDate(e.start_date),
+        sortValue: (e) => e.start_date,
+      },
+      end_date: {
+        label: "End Date",
+        value: (e) => (e.end_date ? formatDate(e.end_date) : null),
+        sortValue: (e) => e.end_date,
+      },
+      website: {
+        label: "Website",
+        value: (e) =>
+          e.class_id ? "Class only" : e.is_public ? "Public" : "Internal",
+      },
+      description: {
+        label: "Description",
+        value: (e) => e.description || null,
+        filter: "text",
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: events, columns });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -307,20 +347,33 @@ export default function AdminCalendarPage() {
               <p className="text-sm">No events found.</p>
             </div>
           ) : (
+            <>
+            <TableFilterSummary
+              ctl={table}
+              total={events.length}
+              shown={table.rows.length}
+            />
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Start Date</TableHead>
-                  <TableHead>End Date</TableHead>
-                  <TableHead>Website</TableHead>
-                  <TableHead>Description</TableHead>
+                  <SortFilterHead ctl={table} col="title" />
+                  <SortFilterHead ctl={table} col="type" />
+                  <SortFilterHead ctl={table} col="start_date" />
+                  <SortFilterHead ctl={table} col="end_date" />
+                  <SortFilterHead ctl={table} col="website" />
+                  <SortFilterHead ctl={table} col="description" />
                   <TableHead className="w-12" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {events.map((evt) => (
+                {table.rows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                      No events match the column filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {table.rows.map((evt) => (
                   <TableRow key={evt.id}>
                     <TableCell className="font-medium">
                       {evt.title}
@@ -375,6 +428,7 @@ export default function AdminCalendarPage() {
                 ))}
               </TableBody>
             </Table>
+            </>
           )}
         </CardContent>
       </Card>

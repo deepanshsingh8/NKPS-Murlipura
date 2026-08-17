@@ -28,6 +28,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, Bus as BusIcon, Route, Search } from "lucide-react";
 import { adminApi } from "@nkps/shared/lib/admin-api";
@@ -141,6 +147,39 @@ export default function AdminBusesPage() {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<BusWithRelations>>(
+    () => ({
+      bus_number: { label: "Bus No.", value: (b) => b.bus_number, filter: "text" },
+      driver: {
+        label: "Driver",
+        value: (b) => (b.driver_name === "—" ? null : b.driver_name),
+        emptyLabel: "No driver",
+      },
+      capacity: { label: "Capacity", value: (b) => b.capacity, filter: "none" },
+      registration: {
+        label: "Reg. No.",
+        value: (b) => b.registration_number || null,
+        filter: "text",
+      },
+      stops: {
+        label: "Stops served",
+        value: (b) => {
+          const count = b.stop_count ?? 0;
+          return `${count} ${count === 1 ? "stop" : "stops"}`;
+        },
+        sortValue: (b) => b.stop_count ?? 0,
+      },
+      active: {
+        label: "Active",
+        value: (b) => (b.is_active ? "Active" : "Inactive"),
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: buses, columns });
 
   const resetForm = () => {
     setBusNumber("");
@@ -347,20 +386,33 @@ export default function AdminBusesPage() {
             No buses found. Add one to get started.
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={buses.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Bus No.</TableHead>
-                <TableHead>Driver</TableHead>
-                <TableHead>Capacity</TableHead>
-                <TableHead>Reg. No.</TableHead>
-                <TableHead>Stops served</TableHead>
-                <TableHead>Active</TableHead>
+                <SortFilterHead ctl={table} col="bus_number" />
+                <SortFilterHead ctl={table} col="driver" />
+                <SortFilterHead ctl={table} col="capacity" />
+                <SortFilterHead ctl={table} col="registration" />
+                <SortFilterHead ctl={table} col="stops" />
+                <SortFilterHead ctl={table} col="active" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {buses.map((bus) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No buses match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((bus) => (
                 <TableRow key={bus.id}>
                   <TableCell className="font-medium">{bus.bus_number}</TableCell>
                   <TableCell className="text-gray-600 dark:text-gray-300">
@@ -433,6 +485,7 @@ export default function AdminBusesPage() {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 

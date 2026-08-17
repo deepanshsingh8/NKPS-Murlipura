@@ -28,6 +28,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import {
   Plus,
@@ -564,6 +570,93 @@ export default function AdminSubjectsPage() {
   };
 
 
+  // ── Header sort/filter accessors ──
+  // Each mirrors what the matching cell renders.
+  const subjectColumns = useMemo<TableColumns<Subject>>(
+    () => ({
+      name: { label: "Name", value: (s) => s.name, filter: "text" },
+      code: { label: "Code", value: (s) => s.code || null, filter: "text" },
+      nickname: {
+        label: "Nickname",
+        value: (s) => s.nickname || null,
+        filter: "text",
+      },
+      category: {
+        label: "Category",
+        value: (s) =>
+          s.category === "languages"
+            ? "Languages"
+            : s.category === "academic"
+              ? "Academic"
+              : s.category
+                ? "Co-curricular"
+                : "Uncategorized",
+      },
+      type: {
+        label: "Type",
+        value: (s) => (s.is_elective ? "Elective" : "Core"),
+      },
+      status: {
+        label: "Status",
+        value: (s) => (s.is_active ? "Active" : "Inactive"),
+      },
+    }),
+    []
+  );
+
+  const assignmentColumns = useMemo<TableColumns<AssignmentRow>>(
+    () => ({
+      class: {
+        label: "Class",
+        value: (a) =>
+          formatClassName({
+            name: a.class_name,
+            section: a.class_section,
+            stream_name: a.stream_name,
+          }),
+        sortValue: (a) => a.class_sort,
+      },
+      subject: {
+        label: "Subject",
+        value: (a) => a.subject_name,
+        filter: "text",
+      },
+      code: {
+        label: "Code",
+        value: (a) => a.subject_code,
+        filter: "text",
+      },
+      teacher: {
+        label: "Teacher",
+        value: (a) => a.teacher_name,
+        emptyLabel: "Not assigned",
+      },
+      students: {
+        label: "Students",
+        value: (a) => a.student_count,
+        filter: "none",
+      },
+    }),
+    []
+  );
+
+  // The category chips above the subjects table pre-filter the rows the
+  // header controls then sort and narrow further.
+  const categorySubjects = useMemo(
+    () =>
+      subjects.filter((s) => {
+        if (categoryFilter === "all") return true;
+        if (categoryFilter === "uncategorized") return !s.category;
+        return s.category === categoryFilter;
+      }),
+    [subjects, categoryFilter]
+  );
+
+  const subjectTable = useTableControls({
+    rows: categorySubjects,
+    columns: subjectColumns,
+  });
+
   // ── Filtered assignments ──
   const filteredAssignments = useMemo(() => {
     return assignments.filter((a) => {
@@ -580,6 +673,11 @@ export default function AdminSubjectsPage() {
     });
   }, [assignments, filterClassId, filterSubjectId, filterTeacherId]);
 
+
+  const assignmentTable = useTableControls({
+    rows: filteredAssignments,
+    columns: assignmentColumns,
+  });
 
   // Unique subjects appearing in assignments (for filter dropdown)
   const subjectsInAssignments = useMemo(() => {
@@ -1034,25 +1132,33 @@ export default function AdminSubjectsPage() {
               No subjects found. Add one to get started.
             </p>
           ) : (
+            <>
+            <TableFilterSummary
+              ctl={subjectTable}
+              total={categorySubjects.length}
+              shown={subjectTable.rows.length}
+            />
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Nickname</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Status</TableHead>
+                  <SortFilterHead ctl={subjectTable} col="name" />
+                  <SortFilterHead ctl={subjectTable} col="code" />
+                  <SortFilterHead ctl={subjectTable} col="nickname" />
+                  <SortFilterHead ctl={subjectTable} col="category" />
+                  <SortFilterHead ctl={subjectTable} col="type" />
+                  <SortFilterHead ctl={subjectTable} col="status" />
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {subjects
-                  .filter((s) => {
-                    if (categoryFilter === "all") return true;
-                    if (categoryFilter === "uncategorized") return !s.category;
-                    return s.category === categoryFilter;
-                  })
+                {subjectTable.rows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                      No subjects match the column filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {subjectTable.rows
                   .map((subject) => (
                   <TableRow key={subject.id}>
                     <TableCell className="font-medium">
@@ -1134,6 +1240,7 @@ export default function AdminSubjectsPage() {
                 ))}
               </TableBody>
             </Table>
+            </>
           )}
         </div>
       )}
@@ -1287,21 +1394,32 @@ export default function AdminSubjectsPage() {
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
+                    <>
+                    <TableFilterSummary
+                      ctl={assignmentTable}
+                      total={filteredAssignments.length}
+                      shown={assignmentTable.rows.length}
+                    />
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Class</TableHead>
-                          <TableHead>Subject</TableHead>
-                          <TableHead>Code</TableHead>
-                          <TableHead>Teacher</TableHead>
-                          <TableHead className="text-center">
-                            Students
-                          </TableHead>
+                          <SortFilterHead ctl={assignmentTable} col="class" />
+                          <SortFilterHead ctl={assignmentTable} col="subject" />
+                          <SortFilterHead ctl={assignmentTable} col="code" />
+                          <SortFilterHead ctl={assignmentTable} col="teacher" />
+                          <SortFilterHead ctl={assignmentTable} col="students" align="center" />
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredAssignments.map((row) => (
+                        {assignmentTable.rows.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                              No rows match the column filters.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {assignmentTable.rows.map((row) => (
                           <TableRow key={row.id}>
                             <TableCell>
                               <Badge
@@ -1359,6 +1477,7 @@ export default function AdminSubjectsPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </>
                   </div>
                 )}
               </div>

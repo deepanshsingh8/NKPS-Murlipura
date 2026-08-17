@@ -17,19 +17,49 @@ function readBearerToken(authHeader: string | null) {
   return authHeader.slice(7);
 }
 
-async function loadCaller(accessToken: string) {
+/**
+ * Loads the caller's profile and, when `featureKey` is supplied, their
+ * editor_permissions row for that feature.
+ *
+ * The two queries are independent once the user id is known, so they are
+ * issued together. Run sequentially they added a second round trip to every
+ * admin/editor API call. Admins ignore the permission row, which costs one
+ * extra concurrent query but no extra latency.
+ */
+async function loadCaller(accessToken: string, featureKey?: FeatureKey | "any") {
   const admin = createAdminClient();
   const {
     data: { user },
     error,
   } = await admin.auth.getUser(accessToken);
-  if (error || !user) return { admin, user: null, profile: null } as const;
-  const { data: profile } = await admin
-    .from("profiles")
-    .select("role, must_change_password")
-    .eq("id", user.id)
-    .single();
-  return { admin, user, profile } as const;
+  if (error || !user) {
+    return { admin, user: null, profile: null, perm: null } as const;
+  }
+
+  const permQuery = admin
+    .from("editor_permissions")
+    .select("feature_key")
+    .eq("editor_id", user.id);
+
+  const [profileRes, permRes] = await Promise.all([
+    admin
+      .from("profiles")
+      .select("role, must_change_password")
+      .eq("id", user.id)
+      .single(),
+    featureKey === undefined
+      ? Promise.resolve({ data: null })
+      : featureKey === "any"
+        ? permQuery.limit(1).maybeSingle()
+        : permQuery.eq("feature_key", featureKey).maybeSingle(),
+  ]);
+
+  return {
+    admin,
+    user,
+    profile: profileRes.data,
+    perm: permRes.data,
+  } as const;
 }
 
 /**
@@ -85,18 +115,13 @@ export async function verifyAdminOrEditor(featureKey?: FeatureKey) {
   const accessToken = readBearerToken(headersList.get("authorization"));
   if (!accessToken) return null;
 
-  const { admin, user, profile } = await loadCaller(accessToken);
+  const { admin, user, profile, perm } = await loadCaller(
+    accessToken,
+    featureKey ?? "any"
+  );
   if (!user || !profile) return null;
   if (profile.must_change_password) return null;
   if (profile.role === "admin") return admin;
-
-  const query = admin
-    .from("editor_permissions")
-    .select("feature_key")
-    .eq("editor_id", user.id);
-  const { data: perm } = featureKey
-    ? await query.eq("feature_key", featureKey).maybeSingle()
-    : await query.limit(1).maybeSingle();
   if (!perm) return null;
   return admin;
 }
@@ -154,20 +179,15 @@ export async function verifyAdminOrEditorWithUser(featureKey?: FeatureKey) {
   const accessToken = readBearerToken(headersList.get("authorization"));
   if (!accessToken) return null;
 
-  const { admin, user, profile } = await loadCaller(accessToken);
+  const { admin, user, profile, perm } = await loadCaller(
+    accessToken,
+    featureKey ?? "any"
+  );
   if (!user || !profile) return null;
   if (profile.must_change_password) return null;
   if (profile.role === "admin") {
     return { admin, user, role: "admin" as const };
   }
-
-  const query = admin
-    .from("editor_permissions")
-    .select("feature_key")
-    .eq("editor_id", user.id);
-  const { data: perm } = featureKey
-    ? await query.eq("feature_key", featureKey).maybeSingle()
-    : await query.limit(1).maybeSingle();
   if (!perm) return null;
   return { admin, user, role: "editor" as const };
 }

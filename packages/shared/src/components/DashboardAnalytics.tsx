@@ -34,9 +34,24 @@ interface AttendanceData {
 }
 
 interface FeeCollection {
+  /** Cash actually banked this session, net of refunds. */
   collected: number;
+  /** The session's whole obligation across every enrolled student. */
   expected: number;
+  /** The slice of `expected` whose due date has passed. */
+  dueToDate: number;
+  /** Outstanding as of today: dueToDate less cash and waivers. */
+  dues: number;
+  /** Collected as a share of dueToDate — progress against what's payable now. */
   percentage: number;
+  /** Collected as a share of the whole session. */
+  percentageOfYear: number;
+  /** Students with nothing outstanding — paid in full, or waived. */
+  studentsClear: number;
+  /** Students still owing something as of today. */
+  studentsWithDues: number;
+  /** Active enrolments the figures above were computed over. */
+  studentsTotal: number;
 }
 
 interface EnrollmentItem {
@@ -50,7 +65,12 @@ interface EnrollmentItem {
 
 interface AdmissionTrend {
   month: string;
-  count: number;
+  /** Students whose admission date falls in this month. */
+  admissions: number;
+  /** Transfer certificates issued in this month — students who left. */
+  exits: number;
+  /** `admissions - exits`. Negative months are the ones worth noticing. */
+  net: number;
 }
 
 interface TransportAudit {
@@ -74,6 +94,60 @@ function formatCurrency(amount: number) {
   if (amount >= 100000) return `${(amount / 100000).toFixed(1)}L`;
   if (amount >= 1000) return `${(amount / 1000).toFixed(1)}K`;
   return amount.toLocaleString("en-IN");
+}
+
+/** One "students paid / remaining / total" tile on the Fee Collection card. */
+function FeeHeadcount({
+  href,
+  label,
+  value,
+  className,
+}: {
+  href: string;
+  label: string;
+  value: number;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "rounded-lg border px-2 py-1.5 text-center transition-colors hover:brightness-95 dark:hover:brightness-110",
+        className
+      )}
+    >
+      <p className="text-lg font-bold tabular-nums leading-tight">{value}</p>
+      <p className="text-[10px] font-medium uppercase tracking-wider opacity-70">
+        {label}
+      </p>
+    </Link>
+  );
+}
+
+/** One half of a month column on the admissions/exits chart. */
+function MovementBar({
+  value,
+  max,
+  delay,
+  className,
+}: {
+  value: number;
+  max: number;
+  delay: number;
+  className: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "w-full rounded-t transition-all duration-200 dash-grow-h",
+        value > 0 ? className : "bg-gray-100 dark:bg-muted"
+      )}
+      style={{
+        height: `${value > 0 ? Math.max((value / max) * 100, 10) : 5}%`,
+        animationDelay: `${delay}ms`,
+      }}
+    />
+  );
 }
 
 function SkeletonCard() {
@@ -421,16 +495,14 @@ export function DashboardAnalytics() {
     ...(data.enrollmentByClass ?? []).map((e) => e.count),
     1
   );
-  const maxAdmission = Math.max(
-    ...(data.admissionTrend ?? []).map((a) => a.count),
+  // One scale for both series so the two bars in a month are comparable.
+  const maxMovement = Math.max(
+    ...(data.admissionTrend ?? []).flatMap((a) => [a.admissions, a.exits]),
     1
   );
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-      {/* Attendance spans full row when present for readability */}
-      {data.attendance && <AttendanceBlock data={data.attendance} />}
-
       {/* Fee Collection */}
       {data.feeCollection && (
         <div className="erp-stat-card">
@@ -442,7 +514,9 @@ export function DashboardAnalytics() {
               <h3 className="text-sm font-semibold text-navy-900 dark:text-white">
                 Fee Collection
               </h3>
-              <p className="text-[11px] text-gray-400">Current academic year</p>
+              <p className="text-[11px] text-gray-400">
+                Against fees due so far this session
+              </p>
             </div>
           </div>
           {!data.hasAcademicYear ? (
@@ -451,13 +525,16 @@ export function DashboardAnalytics() {
             </p>
           ) : (
             <>
+              {/* Progress is measured against fees that have actually fallen
+                  due, not the whole session — otherwise the bar reads near
+                  zero every April however punctually families pay. */}
               <div className="flex items-end justify-between mb-2">
                 <span className="text-2xl font-bold text-navy-900 dark:text-white">
                   {data.feeCollection.percentage}%
                 </span>
                 <span className="text-xs text-gray-400">
                   {formatCurrency(data.feeCollection.collected)} /{" "}
-                  {formatCurrency(data.feeCollection.expected)}
+                  {formatCurrency(data.feeCollection.dueToDate)}
                 </span>
               </div>
               <div className="h-2.5 w-full rounded-full bg-gray-100 dark:bg-muted overflow-hidden mb-3">
@@ -468,7 +545,40 @@ export function DashboardAnalytics() {
                   }}
                 />
               </div>
-              <div className="flex gap-4 text-xs">
+              {/* The number the office acts on: what is owed right now. */}
+              <div className="flex items-baseline justify-between rounded-lg bg-red-50 dark:bg-red-950/20 px-3 py-2 mb-3">
+                <span className="text-xs font-medium text-red-700 dark:text-red-400">
+                  Outstanding dues
+                </span>
+                <span className="text-base font-bold text-red-600 dark:text-red-400">
+                  {formatCurrency(data.feeCollection.dues)}
+                </span>
+              </div>
+
+              {/* Money answers "how much"; these answer "how many families",
+                  which is what actually gets chased. Each tile opens the
+                  register already filtered to the group it counts. */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <FeeHeadcount
+                  href="/fees/dues?dues_tab=clear-list"
+                  label="Paid"
+                  value={data.feeCollection.studentsClear}
+                  className="border-green-200 bg-green-50/60 text-green-700 dark:border-green-900/40 dark:bg-green-950/20 dark:text-green-400"
+                />
+                <FeeHeadcount
+                  href="/fees/dues?dues_tab=dues-list"
+                  label="Remaining"
+                  value={data.feeCollection.studentsWithDues}
+                  className="border-red-200 bg-red-50/60 text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-400"
+                />
+                <FeeHeadcount
+                  href="/fees/dues"
+                  label="Total"
+                  value={data.feeCollection.studentsTotal}
+                  className="border-gray-200 bg-gray-50/60 text-navy-900 dark:border-border dark:bg-muted/40 dark:text-white"
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-blue-500" />
                   <span className="text-gray-500 dark:text-gray-400">
@@ -478,10 +588,16 @@ export function DashboardAnalytics() {
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-full bg-gray-200 dark:bg-muted" />
                   <span className="text-gray-500 dark:text-gray-400">
-                    Pending
+                    Due, unpaid
                   </span>
                 </div>
               </div>
+              {/* Session context, so nobody reads the figures above as the
+                  year's total and under-budgets what is still to come. */}
+              <p className="mt-2 text-[11px] text-gray-400">
+                Full session: {formatCurrency(data.feeCollection.expected)} (
+                {data.feeCollection.percentageOfYear}% collected)
+              </p>
             </>
           )}
         </div>
@@ -565,53 +681,111 @@ export function DashboardAnalytics() {
         </div>
       )}
 
-      {/* Recent Admissions Trend */}
+      {/* Attendance sits below fees and enrollment: it is a month-to-date
+          read rather than something acted on, and it spans a full row, so
+          leading with it pushed the two cards the office opens this page
+          for below the fold. */}
+      {data.attendance && <AttendanceBlock data={data.attendance} />}
+
+      {/* Roll movement — intake against exits. Admissions alone can't say
+          whether the school is growing: a strong April reads very differently
+          once the same month's leavers are next to it. */}
       {data.admissionTrend && (
         <div className="erp-stat-card">
           <div className="flex items-center gap-3 mb-4">
             <div className="h-10 w-10 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
               <UserPlus className="h-5 w-5 text-amber-600" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="text-sm font-semibold text-navy-900 dark:text-white">
-                Recent Admissions
+                Admissions &amp; Exits
               </h3>
-              <p className="text-[11px] text-gray-400">Last 6 months</p>
+              <p className="text-[11px] text-gray-400">
+                Last 6 months · exits counted from transfer certificates
+              </p>
             </div>
+            {(() => {
+              const joined = data.admissionTrend.reduce(
+                (t, m) => t + m.admissions,
+                0
+              );
+              const left = data.admissionTrend.reduce((t, m) => t + m.exits, 0);
+              const net = joined - left;
+              if (joined === 0 && left === 0) return null;
+              return (
+                <span
+                  className={cn(
+                    "ml-auto shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold tabular-nums",
+                    net > 0
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400"
+                      : net < 0
+                        ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-400"
+                        : "bg-gray-100 text-gray-600 dark:bg-muted dark:text-gray-300"
+                  )}
+                  title={`${joined} joined, ${left} left over the last 6 months`}
+                >
+                  {net > 0 ? `+${net}` : net} net
+                </span>
+              );
+            })()}
           </div>
-          {data.admissionTrend.every((m) => m.count === 0) ? (
+          {data.admissionTrend.every((m) => m.admissions === 0 && m.exits === 0) ? (
             <p className="text-xs text-gray-400 text-center py-4">
-              No admissions in the last 6 months
+              No admissions or exits in the last 6 months
             </p>
           ) : (
-            <div className="flex items-end gap-2 h-28">
-              {data.admissionTrend.map((item, i) => (
-                <div
-                  key={item.month}
-                  className="flex-1 flex flex-col items-center gap-1 group"
-                  title={`${item.month}: ${item.count} admission${item.count === 1 ? "" : "s"}`}
-                >
-                  <span className="text-[10px] font-semibold text-navy-900 dark:text-white tabular-nums">
-                    {item.count > 0 ? item.count : ""}
-                  </span>
+            <>
+              <div className="flex items-end gap-2">
+                {data.admissionTrend.map((item, i) => (
                   <div
-                    className={cn(
-                      "w-full rounded-t transition-all duration-200 dash-grow-h",
-                      item.count > 0
-                        ? "bg-gradient-to-t from-amber-500 to-amber-300 group-hover:from-amber-600 group-hover:to-amber-400"
-                        : "bg-gray-100 dark:bg-muted"
-                    )}
-                    style={{
-                      height: `${item.count > 0 ? Math.max((item.count / maxAdmission) * 100, 10) : 5}%`,
-                      animationDelay: `${i * 70}ms`,
-                    }}
-                  />
-                  <span className="text-[10px] text-gray-400 group-hover:text-navy-900 dark:group-hover:text-white transition-colors">
-                    {item.month}
-                  </span>
+                    key={item.month}
+                    className="flex-1 flex flex-col items-center gap-1 group"
+                    title={`${item.month}: ${item.admissions} joined, ${item.exits} left (net ${item.net > 0 ? "+" : ""}${item.net})`}
+                  >
+                    <span className="text-[10px] font-semibold tabular-nums text-navy-900 dark:text-white">
+                      {item.admissions > 0 || item.exits > 0
+                        ? `${item.admissions}/${item.exits}`
+                        : ""}
+                    </span>
+                    {/* Two bars, not a net one: a quiet month and a month
+                        where 30 arrived and 30 left are not the same thing,
+                        and a single net bar would draw them identically.
+                        The height here has to be a fixed h-20 rather than a
+                        flex-1 share of the row: the bars size themselves as a
+                        percentage of this box, and a percentage of an
+                        auto-height parent resolves to nothing — which is why
+                        the old single-series chart drew no bars at all. */}
+                    <div className="flex h-20 w-full items-end justify-center gap-[3px]">
+                      <MovementBar
+                        value={item.admissions}
+                        max={maxMovement}
+                        delay={i * 70}
+                        className="bg-gradient-to-t from-emerald-500 to-emerald-300 group-hover:from-emerald-600"
+                      />
+                      <MovementBar
+                        value={item.exits}
+                        max={maxMovement}
+                        delay={i * 70 + 35}
+                        className="bg-gradient-to-t from-rose-500 to-rose-300 group-hover:from-rose-600"
+                      />
+                    </div>
+                    <span className="text-[10px] text-gray-400 group-hover:text-navy-900 dark:group-hover:text-white transition-colors">
+                      {item.month}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <span className="text-gray-500 dark:text-gray-400">Joined</span>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  <span className="text-gray-500 dark:text-gray-400">Left</span>
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}
@@ -648,7 +822,7 @@ export function DashboardAnalytics() {
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Link
-                href="/transport/assignments"
+                href="/transport/assignments?audit=using"
                 className="rounded-lg border border-gray-200 dark:border-border p-3 hover:bg-gray-50 dark:hover:bg-muted/40 transition-colors"
               >
                 <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
@@ -662,7 +836,7 @@ export function DashboardAnalytics() {
                 </p>
               </Link>
               <Link
-                href="/transport/assignments"
+                href="/transport/assignments?audit=one_side"
                 className="rounded-lg border border-gray-200 dark:border-border p-3 hover:bg-gray-50 dark:hover:bg-muted/40 transition-colors"
               >
                 <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
@@ -676,7 +850,7 @@ export function DashboardAnalytics() {
                 </p>
               </Link>
               <Link
-                href="/transport/assignments"
+                href="/transport/assignments?audit=no_bus"
                 className={cn(
                   "rounded-lg border p-3 transition-colors",
                   data.transportAudit.unassignedBus > 0

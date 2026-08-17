@@ -16,6 +16,10 @@ import {
   Star,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import {
+  StudentCouncil,
+  HouseCaptains,
+} from "@/components/student-life/StudentCouncil";
 import { PageTransition } from "@nkps/shared/components/PageTransition";
 import { AnimatedSection } from "@nkps/shared/components/AnimatedSection";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
@@ -42,6 +46,8 @@ interface StudentLifePageProps {
   eventCards?: SectionCard[];
   sportsIndoorCards?: SectionCard[];
   sportsOutdoorCards?: SectionCard[];
+  councilCards?: SectionCard[];
+  houseCaptainCards?: SectionCard[];
 }
 
 const sports = [
@@ -56,6 +62,8 @@ export function StudentLifeContent({
   eventCards,
   sportsIndoorCards,
   sportsOutdoorCards,
+  councilCards,
+  houseCaptainCards,
 }: StudentLifePageProps = {}) {
   // CMS-managed Indoor/Outdoor sports (title-only cards). When an editor has
   // added any, they replace the curated fallback list below, grouped by type.
@@ -85,6 +93,11 @@ export function StudentLifeContent({
   return (
     <PageTransition>
       <PageHeader title="Student Life" subtitle="Beyond the Classroom" />
+
+      {/* Investiture Ceremony — current office bearers (CMS-managed). Both
+          sections render nothing until an editor adds cards. */}
+      <StudentCouncil cards={councilCards} />
+      <HouseCaptains cards={houseCaptainCards} />
 
       {/* Activities — Masonry-like Grid */}
       {activities.length > 0 && (

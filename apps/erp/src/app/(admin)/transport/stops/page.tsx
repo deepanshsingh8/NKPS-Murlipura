@@ -27,6 +27,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import {
   Plus,
@@ -264,6 +270,26 @@ export default function TransportStopsPage() {
   const formatFee = (fee?: BusStopFee) =>
     fee ? `₹${fee.amount.toLocaleString("en-IN")}` : "—";
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<BusStopWithFee>>(
+    () => ({
+      name: { label: "Stop Name", value: (s) => s.name, filter: "text" },
+      fee: {
+        label: "Monthly Fee",
+        value: (s) => (s.fee ? formatFee(s.fee) : null),
+        sortValue: (s) => s.fee?.amount ?? null,
+        emptyLabel: "Not set",
+      },
+      active: {
+        label: "Active",
+        value: (s) => (s.is_active ? "Active" : "Inactive"),
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: filteredStops, columns });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -309,17 +335,30 @@ export default function TransportStopsPage() {
               : "No stops match your search."}
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={filteredStops.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Stop Name</TableHead>
-                <TableHead>Monthly Fee</TableHead>
-                <TableHead>Active</TableHead>
+                <SortFilterHead ctl={table} col="name" />
+                <SortFilterHead ctl={table} col="fee" />
+                <SortFilterHead ctl={table} col="active" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredStops.map((stop) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No stops match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((stop) => (
                 <TableRow key={stop.id}>
                   <TableCell className="font-medium">{stop.name}</TableCell>
                   <TableCell className="text-gray-600 dark:text-gray-300">
@@ -372,6 +411,7 @@ export default function TransportStopsPage() {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 

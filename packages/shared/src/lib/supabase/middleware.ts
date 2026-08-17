@@ -123,12 +123,33 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role, must_change_password")
-      .eq("id", user.id)
-      .single();
+    // The profile lookup and the editor-permission lookup are independent, so
+    // they are issued together: this runs on every page navigation, and back
+    // to back they cost two serial round trips before any HTML is produced.
+    // The permission row is only consulted further down (non-admins on
+    // admin-area paths); fetching it up front costs a concurrent query, not
+    // extra latency.
+    const featureKeyForRequest = isAdminAreaPath(pathname)
+      ? featureKeyForPath(pathname)
+      : null;
 
+    const [profileRes, permRes] = await Promise.all([
+      supabase
+        .from("profiles")
+        .select("role, must_change_password")
+        .eq("id", user.id)
+        .single(),
+      featureKeyForRequest
+        ? supabase
+            .from("editor_permissions")
+            .select("feature_key")
+            .eq("editor_id", user.id)
+            .eq("feature_key", featureKeyForRequest)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+
+    const profile = profileRes.data;
     const role = profile?.role ?? "student";
     const mustChangePassword = profile?.must_change_password ?? false;
     const dashboard = getDashboardPath(role);
@@ -183,15 +204,9 @@ export async function updateSession(request: NextRequest) {
         url.pathname = role === "teacher" ? "/teacher" : "/";
         return NextResponse.redirect(url);
       }
-      const featureKey = featureKeyForPath(pathname);
+      const featureKey = featureKeyForRequest;
       if (featureKey) {
-        const { data: perm } = await supabase
-          .from("editor_permissions")
-          .select("feature_key")
-          .eq("editor_id", user.id)
-          .eq("feature_key", featureKey)
-          .maybeSingle();
-        if (!perm) {
+        if (!permRes.data) {
           const url = request.nextUrl.clone();
           url.pathname = role === "teacher" ? "/teacher" : "/";
           return NextResponse.redirect(url);

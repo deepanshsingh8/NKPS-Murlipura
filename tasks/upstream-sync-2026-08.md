@@ -28,7 +28,7 @@ state of the parent repo, **`deepanshsingh8/NKPS`** (`main`).
 | `apps/cms` | ✅ | 7 modified files |
 | `packages/shared` | ✅ | 14 modified, 2 new, 2 retired |
 | `scripts/migrations` | ✅ | 3 new migrations + 1 ops script |
-| `apps/website` | ❌ | Deliberately excluded — Murlipura's website has diverged (chalkboard theme, RBSE content, Murlipura nav). See [§5](#5-decisions-needed) for the one place this bites. |
+| `apps/website` | ⚠️ partial | No overlay — the chalkboard theme has diverged too far. Two pieces hand-ported: the Student Council / House Captains sections, and the `NkpsAgent` swap. |
 
 **No dependency changes.** Every `package.json` across `erp`, `cms` and
 `shared` is byte-identical to upstream. Nothing to install, no lockfile churn,
@@ -88,11 +88,12 @@ Supporting change: `packages/shared/lib/hooks/use-url-state.ts` (33 lines).
 `ac3a711`
 
 `packages/shared/components/NkpsAgent.tsx` **replaces** `ChatBot.tsx` +
-`WhatsAppButton.tsx`, which upstream deleted. Murlipura still has both old
-files.
+`WhatsAppButton.tsx`, both now deleted here too.
 
-> ⚠️ Murlipura's website mounts the old components. Retiring them is an ERP/CMS
-> sync action with a **website** consequence — see [§5](#5-decisions-needed).
+Murlipura's `LayoutShell` mounted the old pair, so the swap was hand-applied
+inside the chalk wrapper rather than taking upstream's version of the file.
+`NkpsAgent` reads its phone and WhatsApp number from `SCHOOL` constants, so it
+picks up Murlipura branding with no further change.
 
 ### E. Student Council & House Captains
 `82925eb`, `fa4892f`, `00ac881`
@@ -101,11 +102,17 @@ Adds `student_council` and `house_captains` to `SectionCardType`. The CMS side
 is data-driven — no new CMS files, it flows through the existing section-cards
 UI once the type union and the DB constraint allow it.
 
+Both components `return null` until an editor adds cards, so the page is safe
+to ship before any content exists. They use `navy-*` tokens, which resolve to
+Murlipura's forest-green palette — so they inherit the right colours, but the
+styling is upstream's card design rather than the chalkboard treatment. Worth a
+look once real content is in.
+
 | | |
 |---|---|
 | `packages/shared/types/index.ts` | two new union members |
 | **DB** | `cms/migration-086-student-council-sections.sql` |
-| Website | new display components — **out of scope** |
+| Website | `components/student-life/StudentCouncil.tsx` copied in; `StudentLifeContent` + `page.tsx` wired by hand |
 
 ### F. Staff / student correctness and performance
 `d2b7783`, `06481a0`, `3a99aa9`, `84b457b`
@@ -120,9 +127,9 @@ UI once the type union and the DB constraint allow it.
 
 ## 3. What must survive — the Murlipura layer
 
-Overlaying upstream will flatten all of this. Every item below has to be
-re-applied afterwards. This is the same re-stitch list as the July sync, plus
-one new entry.
+Overlaying upstream flattens all of this. Every item below was protected
+during the overlay (the 11 skipped files) or re-applied afterwards. This is the
+same re-stitch list as the July sync, plus one new entry.
 
 ### Branding — never take upstream's version
 
@@ -152,22 +159,30 @@ overwrite** — they carry Murlipura additions *and* upstream additions.
 
 ## 4. Risks
 
-### 🔴 R1 — Migration 086 silently drops `latest_updates`
+### ✅ R1 — `latest_updates` constraint conflict — investigated, not a real risk
+
+*Initially flagged as blocking; checking the authoritative state showed it
+isn't. Recorded here because the reasoning matters for the next sync.*
 
 `cms/migration-086-student-council-sections.sql` drops and recreates the
-`section_cards_section_check` constraint from upstream's list of allowed
-sections. That list **does not include `latest_updates`**, which Murlipura
-allows and has seeded rows for (`cms/apply-section-card-defaults.sql` inserts
-three: "Admissions Open 2026-27", "Annual Sports Meet", "Board Exam
-Preparation"). Upstream has no `latest_updates` anywhere.
+`section_cards_section_check` constraint from upstream's allow-list, which
+omits `latest_updates`. The migration file `cms/migration-061` does still
+permit that section, which is what made this look dangerous.
 
-Run 086 verbatim and the `ALTER` fails against existing rows — or, if those
-rows were removed, it quietly makes them un-insertable later.
+But `061` is not the live state. **`CONSOLIDATED-erp-cms-upstream-sync.sql`
+(July) deliberately retired `latest_updates`** — it deletes those rows and
+rebuilds the constraint without them — and no app code in `apps/` or
+`packages/` references the section. Upstream's 086 list is therefore a strict
+**superset** of the current allowed set, and applying it verbatim loses
+nothing.
 
-**Fix:** patch 086 to carry the union — upstream's 16 sections **plus**
-`latest_updates`. This is exactly the failure `03aef8b` fixed last time; the
-constraint is a recurring collision point and should be treated as a
-merge-by-hand file every sync.
+**Resolution:** 086 is imported unmodified. The consolidated script for this
+sync carries a defensive `delete from section_cards where section =
+'latest_updates'` before the `ALTER`, purely so it still succeeds on a
+database where the July script was never run.
+
+**Lesson for next time:** the migration files are not the source of truth for
+the live schema — the consolidated scripts are. Check those first.
 
 ### 🟠 R2 — Retiring ChatBot/WhatsAppButton reaches into the website
 
@@ -200,30 +215,53 @@ cutover first, verify it, then sync.**
 
 ---
 
-## 5. Decisions needed
+## 5. Decisions — settled
 
-1. **Website scope.** Student Council / House Captains and the `NkpsAgent`
-   swap both have website halves. Options: (a) ERP+CMS only, leave the section
-   types unrenderable and keep the old chat components; (b) include the two
-   website pieces; (c) full website sync — *not* recommended, the themes have
-   diverged too far.
-2. **Fee-model cutover.** Migration 085 changes the fee model. If Murlipura has
-   live fee data for the current year, decide whether to rebuild schedules via
-   the reset script or migrate the existing rows.
-3. **Ordering vs the domain launch** — see R5.
+1. **Website scope:** include the two website pieces. Student Council /
+   House Captains are hand-ported into the chalkboard-themed
+   `StudentLifeContent`, and `NkpsAgent` replaces `ChatBot` + `WhatsAppButton`
+   in `LayoutShell`. No wider website sync.
+2. **Fee-model cutover:** no live fee data to preserve, so 085 applies cleanly
+   and `reset-current-year-fee-structures.sql` is not needed.
+3. **Ordering:** build the sync now, **hold the merge until the `.org` domain
+   is live and verified**. The sync work isn't blocked by the DNS steps, and
+   the two changes don't get to fail in overlapping ways.
 
 ---
 
-## 6. Execution plan
+## 6. Execution status
 
-**Phase 0 — Baseline**
+Phases 0–2 are **done** on this branch. Phase 3 (functional verification
+against a real database) and Phase 4 (ship) are outstanding.
+
+| | Step | Status |
+|---|---|---|
+| 1 | Overlay 42 differing files + 7 new files from upstream | ✅ |
+| 1 | Protect the 11 Murlipura branding/hand-merge files | ✅ |
+| 1 | Hand-merge `types/index.ts` and `permissions.ts` (both directions) | ✅ |
+| 1 | Port `StudentCouncil` / `HouseCaptains` into the chalk-themed page | ✅ |
+| 1 | Swap `ChatBot` + `WhatsAppButton` → `NkpsAgent`; delete the old two | ✅ |
+| 1 | Gate: lint 0 errors, typecheck clean, build 3/3 | ✅ |
+| 2 | Import 084, 085, 086 + the reset ops script | ✅ |
+| 2 | `CONSOLIDATED-upstream-sync-2026-08.sql` | ✅ |
+| 3 | Functional verification against Supabase | ⬜ |
+| 4 | Run the consolidated script, then merge | ⬜ |
+
+The consolidated script is assembled by concatenating the real migration files
+rather than retyping them — an early hand-transcribed draft got 084's policy
+body wrong (invented a `profiles` subquery granting admin as well; the real
+policy is `public.get_user_role() = 'staff'`).
+
+## 7. Remaining plan
+
+**Phase 0 — Baseline** ✅
 1. Confirm `main` is green: `pnpm install --frozen-lockfile && pnpm run lint && pnpm run typecheck && pnpm run build`.
 2. Branch from `main`. Tag the pre-sync commit so a revert is one command.
 3. Record the upstream SHA being synced (`00ac881`) **in the commit message** —
    the July sync didn't, which is why this comparison had to be reconstructed
    from dates.
 
-**Phase 1 — Code overlay**
+**Phase 1 — Code overlay** ✅
 4. Overlay `apps/erp/src`, `apps/cms/src`, `packages/shared/src` from upstream.
 5. Re-apply every item in [§3](#3-what-must-survive--the-murlipura-layer).
 6. Hand-merge `types/index.ts` and `permissions.ts` (both directions).
@@ -231,14 +269,14 @@ cutover first, verify it, then sync.**
 8. Resolve R2 per the §5 decision.
 9. Gate: `lint`, `typecheck`, `build` all clean across the three apps.
 
-**Phase 2 — Database**
+**Phase 2 — Database** ✅ (script written; not yet run)
 10. Import `erp/084`, `erp/085`, `cms/086` and the `reset-…` ops script.
 11. **Patch 086 for `latest_updates`** (R1).
 12. Build `CONSOLIDATED-upstream-sync-2026-08.sql` — ordered, idempotent,
     ERP-before-CMS, excluding the reset script and any Rajawas-specific seeds.
 13. Dry-run against a Supabase branch or a restored copy, never production first.
 
-**Phase 3 — Verification**
+**Phase 3 — Verification** ⬜ needs a real database
 14. Fee schedule: create instalments, publish, check dues on admin, parent and
     student screens, generate a receipt.
 15. Sort/filter on a sample of the 25 touched list pages.
@@ -248,7 +286,7 @@ cutover first, verify it, then sync.**
     these are the ones the overlay is most likely to have eaten.
 19. Confirm `latest_updates` cards still render.
 
-**Phase 4 — Ship**
+**Phase 4 — Ship** ⬜
 20. One PR. Body lists the upstream SHA, the feature groups, and the DB script
     that has to be run.
 21. Run the consolidated script **before** merging, so the deploy doesn't land
@@ -256,7 +294,7 @@ cutover first, verify it, then sync.**
 
 ---
 
-## 7. Reference
+## 8. Reference
 
 | | |
 |---|---|

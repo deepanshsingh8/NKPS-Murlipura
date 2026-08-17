@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
@@ -21,6 +21,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, Star, CalendarDays } from "lucide-react";
 import { adminApi } from "@nkps/shared/lib/admin-api";
@@ -186,6 +192,31 @@ export default function AdminAcademicYearsPage() {
     setSubmitting(false);
   };
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<AcademicYear>>(
+    () => ({
+      name: { label: "Name", value: (y) => y.name, filter: "text" },
+      start_date: {
+        label: "Start Date",
+        value: (y) => new Date(y.start_date).toLocaleDateString(),
+        sortValue: (y) => new Date(y.start_date).getTime(),
+      },
+      end_date: {
+        label: "End Date",
+        value: (y) => new Date(y.end_date).toLocaleDateString(),
+        sortValue: (y) => new Date(y.end_date).getTime(),
+      },
+      status: {
+        label: "Status",
+        value: (y) => (y.is_current ? "Current" : null),
+        emptyLabel: "Past",
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: years, columns });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -214,18 +245,31 @@ export default function AdminAcademicYearsPage() {
             No academic years found. Add one to get started.
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={years.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Start Date</TableHead>
-                <TableHead>End Date</TableHead>
-                <TableHead>Status</TableHead>
+                <SortFilterHead ctl={table} col="name" />
+                <SortFilterHead ctl={table} col="start_date" />
+                <SortFilterHead ctl={table} col="end_date" />
+                <SortFilterHead ctl={table} col="status" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {years.map((year) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No years match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((year) => (
                 <TableRow key={year.id}>
                   <TableCell className="font-medium">{year.name}</TableCell>
                   <TableCell className="text-gray-600 dark:text-gray-300">
@@ -283,6 +327,7 @@ export default function AdminAcademicYearsPage() {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 

@@ -27,6 +27,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Badge } from "@nkps/shared/components/ui/badge";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { adminFetch } from "@nkps/shared/lib/admin-api";
@@ -130,6 +136,37 @@ export default function ElectivesPage() {
       picks.find((p) => p.student_id === studentId && p.elective_slot === slot),
     [picks]
   );
+
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  // The elective slot columns hold live <Select> pickers, so they stay plain.
+  const columns = useMemo<TableColumns<StudentRow>>(
+    () => ({
+      admission_no: {
+        label: "Admission #",
+        value: (s) => pickOne(s.students)?.admission_no ?? null,
+        filter: "text",
+      },
+      full_name: {
+        label: "Name",
+        value: (s) => pickOne(s.students)?.full_name ?? null,
+        filter: "text",
+      },
+      class: {
+        label: "Class",
+        value: (s) => {
+          const cls = pickOne(s.classes);
+          return cls ? `${cls.name}-${cls.section}` : null;
+        },
+      },
+      stream: {
+        label: "Stream",
+        value: (s) => pickOne(s.streams)?.name ?? null,
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: students, columns });
 
   const handleAddOption = async (slot: number) => {
     const subjectId = newSubjectIdBySlot[slot];
@@ -291,20 +328,33 @@ export default function ElectivesPage() {
             No XI/XII students enrolled in the current academic year.
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={students.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Admission #</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Class</TableHead>
-                <TableHead>Stream</TableHead>
+                <SortFilterHead ctl={table} col="admission_no" />
+                <SortFilterHead ctl={table} col="full_name" />
+                <SortFilterHead ctl={table} col="class" />
+                <SortFilterHead ctl={table} col="stream" />
                 {SLOTS.map((slot) => (
                   <TableHead key={slot}>Elective {slot}</TableHead>
                 ))}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {students.map((s) => {
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4 + SLOTS.length} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No students match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((s) => {
                 const cls = pickOne(s.classes);
                 const stu = pickOne(s.students);
                 const str = pickOne(s.streams);
@@ -370,6 +420,7 @@ export default function ElectivesPage() {
               })}
             </TableBody>
           </Table>
+          </>
         )}
       </section>
     </div>

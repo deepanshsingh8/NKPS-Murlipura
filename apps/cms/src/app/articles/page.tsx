@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -40,6 +40,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@nkps/shared/components/ui/tabs";
 import { FileDropZone } from "@nkps/shared/components/FileDropZone";
 import { ImageCropper } from "@nkps/shared/components/ImageCropper";
@@ -295,6 +301,29 @@ export default function AdminArticlesPage() {
     );
   });
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<Article>>(
+    () => ({
+      title: {
+        label: "Title / Slug",
+        value: (a) => a.title,
+        filter: "text",
+      },
+      status: {
+        label: "Status",
+        value: (a) => (a.is_published ? "Published" : "Draft"),
+      },
+      published: {
+        label: "Published",
+        value: (a) => formatDate(a.published_at),
+        sortValue: (a) => a.published_at,
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: filtered, columns });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -352,18 +381,31 @@ export default function AdminArticlesPage() {
         </div>
       ) : (
         <div className="bg-white dark:bg-card rounded-2xl border border-gray-200 dark:border-border overflow-hidden">
+          <TableFilterSummary
+            ctl={table}
+            total={filtered.length}
+            shown={table.rows.length}
+            className="px-4 pt-4"
+          />
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[80px]">Cover</TableHead>
-                <TableHead>Title / Slug</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Published</TableHead>
+                <SortFilterHead ctl={table} col="title" />
+                <SortFilterHead ctl={table} col="status" />
+                <SortFilterHead ctl={table} col="published" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((article) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No articles match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((article) => (
                 <TableRow key={article.id}>
                   <TableCell>
                     {article.cover_image_url ? (

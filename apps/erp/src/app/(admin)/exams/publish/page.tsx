@@ -25,6 +25,12 @@ import {
   TableRow,
 } from "@nkps/shared/components/ui/table";
 import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
+import {
   Dialog,
   DialogClose,
   DialogContent,
@@ -472,10 +478,38 @@ export default function AdminPublishPage() {
     }
   }
 
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<StudentMarksheetRow>>(
+    () => ({
+      roll: { label: "Roll", value: (r) => r.roll_number, filter: "none" },
+      student: { label: "Student", value: (r) => r.full_name, filter: "text" },
+      admission: {
+        label: "Admission",
+        value: (r) => r.admission_no || null,
+        filter: "text",
+      },
+      status: {
+        label: "Marksheet status",
+        value: (r) =>
+          r.active_version
+            ? "Published"
+            : r.versions.length > 0
+              ? "Unpublished"
+              : "Not finalized",
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows, columns });
+  // Select-all covers what the header filters leave on screen.
+  const visibleRows = table.rows;
+
+  const allSelected =
+    visibleRows.length > 0 && selected.size === visibleRows.length;
   const toggleSelectAll = () => {
     if (allSelected) setSelected(new Set());
-    else setSelected(new Set(rows.map((r) => r.student_id)));
+    else setSelected(new Set(visibleRows.map((r) => r.student_id)));
   };
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -830,6 +864,11 @@ export default function AdminPublishPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            <TableFilterSummary
+              ctl={table}
+              total={rows.length}
+              shown={visibleRows.length}
+            />
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -842,17 +881,24 @@ export default function AdminPublishPage() {
                         className="h-4 w-4"
                       />
                     </TableHead>
-                    <TableHead className="w-16">Roll</TableHead>
-                    <TableHead>Student</TableHead>
-                    <TableHead className="w-28">Admission</TableHead>
-                    <TableHead>Marksheet status</TableHead>
+                    <SortFilterHead ctl={table} col="roll" className="w-16" />
+                    <SortFilterHead ctl={table} col="student" />
+                    <SortFilterHead ctl={table} col="admission" className="w-28" />
+                    <SortFilterHead ctl={table} col="status" />
                     <TableHead className="w-[220px] text-right">
                       Actions
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r) => {
+                  {visibleRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                        No students match the column filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {visibleRows.map((r) => {
                     const active = r.active_version;
                     return (
                       <TableRow key={r.student_id}>

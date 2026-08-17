@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Badge } from "@nkps/shared/components/ui/badge";
@@ -26,6 +26,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import {
   ClipboardCheck,
   Users,
@@ -192,6 +198,38 @@ export default function AdminAttendancePage() {
         )
       : 0;
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<ClassAttendanceStat>>(
+    () => ({
+      class: { label: "Class", value: (s) => `${s.className} - ${s.section}` },
+      students: {
+        label: "Students",
+        value: (s) => s.totalStudents,
+        filter: "none",
+      },
+      records: {
+        label: "Records",
+        value: (s) => s.totalRecords,
+        filter: "none",
+      },
+      present: {
+        label: "Present",
+        value: (s) => s.presentCount,
+        filter: "none",
+      },
+      absent: { label: "Absent", value: (s) => s.absentCount, filter: "none" },
+      late: { label: "Late", value: (s) => s.lateCount, filter: "none" },
+      percent: {
+        label: "Attendance %",
+        value: (s) => `${s.attendancePercent}%`,
+        sortValue: (s) => s.attendancePercent,
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: classStats, columns });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -315,20 +353,33 @@ export default function AdminAttendancePage() {
               No classes found.
             </p>
           ) : (
+            <>
+            <TableFilterSummary
+              ctl={table}
+              total={classStats.length}
+              shown={table.rows.length}
+            />
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Class</TableHead>
-                  <TableHead className="text-center">Students</TableHead>
-                  <TableHead className="text-center">Records</TableHead>
-                  <TableHead className="text-center">Present</TableHead>
-                  <TableHead className="text-center">Absent</TableHead>
-                  <TableHead className="text-center">Late</TableHead>
-                  <TableHead className="text-center">Attendance %</TableHead>
+                  <SortFilterHead ctl={table} col="class" />
+                  <SortFilterHead ctl={table} col="students" align="center" />
+                  <SortFilterHead ctl={table} col="records" align="center" />
+                  <SortFilterHead ctl={table} col="present" align="center" />
+                  <SortFilterHead ctl={table} col="absent" align="center" />
+                  <SortFilterHead ctl={table} col="late" align="center" />
+                  <SortFilterHead ctl={table} col="percent" align="center" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {classStats.map((stat) => (
+                {table.rows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                      No classes match the column filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {table.rows.map((stat) => (
                   <TableRow key={stat.classId}>
                     <TableCell className="font-medium">
                       {stat.className} - {stat.section}
@@ -387,6 +438,7 @@ export default function AdminAttendancePage() {
                 ))}
               </TableBody>
             </Table>
+            </>
           )}
         </CardContent>
       </Card>

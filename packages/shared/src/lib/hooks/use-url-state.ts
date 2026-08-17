@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 // M6 — coalesce concurrent in-flight URL writes.
 //
@@ -61,35 +61,47 @@ export function useUrlState(
   key: string,
   defaultValue = ""
 ): [string, (next: string) => void] {
-  const defaultRef = useRef(defaultValue);
-  defaultRef.current = defaultValue;
-
+  // `defaultValue` is depended on directly rather than mirrored into a ref.
+  // Callers pass a literal, so its identity is stable; if one ever does vary
+  // it, re-running the sync is the correct response anyway.
   const [value, setValueLocal] = useState<string>(() => {
     if (typeof window === "undefined") return defaultValue;
     const params = new URLSearchParams(window.location.search);
     return params.get(key) ?? defaultValue;
   });
 
-  // Re-sync from the URL on the back button. Next.js fires popstate too.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const onPop = () => {
+    const readFromUrl = () => {
+      // A write this hook made itself may still be queued for the next
+      // microtask; re-reading now would resurrect the pre-write value.
+      if (pendingWrites.has(key)) return;
       const params = new URLSearchParams(window.location.search);
-      setValueLocal(params.get(key) ?? defaultRef.current);
+      const next = params.get(key) ?? defaultValue;
+      setValueLocal((prev) => (prev === next ? prev : next));
     };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [key]);
+
+    // Re-read once on mount. The App Router commits the new URL *after* the
+    // target page's first render, so on a client-side navigation the
+    // useState initializer above sees the PREVIOUS page's query string —
+    // a link like /people/students?class_id=X landed on the page with no
+    // filter applied at all. By the time effects run the URL is correct.
+    readFromUrl();
+
+    // And again on the back button. Next.js fires popstate too.
+    window.addEventListener("popstate", readFromUrl);
+    return () => window.removeEventListener("popstate", readFromUrl);
+  }, [key, defaultValue]);
 
   const setValue = useCallback(
     (next: string) => {
       setValueLocal(next);
       if (typeof window === "undefined") return;
-      const drop = next === "" || next === defaultRef.current;
+      const drop = next === "" || next === defaultValue;
       pendingWrites.set(key, drop ? null : next);
       scheduleFlush();
     },
-    [key]
+    [key, defaultValue]
   );
 
   return [value, setValue];

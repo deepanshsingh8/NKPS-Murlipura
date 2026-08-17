@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
@@ -18,6 +18,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import { Plus, Download, Trash2, Loader2, Search, UserCheck, FileText, Upload } from "lucide-react";
 import { adminFetch, adminDelete } from "@nkps/shared/lib/admin-api";
@@ -185,6 +191,29 @@ export default function AdminTransferCertificatesPage() {
     }
   };
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<TransferCertificate>>(
+    () => ({
+      student_name: {
+        label: "Student Name",
+        value: (tc) => tc.student_name,
+        filter: "text",
+      },
+      admission_no: {
+        label: "Admission No",
+        value: (tc) => tc.admission_no || null,
+        filter: "text",
+      },
+      academic_year: { label: "Academic Year", value: (tc) => tc.academic_year },
+      upload_date: {
+        label: "Upload Date",
+        value: (tc) => new Date(tc.upload_date).toLocaleDateString(),
+        sortValue: (tc) => new Date(tc.upload_date).getTime(),
+      },
+    }),
+    []
+  );
+
   const filtered = certificates.filter((tc) => {
     const q = searchQuery.toLowerCase();
     return (
@@ -192,6 +221,8 @@ export default function AdminTransferCertificatesPage() {
       (tc.admission_no && tc.admission_no.toLowerCase().includes(q))
     );
   });
+
+  const table = useTableControls({ rows: filtered, columns });
 
   return (
     <div>
@@ -378,18 +409,31 @@ export default function AdminTransferCertificatesPage() {
               : "No transfer certificates uploaded yet."}
           </div>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={filtered.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Student Name</TableHead>
-                <TableHead>Admission No</TableHead>
-                <TableHead>Academic Year</TableHead>
-                <TableHead>Upload Date</TableHead>
+                <SortFilterHead ctl={table} col="student_name" />
+                <SortFilterHead ctl={table} col="admission_no" />
+                <SortFilterHead ctl={table} col="academic_year" />
+                <SortFilterHead ctl={table} col="upload_date" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((tc) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No certificates match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((tc) => (
                 <TableRow key={tc.id}>
                   <TableCell className="font-medium">
                     {tc.student_name}
@@ -424,6 +468,7 @@ export default function AdminTransferCertificatesPage() {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
     </div>

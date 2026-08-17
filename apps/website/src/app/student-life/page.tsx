@@ -7,20 +7,28 @@ import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 export const metadata: Metadata = buildMetadata({
   title: "Student Life & Activities — NK Public School Jaipur",
   description:
-    "Co-curricular life at NK Public School, Jaipur — music, dance, art, debate, quiz, literary and science clubs plus annual events that shape character beyond the classroom.",
+    "Co-curricular life at NK Public School, Jaipur — our student council and house captains, music, dance, art, debate, quiz, literary and science clubs plus annual events that shape character beyond the classroom.",
   path: "/student-life",
 });
 
 export const revalidate = 60;
 
 export default async function StudentLifePage() {
-  const [activityCards, eventCards, sportsIndoorCards, sportsOutdoorCards] =
-    await Promise.all([
-      getSectionCards("activities"),
-      getSectionCards("annual_events"),
-      getSectionCards("sports_indoor"),
-      getSectionCards("sports_outdoor"),
-    ]);
+  const [
+    activityCards,
+    eventCards,
+    sportsIndoorCards,
+    sportsOutdoorCards,
+    councilCards,
+    houseCaptainCards,
+  ] = await Promise.all([
+    getSectionCards("activities"),
+    getSectionCards("annual_events"),
+    getSectionCards("sports_indoor"),
+    getSectionCards("sports_outdoor"),
+    getSectionCards("student_council"),
+    getSectionCards("house_captains"),
+  ]);
 
   return (
     <>
@@ -35,6 +43,8 @@ export default async function StudentLifePage() {
         eventCards={eventCards}
         sportsIndoorCards={sportsIndoorCards}
         sportsOutdoorCards={sportsOutdoorCards}
+        councilCards={councilCards}
+        houseCaptainCards={houseCaptainCards}
       />
     </>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Button } from "@nkps/shared/components/ui/button";
@@ -27,6 +27,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import {
   ClipboardCheck,
@@ -236,6 +242,26 @@ export default function TeacherAttendancePage() {
   const absentCount = students.filter((s) => s.status === "absent").length;
   const lateCount = students.filter((s) => s.status === "late").length;
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<StudentRow>>(
+    () => ({
+      roll_number: {
+        label: "Roll No.",
+        value: (s) => s.roll_number,
+        filter: "none",
+      },
+      full_name: { label: "Student Name", value: (s) => s.full_name, filter: "text" },
+      status: {
+        label: "Status",
+        value: (s) =>
+          STATUS_OPTIONS.find((o) => o.value === s.status)?.label ?? s.status,
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: students, columns });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -336,16 +362,30 @@ export default function TeacherAttendancePage() {
               </Badge>
             </div>
 
+            {/* Header sorting/filtering only changes what's on screen — the
+                submit handler still posts every student in `students`. */}
+            <TableFilterSummary
+              ctl={table}
+              total={students.length}
+              shown={table.rows.length}
+            />
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-20">Roll No.</TableHead>
-                  <TableHead>Student Name</TableHead>
-                  <TableHead className="text-right">Status</TableHead>
+                  <SortFilterHead ctl={table} col="roll_number" className="w-20" />
+                  <SortFilterHead ctl={table} col="full_name" />
+                  <SortFilterHead ctl={table} col="status" align="right" />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {students.map((student) => (
+                {table.rows.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                      No students match the column filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {table.rows.map((student) => (
                   <TableRow key={student.student_id}>
                     <TableCell className="font-medium text-gray-600 dark:text-gray-300">
                       {student.roll_number ?? "-"}

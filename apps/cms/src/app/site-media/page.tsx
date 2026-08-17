@@ -61,7 +61,17 @@ const SECTION_LABELS: Record<string, string> = {
   alumni: "Alumni Achievements",
   sports_indoor: "Sports — Indoor",
   sports_outdoor: "Sports — Outdoor",
+  student_council: "Student Council (Head Boy / Head Girl / Deputies / Captains)",
+  house_captains: "House Captains",
 };
+
+// Sections whose cards are a person — the list row falls back to their initials
+// when no photo has been uploaded yet.
+const PERSON_SECTIONS: SectionCardType[] = [
+  "testimonials",
+  "student_council",
+  "house_captains",
+];
 
 // Sections that support dynamic cards
 const CARD_ENABLED_SECTIONS: SectionCardType[] = [
@@ -79,6 +89,8 @@ const CARD_ENABLED_SECTIONS: SectionCardType[] = [
   "alumni",
   "sports_indoor",
   "sports_outdoor",
+  "student_council",
+  "house_captains",
 ];
 
 const SECTION_FIELD_MAP: Record<SectionCardType, { required: string[]; optional: string[] }> = {
@@ -138,6 +150,19 @@ const SECTION_FIELD_MAP: Record<SectionCardType, { required: string[]; optional:
     required: ["title"],
     optional: [],
   },
+  // Investiture ceremony office bearers. `subtitle` carries the wing (senior /
+  // junior — the website groups the grid by it), `role` the student's class &
+  // section, `year` the session, `message` an optional line from the student.
+  student_council: {
+    required: ["name", "designation"],
+    optional: ["subtitle", "role", "year", "message"],
+  },
+  // Same, plus `title` = the house name. The website groups the cards by house,
+  // so every captain of a house must carry the exact same house name.
+  house_captains: {
+    required: ["title", "name", "designation"],
+    optional: ["role", "year"],
+  },
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -175,6 +200,86 @@ const FIELD_PLACEHOLDERS: Record<string, string> = {
   year: "e.g., 2024",
   season: "e.g., Winter, Spring, Monsoon, Autumn",
 };
+
+// Per-section label / placeholder overrides. The generic FIELD_* maps above are
+// shared across every section, so sections that repurpose a column (e.g.
+// `title` = house name) restate what the field means here.
+// `suggestions` become a datalist on the input: typing is still free-form, but
+// picking from the list keeps post and wing names identical across sessions,
+// which is what the website groups the cards by.
+const COUNCIL_POSTS = [
+  "Head Boy",
+  "Head Girl",
+  "Deputy Head Boy",
+  "Deputy Head Girl",
+  "Sports Head",
+  "Deputy Sports Head",
+  "Cultural Head",
+  "Deputy Cultural Head",
+  "Scout Head",
+  "Guide Head",
+  "Junior Head Boy",
+  "Junior Head Girl",
+  "Junior Cultural Head",
+  "Deputy Junior Cultural Head",
+];
+
+const COUNCIL_WINGS = ["Senior Wing", "Junior Wing"];
+
+const SECTION_FIELD_OVERRIDES: Partial<
+  Record<
+    SectionCardType,
+    Record<
+      string,
+      { label?: string; placeholder?: string; suggestions?: readonly string[] }
+    >
+  >
+> = {
+  student_council: {
+    name: { label: "Student Name", placeholder: "e.g., Aarav Sharma" },
+    designation: {
+      label: "Post",
+      placeholder: "e.g., Head Boy, Deputy Head Girl, Scout Head",
+      suggestions: COUNCIL_POSTS,
+    },
+    subtitle: {
+      label: "Wing (optional)",
+      placeholder: "e.g., Senior Wing, Junior Wing",
+      suggestions: COUNCIL_WINGS,
+    },
+    role: { label: "Class & Section", placeholder: "e.g., Class XII-A" },
+    year: { label: "Session", placeholder: "e.g., 2026-27" },
+    message: { label: "Message (optional)", placeholder: "A short line from the student" },
+  },
+  house_captains: {
+    title: { label: "House Name", placeholder: "e.g., Aravali House" },
+    name: { label: "Student Name", placeholder: "e.g., Aarav Sharma" },
+    designation: {
+      label: "Post",
+      placeholder: "e.g., House Captain, Vice Captain",
+      suggestions: ["House Captain", "Vice Captain", "House Prefect"],
+    },
+    role: { label: "Class & Section", placeholder: "e.g., Class XI-B" },
+    year: { label: "Session", placeholder: "e.g., 2026-27" },
+  },
+};
+
+function fieldLabel(section: SectionCardType, field: string): string {
+  return SECTION_FIELD_OVERRIDES[section]?.[field]?.label ?? FIELD_LABELS[field];
+}
+
+function fieldPlaceholder(section: SectionCardType, field: string): string {
+  return (
+    SECTION_FIELD_OVERRIDES[section]?.[field]?.placeholder ?? FIELD_PLACEHOLDERS[field]
+  );
+}
+
+function fieldSuggestions(
+  section: SectionCardType,
+  field: string
+): readonly string[] | undefined {
+  return SECTION_FIELD_OVERRIDES[section]?.[field]?.suggestions;
+}
 
 interface CardForm {
   title: string;
@@ -243,7 +348,14 @@ const SECTION_ORDER: Record<string, string[]> = {
     "why_choose_us",
   ],
   facilities: ["campus_facilities"],
-  "student-life": ["activities", "sports_indoor", "sports_outdoor", "annual_events"],
+  "student-life": [
+    "student_council",
+    "house_captains",
+    "activities",
+    "sports_indoor",
+    "sports_outdoor",
+    "annual_events",
+  ],
   alumni: ["alumni"],
   global: ["branding"],
 };
@@ -292,8 +404,11 @@ function getCardPrimaryText(card: SectionCard): string {
   if (card.section === "testimonials") {
     return card.quote ? `"${card.quote.slice(0, 60)}${card.quote.length > 60 ? "..." : ""}"` : "—";
   }
-  if (card.section === "leadership") {
+  if (card.section === "leadership" || card.section === "student_council") {
     return card.name || "—";
+  }
+  if (card.section === "house_captains") {
+    return card.name ? `${card.name} — ${card.title || "House"}` : card.title || "—";
   }
   if (card.section === "legacy_timeline") {
     return card.year ? `${card.year} — ${card.title || ""}` : card.title || "—";
@@ -309,6 +424,11 @@ function getCardSecondaryText(card: SectionCard): string {
       return card.name ? `— ${card.name}${card.role ? `, ${card.role}` : ""}` : "";
     case "leadership":
       return card.designation || "";
+    case "student_council":
+    case "house_captains":
+      return [card.designation, card.subtitle, card.role, card.year]
+        .filter(Boolean)
+        .join(" · ");
     case "legacy_timeline":
       return card.description?.slice(0, 60) || "";
     case "annual_events":
@@ -519,7 +639,7 @@ function SectionCardItem({
         </div>
       ) : (
         <div className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-muted shrink-0 flex items-center justify-center">
-          {card.section === "testimonials" && card.initials ? (
+          {PERSON_SECTIONS.includes(card.section) && card.initials ? (
             <span className="text-sm font-semibold text-navy-900 dark:text-white">{card.initials}</span>
           ) : CardIcon ? (
             <CardIcon className="h-5 w-5 text-navy-900 dark:text-white" />
@@ -710,7 +830,7 @@ export default function AdminSiteMediaPage() {
     const fieldMap = SECTION_FIELD_MAP[dialogSection];
     for (const field of fieldMap.required) {
       if (!form[field as keyof CardForm]?.trim()) {
-        toast.error(`${FIELD_LABELS[field]} is required`);
+        toast.error(`${fieldLabel(dialogSection, field)} is required`);
         return;
       }
     }
@@ -875,6 +995,8 @@ export default function AdminSiteMediaPage() {
     alumni: "alumni",
     sports_indoor: "student-life",
     sports_outdoor: "student-life",
+    student_council: "student-life",
+    house_captains: "student-life",
   };
 
   const grouped = groupMedia(items);
@@ -910,7 +1032,7 @@ export default function AdminSiteMediaPage() {
     ? [...SECTION_FIELD_MAP[dialogSection].required, ...SECTION_FIELD_MAP[dialogSection].optional]
     : [];
   // Sections where image is optional
-  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements"];
+  const imageOptionalSections: SectionCardType[] = ["testimonials", "leadership", "legacy_timeline", "why_choose_us", "annual_events", "alumni", "student_achievements", "student_council", "house_captains"];
   const isImageRequired = !editing && !imageOptionalSections.includes(dialogSection);
 
   return (
@@ -1068,7 +1190,7 @@ export default function AdminSiteMediaPage() {
             {/* Image upload */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">
-                {dialogSection === "testimonials" ? "Profile Photo (optional)" : "Image"}{" "}
+                {PERSON_SECTIONS.includes(dialogSection) ? "Photo (optional)" : "Image"}{" "}
                 {isImageRequired && <span className="text-red-500">*</span>}
               </Label>
               {showCardCropper && cardCropSrc ? (
@@ -1105,7 +1227,7 @@ export default function AdminSiteMediaPage() {
                     accept="image/*"
                     onChange={handleCardFileSelected}
                     value={null}
-                    label={dialogSection === "testimonials" ? "Drop profile photo or click to browse" : "Drop image here or click to browse"}
+                    label={PERSON_SECTIONS.includes(dialogSection) ? "Drop photo or click to browse" : "Drop image here or click to browse"}
                     icon="image"
                   />
                 </>
@@ -1116,25 +1238,38 @@ export default function AdminSiteMediaPage() {
             {visibleFields.map((field) => {
               const isRequired = SECTION_FIELD_MAP[dialogSection].required.includes(field);
               const isLongText = field === "quote" || field === "description";
+              const suggestions = fieldSuggestions(dialogSection, field);
+              const listId = suggestions ? `${dialogSection}-${field}-options` : undefined;
               return (
                 <div key={field} className="space-y-1.5">
                   <Label className="text-xs font-medium">
-                    {FIELD_LABELS[field]} {isRequired && <span className="text-red-500">*</span>}
+                    {fieldLabel(dialogSection, field)}{" "}
+                    {isRequired && <span className="text-red-500">*</span>}
                   </Label>
                   {isLongText ? (
                     <textarea
                       className="flex min-h-[80px] w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                      placeholder={FIELD_PLACEHOLDERS[field]}
+                      placeholder={fieldPlaceholder(dialogSection, field)}
                       value={form[field as keyof CardForm]}
                       onChange={(e) => setForm({ ...form, [field]: e.target.value })}
                     />
                   ) : (
-                    <Input
-                      className="h-9"
-                      placeholder={FIELD_PLACEHOLDERS[field]}
-                      value={form[field as keyof CardForm]}
-                      onChange={(e) => setForm({ ...form, [field]: e.target.value })}
-                    />
+                    <>
+                      <Input
+                        className="h-9"
+                        placeholder={fieldPlaceholder(dialogSection, field)}
+                        value={form[field as keyof CardForm]}
+                        onChange={(e) => setForm({ ...form, [field]: e.target.value })}
+                        list={listId}
+                      />
+                      {suggestions && (
+                        <datalist id={listId}>
+                          {suggestions.map((option) => (
+                            <option key={option} value={option} />
+                          ))}
+                        </datalist>
+                      )}
+                    </>
                   )}
                 </div>
               );
