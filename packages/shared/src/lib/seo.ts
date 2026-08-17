@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { SCHOOL } from "@nkps/shared/lib/constants";
 
-const DEFAULT_SITE_URL = "https://nkpublicschool.org";
+// Canonical host is www, matching the nkpublicschool.com deployment (the apex
+// 301s to www in Vercel). NEXT_PUBLIC_SITE_URL overrides this per environment.
+const DEFAULT_SITE_URL = "https://www.nkpublicschool.org";
 
 function normalizeSiteUrl(raw: string | undefined): string {
   if (!raw || !raw.trim()) return DEFAULT_SITE_URL;
