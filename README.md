@@ -139,6 +139,19 @@ Admin dashboard (people, exams, fees, timetable, attendance, results, transport)
 
 ---
 
+## Deployment
+
+Production runs on Vercel — one project per app, all three on subdomains of
+`nkpublicschool.org` and backed by a single Supabase project. A push to `main`
+rebuilds all three.
+
+See **[`DEPLOYMENT.md`](./DEPLOYMENT.md)** for the full runbook: Vercel project
+setup, the per-app environment-variable matrix, DNS records, Supabase auth
+configuration, Resend sender verification, the go-live smoke test, rollback,
+and what changes when the domain's DNS moves to Cloudflare.
+
+---
+
 ## License
 
 Private (`"private": true` in `package.json`).

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "redirects": [
+    { "source": "/admin/login", "destination": "https://erp.nkpublicschool.org/login", "permanent": true },
+    { "source": "/admin/articles", "destination": "https://cms.nkpublicschool.org/articles", "permanent": true },
+    { "source": "/admin/gallery", "destination": "https://cms.nkpublicschool.org/gallery", "permanent": true },
+    { "source": "/admin/transfer-certificates", "destination": "https://cms.nkpublicschool.org/transfer-certificates", "permanent": true },
+    { "source": "/admin/(.*)", "destination": "https://erp.nkpublicschool.org/$1", "permanent": true },
+    { "source": "/cms", "destination": "https://cms.nkpublicschool.org", "permanent": true },
+    { "source": "/cms/(.*)", "destination": "https://cms.nkpublicschool.org/$1", "permanent": true },
+    { "source": "/erp", "destination": "https://erp.nkpublicschool.org", "permanent": true },
+    { "source": "/erp/(.*)", "destination": "https://erp.nkpublicschool.org/$1", "permanent": true },
+    { "source": "/portal/(.*)", "destination": "https://erp.nkpublicschool.org/portal/$1", "permanent": true }
+  ]
+}
