@@ -18,7 +18,7 @@ function escapeHtml(value: string): string {
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL =
-  process.env.FROM_EMAIL || `${SCHOOL.name} <noreply@nkpublicschool.com>`;
+  process.env.FROM_EMAIL || `${SCHOOL.name} <noreply@nkpublicschool.org>`;
 const REPLY_TO_EMAIL = process.env.REPLY_TO_EMAIL || SCHOOL.email[0];
 
 let cachedClient: Resend | null = null;

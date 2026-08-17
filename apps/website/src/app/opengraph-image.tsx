@@ -1,5 +1,10 @@
 import { ImageResponse } from "next/og";
 import { SCHOOL } from "@nkps/shared/lib/constants";
+import { SITE_URL } from "@nkps/shared/lib/seo";
+
+// The card footer shows the bare hostname, so it follows NEXT_PUBLIC_SITE_URL
+// rather than being pinned to one domain.
+const SITE_HOST = SITE_URL.replace(/^https?:\/\//, "");
 
 export const alt = "NK Public School, Murlipura — Established 1985";
 export const size = { width: 1200, height: 630 };
@@ -104,7 +109,7 @@ export default async function OpengraphImage() {
             </div>
           </div>
           <div style={{ fontSize: 20, color: "#64748b" }}>
-            nkpsmurlipura.com
+            {SITE_HOST}
           </div>
         </div>
       </div>

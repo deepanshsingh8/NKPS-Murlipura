@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { SCHOOL } from "@nkps/shared/lib/constants";
 
-const DEFAULT_SITE_URL = "https://www.nkpsmurlipura.com";
+const DEFAULT_SITE_URL = "https://nkpublicschool.org";
 
 function normalizeSiteUrl(raw: string | undefined): string {
   if (!raw || !raw.trim()) return DEFAULT_SITE_URL;
