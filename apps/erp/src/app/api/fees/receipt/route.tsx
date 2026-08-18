@@ -6,6 +6,7 @@ import { createClient } from "@nkps/shared/lib/supabase/server";
 import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { FeeReceiptPDF } from "@/components/pdf/FeeReceiptPDF";
 import { SCHOOL } from "@nkps/shared/lib/constants";
+import { feeLineLabel } from "@/lib/fees";
 
 export const runtime = "nodejs";
 
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
     const { data: payment, error: payErr } = await admin
       .from("fee_payments")
       .select(
-        "id, student_id, amount_paid, payment_date, payment_method, receipt_number, month, status, remarks, refund_amount, refund_reason, refunded_at, cheque_number, cheque_date, bank_name, payer_name, transaction_ref, payment_provider, fee_structure:fee_structures(fee_type, academic_year_id, academic_years(name)), bus_stop:bus_stops(name), academic_year:academic_years(name)"
+        "id, student_id, amount_paid, payment_date, payment_method, receipt_number, month, status, remarks, refund_amount, refund_reason, refunded_at, cheque_number, cheque_date, bank_name, payer_name, transaction_ref, payment_provider, fee_structure:fee_structures(fee_type, instalment_name, month_label, academic_year_id, academic_years(name)), bus_stop:bus_stops(name), academic_year:academic_years(name)"
       )
       .eq("id", paymentId)
       .single();
@@ -127,6 +128,8 @@ export async function GET(request: Request) {
 
     const feeStructure = payment.fee_structure as unknown as {
       fee_type: string;
+      instalment_name: string | null;
+      month_label: string | null;
       academic_years: { name: string } | null;
     } | null;
 
@@ -136,9 +139,13 @@ export async function GET(request: Request) {
 
     // Transport receipts use the stop name as the line description so
     // parents see "100 Feet Road" rather than a generic "Transport".
+    // Scheduled fees name the instalment — a receipt reading just "Tuition
+    // Fee" can't be told from the other three instalments of the same year.
     const feeTypeLabel = busStop
       ? `Transport — ${busStop.name}`
-      : feeStructure?.fee_type ?? "Fee";
+      : feeStructure
+        ? feeLineLabel(feeStructure)
+        : "Fee";
 
     const academicYearName =
       (payment.academic_year as unknown as { name: string } | null)?.name ??

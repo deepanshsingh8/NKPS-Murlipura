@@ -76,7 +76,7 @@ export interface StaffMember {
   updated_at: string;
 }
 
-export type SectionCardType = 'hero_slider' | 'testimonials' | 'facilities_preview' | 'leadership' | 'legacy_timeline' | 'why_choose_us' | 'activities' | 'annual_events' | 'campus_facilities' | 'accolades' | 'alumni' | 'student_achievements' | 'sports_indoor' | 'sports_outdoor';
+export type SectionCardType = 'hero_slider' | 'testimonials' | 'facilities_preview' | 'leadership' | 'legacy_timeline' | 'why_choose_us' | 'activities' | 'annual_events' | 'campus_facilities' | 'accolades' | 'alumni' | 'student_achievements' | 'sports_indoor' | 'sports_outdoor' | 'student_council' | 'house_captains';
 
 export interface SectionCard {
   id: string;
@@ -579,6 +579,21 @@ export interface FinalResult {
 export type FeeFrequency = 'monthly' | 'quarterly' | 'annual' | 'one_time';
 export type FeeClassLevel = 'all' | 'nursery_ukg' | 'i_v' | 'vi_viii' | 'ix_x' | 'xi_xii';
 
+// Who a fee line bills. 'new' = admitted in this academic year (admission /
+// registration fees); 'existing' = returning students only; 'both' = everyone.
+export type FeeStudentType = 'new' | 'existing' | 'both';
+
+// Fee heads the schedule grid offers. Free text in the DB — this list is the
+// UI's dropdown, not a constraint, so a school can carry legacy heads.
+export const FEE_HEADS = [
+  'Admission Fee',
+  'Tuition Fee',
+  'Annual Charges',
+  'Examination Fee',
+  'Lab Fee',
+  'Other',
+] as const;
+
 export interface FeeStructure {
   id: string;
   academic_year_id: string;
@@ -591,6 +606,20 @@ export interface FeeStructure {
   frequency: FeeFrequency;
   is_active: boolean;
   description: string | null;
+  // --- Instalment schedule (migration 085) ---
+  // A row belonging to a fee schedule carries frequency='one_time' plus these
+  // fields; legacy rows leave them null and keep their frequency multiplier.
+  // 1-based position within the class's schedule; drives the grid's "S No".
+  instalment_no: number | null;
+  // e.g. "1st Instalment (Tuition Fee)" — printed on receipts.
+  instalment_name: string | null;
+  // The period the instalment covers, as the school writes it: "April, 2026".
+  month_label: string | null;
+  // Restricts the line to newly-admitted or returning students.
+  student_type: FeeStudentType;
+  // Grace anchor: the late fee accrues from this date rather than due_date
+  // (schedules typically allow ~11 days). null = accrue from due_date.
+  late_fee_start_date: string | null;
   late_fee_percent: number;
   // Legacy one-time flat surcharge. Superseded by late_fee_per_day in the UI
   // (migration 080); column retained so historical rows aren't lost, but the
@@ -723,7 +752,15 @@ export interface TransportFeeLine {
   late_fee_fixed_amount: 0;
   late_fee_per_day: 0;
   late_fee_max: null;
+  late_fee_start_date: null;
   stream_id: null;
+  // Transport is billed per stop, never as a scheduled instalment — these
+  // mirror FeeStructure's schedule fields so consumers can read them off any
+  // EffectiveFeeLine without narrowing the union first.
+  instalment_no: null;
+  instalment_name: null;
+  month_label: null;
+  student_type: 'both';
   stop_name: string;          // for UI label, e.g. "100 Feet Road"
   direction: TransportDirection;
 }

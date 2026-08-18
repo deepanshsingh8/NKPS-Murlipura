@@ -27,6 +27,7 @@ import {
   Banknote,
   GitPullRequestArrow,
   MapPin,
+  ReceiptText,
 } from "lucide-react";
 import {
   SidebarShell,
@@ -112,6 +113,7 @@ const erpItems: SidebarItem[] = [
     children: [
       { kind: "link", icon: CreditCard, label: "Academic", href: "/fees/academic" },
       { kind: "link", icon: Banknote, label: "Payment Management", href: "/fees/payments" },
+      { kind: "link", icon: ReceiptText, label: "Dues & No-Dues", href: "/fees/dues" },
       { kind: "link", icon: GitPullRequestArrow, label: "Change Requests", href: "/fees/change-requests" },
     ],
   },

@@ -24,11 +24,48 @@ export interface AdminProxyConfig {
   // can always create. Used by the fees module to force edits/deletes of
   // recorded fee_payments through the approval workflow.
   editorRestrictedActions?: Partial<Record<string, ReadonlyArray<Exclude<ProxyAction, "insert">>>>;
+  // Escape hatch for tables owned by one module but partially written by
+  // another. `student_enrollments` belongs to the students module, yet the
+  // transport screen updates only its transport columns — without this, an
+  // editor granted 'transport' alone can open the page and change nothing.
+  //
+  // A rule applies only when the action is `update` AND every key in the
+  // payload falls inside its `columns` list, so the alternate grant can never
+  // reach a column outside its own module (a transport editor still cannot
+  // touch roll_number or status). Admins and holders of the table's own
+  // feature key never reach this path.
+  columnScopedFeatureKeys?: Partial<
+    Record<string, ReadonlyArray<{ featureKey: FeatureKey; columns: readonly string[] }>>
+  >;
 }
 
 export function createAdminProxyHandler(config: AdminProxyConfig) {
-  const { tableFeatureKey, allowedColumns, editorRestrictedActions } = config;
+  const {
+    tableFeatureKey,
+    allowedColumns,
+    editorRestrictedActions,
+    columnScopedFeatureKeys,
+  } = config;
   const allowedTables = Object.keys(allowedColumns);
+
+  // Returns the alternate feature key an editor could hold instead of the
+  // table's own, or null when no rule covers this payload. Only `update` is
+  // eligible: an insert creates a whole row (columns the caller omitted still
+  // get written as defaults) and a delete removes every column, so neither can
+  // be honestly described as touching one module's columns.
+  function scopedFeatureKey(
+    table: string,
+    action: ProxyAction,
+    data: unknown
+  ): FeatureKey | null {
+    if (action !== "update") return null;
+    const rules = columnScopedFeatureKeys?.[table];
+    if (!rules || !data || typeof data !== "object") return null;
+    const keys = Object.keys(data as Record<string, unknown>);
+    if (keys.length === 0) return null;
+    const rule = rules.find((r) => keys.every((k) => r.columns.includes(k)));
+    return rule ? rule.featureKey : null;
+  }
 
   return async function POST(request: NextRequest) {
     try {
@@ -39,7 +76,13 @@ export function createAdminProxyHandler(config: AdminProxyConfig) {
       }
 
       const featureKey = tableFeatureKey[table];
-      const auth = await verifyAdminOrEditorWithUser(featureKey);
+      let auth = await verifyAdminOrEditorWithUser(featureKey);
+      if (!auth) {
+        // Second chance for a cross-module write whose payload stays inside
+        // another feature's columns — see columnScopedFeatureKeys.
+        const altKey = scopedFeatureKey(table, action, data);
+        if (altKey) auth = await verifyAdminOrEditorWithUser(altKey);
+      }
       if (!auth) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
@@ -20,6 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import {
   Select,
   SelectContent,
@@ -545,6 +551,40 @@ function ResultAcademicsTab({
   const classXResults = boardResults.filter((r) => r.exam_class === "X");
   const classXIIResults = boardResults.filter((r) => r.exam_class === "XII");
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  // Shared by both class tables; each gets its own controls instance so
+  // sorting Class X doesn't reorder Class XII.
+  const resultColumns = useMemo<TableColumns<DisclosureBoardResult>>(
+    () => ({
+      academic_year: { label: "Academic Year", value: (r) => r.academic_year },
+      registered: {
+        label: "Registered",
+        value: (r) => r.registered,
+        filter: "none",
+      },
+      passed: { label: "Passed", value: (r) => r.passed, filter: "none" },
+      pass_percentage: {
+        label: "Pass %",
+        value: (r) => `${r.pass_percentage}%`,
+        sortValue: (r) => r.pass_percentage,
+      },
+      remarks: {
+        label: "Remarks",
+        value: (r) => r.remarks || null,
+        filter: "text",
+      },
+    }),
+    []
+  );
+  const classXTable = useTableControls({
+    rows: classXResults,
+    columns: resultColumns,
+  });
+  const classXIITable = useTableControls({
+    rows: classXIIResults,
+    columns: resultColumns,
+  });
+
   return (
     <div className="space-y-6">
       {/* Text fields */}
@@ -570,19 +610,32 @@ function ResultAcademicsTab({
           Class X
         </h3>
         {classXResults.length > 0 ? (
+          <>
+          <TableFilterSummary
+            ctl={classXTable}
+            total={classXResults.length}
+            shown={classXTable.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Academic Year</TableHead>
-                <TableHead>Registered</TableHead>
-                <TableHead>Passed</TableHead>
-                <TableHead>Pass %</TableHead>
-                <TableHead>Remarks</TableHead>
+                <SortFilterHead ctl={classXTable} col="academic_year" />
+                <SortFilterHead ctl={classXTable} col="registered" />
+                <SortFilterHead ctl={classXTable} col="passed" />
+                <SortFilterHead ctl={classXTable} col="pass_percentage" />
+                <SortFilterHead ctl={classXTable} col="remarks" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {classXResults.map((r) => (
+              {classXTable.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No Class X results match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {classXTable.rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">
                     {r.academic_year}
@@ -619,6 +672,7 @@ function ResultAcademicsTab({
               ))}
             </TableBody>
           </Table>
+          </>
         ) : (
           <p className="text-sm text-gray-400 py-3">
             No Class X results added yet.
@@ -630,19 +684,32 @@ function ResultAcademicsTab({
           Class XII
         </h3>
         {classXIIResults.length > 0 ? (
+          <>
+          <TableFilterSummary
+            ctl={classXIITable}
+            total={classXIIResults.length}
+            shown={classXIITable.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Academic Year</TableHead>
-                <TableHead>Registered</TableHead>
-                <TableHead>Passed</TableHead>
-                <TableHead>Pass %</TableHead>
-                <TableHead>Remarks</TableHead>
+                <SortFilterHead ctl={classXIITable} col="academic_year" />
+                <SortFilterHead ctl={classXIITable} col="registered" />
+                <SortFilterHead ctl={classXIITable} col="passed" />
+                <SortFilterHead ctl={classXIITable} col="pass_percentage" />
+                <SortFilterHead ctl={classXIITable} col="remarks" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {classXIIResults.map((r) => (
+              {classXIITable.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No Class XII results match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {classXIITable.rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">
                     {r.academic_year}
@@ -679,6 +746,7 @@ function ResultAcademicsTab({
               ))}
             </TableBody>
           </Table>
+          </>
         ) : (
           <p className="text-sm text-gray-400 py-3">
             No Class XII results added yet.

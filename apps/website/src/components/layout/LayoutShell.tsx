@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import dynamic from "next/dynamic";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { TopBar } from "@/components/layout/TopBar";
@@ -8,8 +9,15 @@ import { ScrollToTop } from "@/components/layout/ScrollToTop";
 import { ChalkCursor } from "@/components/layout/ChalkCursor";
 import { ChalkObjects } from "@/components/layout/ChalkObjects";
 import { ChalkWriting } from "@/components/layout/ChalkWriting";
-import { ChatBot } from "@nkps/shared/components/ChatBot";
-import { WhatsAppButton } from "@nkps/shared/components/WhatsAppButton";
+
+// Floating, below-the-fold widget. Loaded client-side only so its
+// framer-motion bundle doesn't compete for the main thread during the initial
+// hydration that gates LCP. The unified NKPS Agent combines the AI assistant,
+// WhatsApp, and call-the-school actions under a single entry point.
+const NkpsAgent = dynamic(
+  () => import("@nkps/shared/components/NkpsAgent").then((m) => m.NkpsAgent),
+  { ssr: false }
+);
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -38,8 +46,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
         <Footer />
       </div>
       <ScrollToTop />
-      <WhatsAppButton />
-      <ChatBot />
+      <NkpsAgent />
     </div>
   );
 }

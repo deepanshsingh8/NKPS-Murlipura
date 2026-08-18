@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
@@ -27,6 +27,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, Layers, ListOrdered } from "lucide-react";
 import { adminApi, adminFetch } from "@nkps/shared/lib/admin-api";
@@ -283,6 +289,20 @@ export default function AdminClassesPage() {
     setSubmitting(false);
   };
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<ClassWithRelations>>(
+    () => ({
+      name: { label: "Class", value: (c) => c.name },
+      section: { label: "Section", value: (c) => c.section },
+      stream: { label: "Stream", value: (c) => c.stream_name || null },
+      year: { label: "Academic Year", value: (c) => c.academic_year_name },
+      teacher: { label: "Class Teacher", value: (c) => c.teacher_name },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: classes, columns });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -311,19 +331,32 @@ export default function AdminClassesPage() {
             No classes found. Add one to get started.
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={classes.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Class</TableHead>
-                <TableHead>Section</TableHead>
-                <TableHead>Stream</TableHead>
-                <TableHead>Academic Year</TableHead>
-                <TableHead>Class Teacher</TableHead>
+                <SortFilterHead ctl={table} col="name" />
+                <SortFilterHead ctl={table} col="section" />
+                <SortFilterHead ctl={table} col="stream" />
+                <SortFilterHead ctl={table} col="year" />
+                <SortFilterHead ctl={table} col="teacher" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {classes.map((cls) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No classes match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((cls) => (
                 <TableRow key={cls.id}>
                   <TableCell className="font-medium">{cls.name}</TableCell>
                   <TableCell>{cls.section}</TableCell>
@@ -372,6 +405,7 @@ export default function AdminClassesPage() {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 

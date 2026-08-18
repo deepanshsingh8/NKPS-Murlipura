@@ -20,6 +20,7 @@ export type FeatureKey =
   | "contact"
   | "site_media"
   | "disclosure"
+  // Murlipura-only CMS features (no equivalent in the parent NKPS repo).
   | "prospectus"
   | "holiday_homework"
   | "staff"

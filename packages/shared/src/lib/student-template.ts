@@ -476,8 +476,15 @@ export function studentsInsertKeys(): string[] {
   return STUDENT_TEMPLATE_FIELDS.filter((f) => f.source === "students").map((f) => f.key);
 }
 
+// Indexed once at module load. getTemplateField is called for every field on
+// every render of the student form (~70 fields), so a linear scan over the
+// ~100-entry registry turned each keystroke into thousands of string compares.
+const TEMPLATE_FIELD_BY_KEY: ReadonlyMap<string, StudentTemplateField> = new Map(
+  STUDENT_TEMPLATE_FIELDS.map((f) => [f.key, f])
+);
+
 export function getTemplateField(key: string): StudentTemplateField | undefined {
-  return STUDENT_TEMPLATE_FIELDS.find((f) => f.key === key);
+  return TEMPLATE_FIELD_BY_KEY.get(key);
 }
 
 /** Canonical bulk-sheet headers, in registry (sheet) order. Required columns

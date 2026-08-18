@@ -25,6 +25,12 @@ import {
   TableRow,
 } from "@nkps/shared/components/ui/table";
 import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
+import {
   Dialog,
   DialogClose,
   DialogContent,
@@ -441,6 +447,39 @@ export default function AdminClassTestsPage() {
     }
   }
 
+  const subjectsForActiveClass = subjectsByClass[selectedClassId] ?? [];
+
+  // Header sort/filter accessors for the tests list — mirror what the
+  // matching cell renders. The marks-entry grid below stays in roll order.
+  const testColumns = useMemo<TableColumns<ClassTest>>(
+    () => ({
+      name: { label: "Name", value: (t) => t.name, filter: "text" },
+      subject: {
+        label: "Subject",
+        value: (t) =>
+          subjectsForActiveClass.find((s) => s.id === t.subject_id)?.name ?? null,
+      },
+      date: {
+        label: "Date",
+        value: (t) => formatDateShort(t.test_date),
+        sortValue: (t) => t.test_date,
+      },
+      max: { label: "Max", value: (t) => t.max_marks, filter: "none" },
+      weight: {
+        label: "Weight",
+        value: (t) => (t.weightage === null ? null : `${t.weightage}%`),
+        sortValue: (t) => t.weightage,
+      },
+      status: {
+        label: "Status",
+        value: (t) => (t.is_published ? "Published" : "Draft"),
+      },
+    }),
+    [subjectsForActiveClass]
+  );
+
+  const testTable = useTableControls({ rows: tests, columns: testColumns });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -449,7 +488,6 @@ export default function AdminClassTestsPage() {
     );
   }
 
-  const subjectsForActiveClass = subjectsByClass[selectedClassId] ?? [];
   const subjectsForForm = subjectsByClass[form.class_id] ?? [];
 
   if (mode === "entry" && activeTest) {
@@ -703,20 +741,33 @@ export default function AdminClassTestsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                <>
+                <TableFilterSummary
+                  ctl={testTable}
+                  total={tests.length}
+                  shown={testTable.rows.length}
+                />
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead className="w-40">Subject</TableHead>
-                      <TableHead className="w-28">Date</TableHead>
-                      <TableHead className="w-20">Max</TableHead>
-                      <TableHead className="w-24">Weight</TableHead>
-                      <TableHead className="w-28">Status</TableHead>
+                      <SortFilterHead ctl={testTable} col="name" />
+                      <SortFilterHead ctl={testTable} col="subject" className="w-40" />
+                      <SortFilterHead ctl={testTable} col="date" className="w-28" />
+                      <SortFilterHead ctl={testTable} col="max" className="w-20" />
+                      <SortFilterHead ctl={testTable} col="weight" className="w-24" />
+                      <SortFilterHead ctl={testTable} col="status" className="w-28" />
                       <TableHead className="w-[260px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {tests.map((t) => {
+                    {testTable.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                          No tests match the column filters.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {testTable.rows.map((t) => {
                       const sub = subjectsForActiveClass.find(
                         (s) => s.id === t.subject_id
                       );
@@ -799,6 +850,7 @@ export default function AdminClassTestsPage() {
                     })}
                   </TableBody>
                 </Table>
+                </>
               </div>
             )}
           </CardContent>

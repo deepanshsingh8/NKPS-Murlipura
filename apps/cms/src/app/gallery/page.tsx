@@ -22,6 +22,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
 import { toast } from "sonner";
 import {
@@ -807,6 +813,59 @@ export default function AdminGalleryPage() {
     return map;
   }, [events]);
 
+  // Header sort/filter accessors for the two list tables — each mirrors what
+  // the matching cell renders.
+  const imageColumns = React.useMemo<TableColumns<GalleryImage>>(
+    () => ({
+      description: {
+        label: "Description",
+        value: (img) => img.alt || null,
+        filter: "text",
+      },
+      category: { label: "Category", value: (img) => img.category },
+      event: {
+        label: "Event",
+        value: (img) =>
+          img.gallery_event_id
+            ? eventTitleById[img.gallery_event_id] ?? null
+            : null,
+        emptyLabel: "No event",
+      },
+      created: {
+        label: "Created",
+        value: (img) => formatDateTime(img.created_at),
+        sortValue: (img) => img.created_at,
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventTitleById]
+  );
+  const imageTable = useTableControls({ rows: images, columns: imageColumns });
+
+  const eventColumns = React.useMemo<TableColumns<GalleryEvent>>(
+    () => ({
+      title: { label: "Title", value: (e) => e.title, filter: "text" },
+      date: {
+        label: "Date",
+        value: (e) => formatDate(e.event_date),
+        sortValue: (e) => e.event_date,
+      },
+      year: { label: "Year", value: (e) => e.academic_year || null },
+      photos: {
+        label: "Photos",
+        value: (e) => `${imageCounts[e.id] || 0} photos`,
+        sortValue: (e) => imageCounts[e.id] || 0,
+      },
+      status: {
+        label: "Status",
+        value: (e) => (e.is_public ? "Public" : "Hidden"),
+      },
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [imageCounts]
+  );
+  const eventTable = useTableControls({ rows: events, columns: eventColumns });
+
   return (
     <div>
       {/* Header */}
@@ -1114,20 +1173,33 @@ export default function AdminGalleryPage() {
             </div>
           ) : viewMode === "list" ? (
             <div className="erp-table-container overflow-hidden">
+              <TableFilterSummary
+                ctl={imageTable}
+                total={images.length}
+                shown={imageTable.rows.length}
+                className="px-4 pt-4"
+              />
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10" />
                     <TableHead className="w-16">Preview</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Created</TableHead>
+                    <SortFilterHead ctl={imageTable} col="description" />
+                    <SortFilterHead ctl={imageTable} col="category" />
+                    <SortFilterHead ctl={imageTable} col="event" />
+                    <SortFilterHead ctl={imageTable} col="created" />
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {images.map((image) => {
+                  {imageTable.rows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                        No images match the column filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {imageTable.rows.map((image) => {
                     const isSelected = selectedImageIds.has(image.id);
                     return (
                       <TableRow
@@ -1477,20 +1549,33 @@ export default function AdminGalleryPage() {
                   </p>
                 </div>
               ) : (
+                <>
+                <TableFilterSummary
+                  ctl={eventTable}
+                  total={events.length}
+                  shown={eventTable.rows.length}
+                />
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8" />
-                      <TableHead>Title</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Year</TableHead>
-                      <TableHead>Photos</TableHead>
-                      <TableHead>Status</TableHead>
+                      <SortFilterHead ctl={eventTable} col="title" />
+                      <SortFilterHead ctl={eventTable} col="date" />
+                      <SortFilterHead ctl={eventTable} col="year" />
+                      <SortFilterHead ctl={eventTable} col="photos" />
+                      <SortFilterHead ctl={eventTable} col="status" />
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {events.map((evt) => {
+                    {eventTable.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                          No events match the column filters.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {eventTable.rows.map((evt) => {
                       const isExpanded = expandedEventId === evt.id;
                       const photos = eventImages[evt.id] ?? [];
                       const isLoadingPhotos = eventImagesLoading === evt.id;
@@ -1604,6 +1689,7 @@ export default function AdminGalleryPage() {
                     })}
                   </TableBody>
                 </Table>
+                </>
               )}
             </div>
           )}

@@ -25,6 +25,12 @@ import {
   TableRow,
 } from "@nkps/shared/components/ui/table";
 import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
+import {
   Dialog,
   DialogClose,
   DialogContent,
@@ -97,6 +103,32 @@ export default function TeacherClassTestsPage() {
   const [classes, setClasses] = useState<Class[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [tests, setTests] = useState<ClassTest[]>([]);
+
+  // Header sort/filter accessors for the tests list — mirror what the
+  // matching cell renders. The marks-entry grid stays in roll order.
+  const testColumns = useMemo<TableColumns<ClassTest>>(
+    () => ({
+      name: { label: "Name", value: (t) => t.name, filter: "text" },
+      date: {
+        label: "Date",
+        value: (t) => formatDateShort(t.test_date),
+        sortValue: (t) => t.test_date,
+      },
+      max: { label: "Max", value: (t) => t.max_marks, filter: "none" },
+      weight: {
+        label: "Weight",
+        value: (t) => (t.weightage === null ? null : `${t.weightage}%`),
+        sortValue: (t) => t.weightage,
+      },
+      status: {
+        label: "Status",
+        value: (t) => (t.is_published ? "Published" : "Draft"),
+      },
+    }),
+    []
+  );
+
+  const testTable = useTableControls({ rows: tests, columns: testColumns });
 
   // Filter state lives in the URL so back-navigation restores it (UX-1).
   const [selectedClassId, setSelectedClassId] = useUrlState("class_id");
@@ -740,19 +772,31 @@ export default function TeacherClassTestsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                <TableFilterSummary
+                  ctl={testTable}
+                  total={tests.length}
+                  shown={testTable.rows.length}
+                />
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead className="w-32">Date</TableHead>
-                      <TableHead className="w-24">Max</TableHead>
-                      <TableHead className="w-24">Weight</TableHead>
-                      <TableHead className="w-28">Status</TableHead>
+                      <SortFilterHead ctl={testTable} col="name" />
+                      <SortFilterHead ctl={testTable} col="date" className="w-32" />
+                      <SortFilterHead ctl={testTable} col="max" className="w-24" />
+                      <SortFilterHead ctl={testTable} col="weight" className="w-24" />
+                      <SortFilterHead ctl={testTable} col="status" className="w-28" />
                       <TableHead className="w-[260px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {tests.map((t) => (
+                    {testTable.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                          No tests match the column filters.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {testTable.rows.map((t) => (
                       <TableRow key={t.id}>
                         <TableCell className="font-medium">{t.name}</TableCell>
                         <TableCell className="text-sm text-gray-500 dark:text-gray-400">

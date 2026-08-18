@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import {
@@ -11,6 +11,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import { Loader2, Info, Bus as BusIcon } from "lucide-react";
 import type { Bus } from "@nkps/shared/types";
@@ -43,6 +49,32 @@ export default function TransportDriversPage() {
   const [loading, setLoading] = useState(true);
 
   const supabase = createClient();
+
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<DriverRow>>(
+    () => ({
+      name: { label: "Driver Name", value: (r) => r.name, filter: "text" },
+      phone: { label: "Phone", value: (r) => r.phone || null, filter: "text" },
+      license: {
+        label: "License No.",
+        value: (r) => r.license_number || null,
+        filter: "text",
+      },
+      bus: {
+        label: "Assigned Bus",
+        value: (r) => r.bus_number,
+        emptyLabel: "Not assigned",
+      },
+      students: {
+        label: "Students on Bus",
+        value: (r) => r.student_count,
+        filter: "none",
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows, columns });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -169,18 +201,31 @@ export default function TransportDriversPage() {
             under People → Staff.
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={rows.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Driver Name</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>License No.</TableHead>
-                <TableHead>Assigned Bus</TableHead>
-                <TableHead className="text-right">Students on Bus</TableHead>
+                <SortFilterHead ctl={table} col="name" />
+                <SortFilterHead ctl={table} col="phone" />
+                <SortFilterHead ctl={table} col="license" />
+                <SortFilterHead ctl={table} col="bus" />
+                <SortFilterHead ctl={table} col="students" align="right" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((row) => (
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No drivers match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell className="font-medium">{row.name}</TableCell>
                   <TableCell className="text-gray-600 dark:text-gray-300">
@@ -206,6 +251,7 @@ export default function TransportDriversPage() {
               ))}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
     </div>

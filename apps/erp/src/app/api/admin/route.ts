@@ -38,7 +38,7 @@ const ALLOWED_COLUMNS: Record<string, string[]> = {
   academic_years: ["id", "name", "start_date", "end_date", "is_current", "created_at"],
   class_subjects: ["id", "class_id", "subject_id", "teacher_id", "created_at"],
   student_enrollments: ["id", "student_id", "class_id", "stream_id", "roll_number", "roll_number_manual", "enrollment_date", "status", "has_transport", "pickup_address", "bus_stop_id", "bus_id", "transport_direction", "transport_fee_override", "updated_at"],
-  fee_structures: ["id", "academic_year_id", "class_name", "class_level", "stream_id", "fee_type", "amount", "due_date", "frequency", "is_active", "description", "late_fee_percent", "late_fee_fixed_amount", "late_fee_per_day", "late_fee_max", "created_at", "updated_at"],
+  fee_structures: ["id", "academic_year_id", "class_name", "class_level", "stream_id", "fee_type", "amount", "due_date", "frequency", "is_active", "description", "late_fee_percent", "late_fee_fixed_amount", "late_fee_per_day", "late_fee_max", "instalment_no", "instalment_name", "month_label", "student_type", "late_fee_start_date", "created_at", "updated_at"],
   fee_payments: ["id", "student_id", "fee_structure_id", "amount_paid", "payment_date", "payment_method", "receipt_number", "month", "status", "recorded_by", "remarks", "cheque_number", "cheque_date", "bank_name", "payer_name", "transaction_ref", "payment_provider", "created_at"],
   exam_types: ["id", "name", "academic_year_id", "max_marks", "weightage", "sort_order", "kind", "upper_header", "class_level", "created_at"],
   calendar_events: ["id", "title", "description", "event_type", "start_date", "end_date", "class_id", "is_public", "is_school_wide", "created_by", "created_at"],
@@ -67,8 +67,29 @@ const EDITOR_RESTRICTED_ACTIONS = {
   fee_payments: ["update", "delete"],
 } as const;
 
+// student_enrollments is owned by the students module, but /transport/assignments
+// updates only its transport columns. Without this, an editor granted 'transport'
+// could open the page and save nothing. The rule is column-scoped, so a transport
+// grant still cannot reach roll_number, status or any other enrollment column.
+const COLUMN_SCOPED_FEATURE_KEYS = {
+  student_enrollments: [
+    {
+      featureKey: "transport",
+      columns: [
+        "has_transport",
+        "bus_stop_id",
+        "bus_id",
+        "transport_direction",
+        "transport_fee_override",
+        "pickup_address",
+      ],
+    },
+  ],
+} as const;
+
 export const POST = createAdminProxyHandler({
   tableFeatureKey: TABLE_FEATURE_KEY,
   allowedColumns: ALLOWED_COLUMNS,
   editorRestrictedActions: EDITOR_RESTRICTED_ACTIONS,
+  columnScopedFeatureKeys: COLUMN_SCOPED_FEATURE_KEYS,
 });

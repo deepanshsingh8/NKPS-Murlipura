@@ -779,6 +779,94 @@ export const feeStructureSchema = z.object({
 
 export type FeeStructureData = z.infer<typeof feeStructureSchema>;
 
+// ---------------------------------------------------------------------------
+// Fee schedule (migration 085)
+//
+// One row of the school's fee-schedule grid. Persisted as a `fee_structures`
+// row with frequency='one_time'; `id` is present when the row already exists
+// and absent for a row the admin just added, which is how the save endpoint
+// tells an update from an insert.
+// ---------------------------------------------------------------------------
+
+const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
+
+export const feeScheduleRowSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    fee_type: z.string().min(1, "Fee head is required"),
+    due_date: isoDateSchema,
+    instalment_name: z.string().max(120).optional().or(z.literal("")),
+    amount: z
+      .number()
+      .finite("Amount must be a valid number")
+      .positive("Amount must be greater than 0"),
+    student_type: z.enum(["new", "existing", "both"]),
+    month_label: z.string().max(60).optional().or(z.literal("")),
+    late_fee_start_date: isoDateSchema.nullable().optional(),
+    late_fee_percent: z.number().finite().min(0).max(100).optional(),
+    late_fee_per_day: z.number().finite().min(0).optional(),
+    late_fee_max: z.number().finite().min(0).nullable().optional(),
+  })
+  .refine(
+    (row) =>
+      !row.late_fee_start_date || row.late_fee_start_date >= row.due_date,
+    {
+      message: "Late fee start date cannot be before the due date",
+      path: ["late_fee_start_date"],
+    }
+  );
+
+export const feeScheduleSchema = z
+  .object({
+    academic_year_id: z.string().uuid("Invalid academic year"),
+    class_name: z.string().min(1, "Class is required"),
+    // null = the schedule applies to the whole class (every stream).
+    stream_id: z.string().uuid().nullable().optional(),
+    rows: z.array(feeScheduleRowSchema).max(60, "Too many instalments"),
+  })
+  .refine(
+    (payload) => {
+      // Two rows for the same head, due date and audience would double-bill —
+      // the office means to edit one row, not add a twin.
+      const seen = new Set<string>();
+      for (const row of payload.rows) {
+        const key = `${row.fee_type}|${row.due_date}|${row.student_type}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+      }
+      return true;
+    },
+    {
+      message:
+        "Duplicate row: the same fee head, due date and student type appears twice",
+      path: ["rows"],
+    }
+  );
+
+export type FeeScheduleRowData = z.infer<typeof feeScheduleRowSchema>;
+export type FeeScheduleData = z.infer<typeof feeScheduleSchema>;
+
+// Copying a saved schedule onto other classes / streams. Each target is a
+// (class_name, stream_id) pair; stream_id is null for a whole-class schedule.
+export const feeScheduleCopySchema = z.object({
+  academic_year_id: z.string().uuid("Invalid academic year"),
+  source_class_name: z.string().min(1, "Source class is required"),
+  source_stream_id: z.string().uuid().nullable().optional(),
+  targets: z
+    .array(
+      z.object({
+        class_name: z.string().min(1),
+        stream_id: z.string().uuid().nullable().optional(),
+      })
+    )
+    .min(1, "Pick at least one class to copy to")
+    .max(40),
+});
+
+export type FeeScheduleCopyData = z.infer<typeof feeScheduleCopySchema>;
+
 export const timetablePeriodSchema = z.object({
   class_id: z.string().uuid("Invalid class"),
   subject_id: z.string().uuid("Invalid subject"),

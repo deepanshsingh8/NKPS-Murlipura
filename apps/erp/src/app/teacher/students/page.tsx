@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@nkps/shared/components/ui/card";
@@ -13,6 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Loader2, Users, Search } from "lucide-react";
 import { formatClassName } from "@nkps/shared/lib/utils";
 
@@ -132,6 +138,35 @@ export default function TeacherStudentsPage() {
       : true
   );
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<StudentRow>>(
+    () => ({
+      roll_number: {
+        label: "Roll No.",
+        value: (s) => s.roll_number,
+        filter: "none",
+      },
+      name: {
+        label: "Name",
+        value: (s) => s.student?.full_name || null,
+        filter: "text",
+      },
+      email: {
+        label: "Email",
+        value: (s) => s.student?.email || null,
+        filter: "text",
+      },
+      phone: {
+        label: "Phone",
+        value: (s) => s.student?.phone || null,
+        filter: "text",
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: filteredStudents, columns });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -198,17 +233,30 @@ export default function TeacherStudentsPage() {
                   No students found.
                 </p>
               ) : (
+                <>
+                <TableFilterSummary
+                  ctl={table}
+                  total={filteredStudents.length}
+                  shown={table.rows.length}
+                />
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Roll No.</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Phone</TableHead>
+                      <SortFilterHead ctl={table} col="roll_number" />
+                      <SortFilterHead ctl={table} col="name" />
+                      <SortFilterHead ctl={table} col="email" />
+                      <SortFilterHead ctl={table} col="phone" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredStudents.map((s, idx) => (
+                    {table.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                          No students match the column filters.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {table.rows.map((s, idx) => (
                       <TableRow key={idx}>
                         <TableCell className="font-medium">
                           {s.roll_number ?? "--"}
@@ -224,6 +272,7 @@ export default function TeacherStudentsPage() {
                     ))}
                   </TableBody>
                 </Table>
+                </>
               )}
             </>
           )}

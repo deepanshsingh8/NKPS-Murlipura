@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
@@ -29,6 +29,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
 import { toast } from "sonner";
 import {
@@ -53,6 +59,10 @@ import {
   DropdownMenuTrigger,
 } from "@nkps/shared/components/ui/dropdown-menu";
 import { adminFetch, adminPatch, adminDelete } from "@nkps/shared/lib/admin-api";
+import {
+  staffCreateSchema,
+  staffUpdateSchema,
+} from "@nkps/shared/lib/validations";
 import { uploadToStorage } from "@nkps/shared/lib/supabase/upload";
 import { FileDropZone } from "@nkps/shared/components/FileDropZone";
 import { ImageCropper } from "@nkps/shared/components/ImageCropper";
@@ -86,6 +96,54 @@ const CATEGORY_OPTIONS: { value: StaffCategory; label: string }[] = [
   { value: "busDriver", label: "Bus Drivers" },
   { value: "peon", label: "Peons" },
 ];
+
+// Maps a payload key to the label the admin actually sees on the form, so a
+// rejected save can say "Phone: enter a valid 10-digit Indian mobile number"
+// instead of the bare "Invalid data" the API returns.
+const FIELD_LABELS: Record<string, string> = {
+  name: "Full Name",
+  subject: "Subject / Designation",
+  category: "Category",
+  email: "Email",
+  phone: "Phone",
+  date_of_birth: "Date of Birth",
+  address: "Address",
+  qualifications: "Qualifications",
+  license_number: "Driving License Number",
+  photo_url: "Profile Photo",
+  sort_order: "Sort order",
+};
+
+type StaffFieldErrors = Partial<Record<string, string>>;
+
+// Applied to an input whose value was rejected, so the field the toast names is
+// also obvious at a glance in a long scrolling dialog.
+const ERROR_INPUT = "border-red-500 focus-visible:ring-red-500";
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null;
+  return <p className="text-xs text-red-600">{message}</p>;
+}
+
+// Zod's flatten() gives every message per field; the form has room for one, so
+// keep the first and drop fields whose array came back empty.
+function firstErrorPerField(
+  fieldErrors: Record<string, string[] | undefined>
+): StaffFieldErrors {
+  const out: StaffFieldErrors = {};
+  for (const [key, messages] of Object.entries(fieldErrors)) {
+    if (messages && messages.length > 0) out[key] = messages[0];
+  }
+  return out;
+}
+
+// One-line summary for the toast: "Phone, Date of Birth" — the inline messages
+// carry the detail, this just points at which fields to look at.
+function summarizeErrors(errors: StaffFieldErrors): string {
+  const labels = Object.keys(errors).map((k) => FIELD_LABELS[k] ?? k);
+  if (labels.length === 0) return "Please check the form and try again";
+  return `Please fix: ${labels.join(", ")}`;
+}
 
 // Filter dropdown = the same options plus an "all" sentinel; derive it so the
 // two lists can never drift out of sync.
@@ -179,6 +237,10 @@ export default function AdminStaffPage() {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [existingPhotoUrl, setExistingPhotoUrl] = useState<string | null>(null);
   const [croppedPreviewUrl, setCroppedPreviewUrl] = useState<string | null>(null);
+  // Per-field validation messages, keyed by payload field name. Populated
+  // either by the client-side schema check in handleSubmit or from the API's
+  // `details.fieldErrors` when the server rejects the save.
+  const [fieldErrors, setFieldErrors] = useState<StaffFieldErrors>({});
 
   // Crop state
   const [rawImageSrc, setRawImageSrc] = useState<string | null>(null);
@@ -370,7 +432,19 @@ export default function AdminStaffPage() {
     setEditingId(null);
     setRawImageSrc(null);
     setShowCropper(false);
+    setFieldErrors({});
   };
+
+  // Clearing as soon as the admin edits the offending field keeps a stale
+  // message from sitting under an input they've already corrected.
+  const clearFieldError = useCallback((key: string) => {
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
 
   const handleFileSelected = (files: FileList | File | null) => {
     const file = files instanceof FileList ? files[0] : files;
@@ -426,14 +500,64 @@ export default function AdminStaffPage() {
     setLicenseNumber(member.license_number || "");
     setPhotoFile(null);
     setExistingPhotoUrl(member.photo_url);
+    setFieldErrors({});
     setDialogOpen(true);
   };
 
+  // The API answers a schema rejection with `{ error: "Invalid data", details:
+  // <flattened zod error> }`. The details used to be dropped on the floor, so
+  // the admin saw only "Invalid data". Pin them to the inputs instead and hand
+  // back a readable summary for the toast; returns null when the body carries
+  // no field detail (e.g. a 409 duplicate) so the caller falls back to
+  // `data.error`.
+  const applyServerFieldErrors = (body: unknown): string | null => {
+    const details = (body as { details?: { fieldErrors?: Record<string, string[]> } })
+      ?.details;
+    if (!details?.fieldErrors) return null;
+    const errors = firstErrorPerField(details.fieldErrors);
+    if (Object.keys(errors).length === 0) return null;
+    setFieldErrors(errors);
+    return summarizeErrors(errors);
+  };
+
   const handleSubmit = async () => {
-    if (!name.trim() || !subject.trim()) {
-      toast.error("Name and subject/designation are required");
+    const extraFields = {
+      email: email.trim() || null,
+      phone: phone.trim() || null,
+      date_of_birth: dateOfBirth || null,
+      address: address.trim() || null,
+      qualifications: qualifications.trim() || null,
+      // License applies only to bus drivers; clear it for any other category
+      // so a stale value can't linger if the category is changed.
+      license_number:
+        category === "busDriver" ? licenseNumber.trim() || null : null,
+    };
+
+    // Validate with the very schema the API will apply, before uploading
+    // anything. Two reasons this runs first:
+    //  - The admin gets the failure pinned to the offending input instead of a
+    //    bare "Invalid data" toast with no clue which field is wrong.
+    //  - A rejected save no longer leaves an orphaned photo in storage, which
+    //    is what used to happen on every retry.
+    const draft = {
+      name: name.trim(),
+      subject: subject.trim(),
+      category,
+      photo_url: existingPhotoUrl,
+      ...extraFields,
+    };
+    // sort_order is optional on the schema and computed below, so it is left
+    // out of the draft rather than guessed here.
+    const check = editingId
+      ? staffUpdateSchema.safeParse({ ...draft, id: editingId })
+      : staffCreateSchema.safeParse(draft);
+    if (!check.success) {
+      const errors = firstErrorPerField(check.error.flatten().fieldErrors);
+      setFieldErrors(errors);
+      toast.error(summarizeErrors(errors));
       return;
     }
+    setFieldErrors({});
 
     setSubmitting(true);
     try {
@@ -445,18 +569,6 @@ export default function AdminStaffPage() {
         const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
         photoUrl = await uploadToStorage("staff-photos", fileName, photoFile);
       }
-
-      const extraFields = {
-        email: email.trim() || null,
-        phone: phone.trim() || null,
-        date_of_birth: dateOfBirth || null,
-        address: address.trim() || null,
-        qualifications: qualifications.trim() || null,
-        // License applies only to bus drivers; clear it for any other category
-        // so a stale value can't linger if the category is changed.
-        license_number:
-          category === "busDriver" ? licenseNumber.trim() || null : null,
-      };
 
       if (editingId) {
         // Update existing
@@ -472,7 +584,11 @@ export default function AdminStaffPage() {
 
         if (!res.ok) {
           const data = await res.json();
-          throw new Error(data.error || "Failed to update staff member");
+          throw new Error(
+            applyServerFieldErrors(data) ||
+              data.error ||
+              "Failed to update staff member"
+          );
         }
         toast.success("Staff member updated");
       } else {
@@ -493,7 +609,11 @@ export default function AdminStaffPage() {
 
         const resData = await res.json();
         if (!res.ok) {
-          throw new Error(resData.error || "Failed to add staff member");
+          throw new Error(
+            applyServerFieldErrors(resData) ||
+              resData.error ||
+              "Failed to add staff member"
+          );
         }
         if (resData.userCreated) {
           toast.success("Staff member added — portal account created & login email sent");
@@ -543,6 +663,26 @@ export default function AdminStaffPage() {
     return matchesCategory && matchesSearch;
   });
 
+  // Header sort/filter accessors — mirror what the matching cell renders.
+  const columns = useMemo<TableColumns<StaffMember>>(
+    () => ({
+      name: { label: "Name", value: (m) => m.name, filter: "text" },
+      subject: {
+        label: "Subject / Designation",
+        value: (m) => m.subject || null,
+        filter: "text",
+      },
+      category: {
+        label: "Category",
+        value: (m) => getCategoryLabel(m.category),
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: filtered, columns });
+  const visible = table.rows;
+
   // Selection helpers
   const toggleSelection = (id: string) => {
     setSelectedIds((prev) => {
@@ -554,10 +694,10 @@ export default function AdminStaffPage() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === filtered.length) {
+    if (selectedIds.size === visible.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filtered.map((m) => m.id)));
+      setSelectedIds(new Set(visible.map((m) => m.id)));
     }
   };
 
@@ -738,25 +878,38 @@ export default function AdminStaffPage() {
           </p>
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden">
+        <div>
+          <TableFilterSummary
+            ctl={table}
+            total={filtered.length}
+            shown={visible.length}
+          />
+          <div className="border rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
-                    checked={filtered.length > 0 && selectedIds.size === filtered.length}
+                    checked={visible.length > 0 && selectedIds.size === visible.length}
                     onCheckedChange={toggleSelectAll}
                   />
                 </TableHead>
                 <TableHead className="w-16">Photo</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Subject / Designation</TableHead>
-                <TableHead>Category</TableHead>
+                <SortFilterHead ctl={table} col="name" />
+                <SortFilterHead ctl={table} col="subject" />
+                <SortFilterHead ctl={table} col="category" />
                 <TableHead className="w-24 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((member) => (
+              {visible.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No staff match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {visible.map((member) => (
                 <TableRow key={member.id} className={selectedIds.has(member.id) ? "bg-red-50/50" : undefined}>
                   <TableCell>
                     <Checkbox
@@ -885,6 +1038,7 @@ export default function AdminStaffPage() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </div>
       )}
 
@@ -903,8 +1057,13 @@ export default function AdminStaffPage() {
               <Input
                 placeholder="e.g. Jasvindar Singh Bhatiya"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                className={fieldErrors.name ? ERROR_INPUT : undefined}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  clearFieldError("name");
+                }}
               />
+              <FieldError message={fieldErrors.name} />
             </div>
 
             <div className="space-y-2">
@@ -912,8 +1071,13 @@ export default function AdminStaffPage() {
               <Input
                 placeholder="e.g. Biology, Principal, Mother Teacher"
                 value={subject}
-                onChange={(e) => setSubject(e.target.value)}
+                className={fieldErrors.subject ? ERROR_INPUT : undefined}
+                onChange={(e) => {
+                  setSubject(e.target.value);
+                  clearFieldError("subject");
+                }}
               />
+              <FieldError message={fieldErrors.subject} />
             </div>
 
             <div className="space-y-2">
@@ -942,16 +1106,27 @@ export default function AdminStaffPage() {
                   type="email"
                   placeholder="e.g. john@example.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  className={fieldErrors.email ? ERROR_INPUT : undefined}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    clearFieldError("email");
+                  }}
                 />
+                <FieldError message={fieldErrors.email} />
               </div>
               <div className="space-y-2">
                 <Label>Phone</Label>
                 <Input
+                  inputMode="tel"
                   placeholder="e.g. +91-9876543210"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  className={fieldErrors.phone ? ERROR_INPUT : undefined}
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    clearFieldError("phone");
+                  }}
                 />
+                <FieldError message={fieldErrors.phone} />
               </div>
             </div>
 
@@ -961,16 +1136,26 @@ export default function AdminStaffPage() {
                 <Input
                   type="date"
                   value={dateOfBirth}
-                  onChange={(e) => setDateOfBirth(e.target.value)}
+                  className={fieldErrors.date_of_birth ? ERROR_INPUT : undefined}
+                  onChange={(e) => {
+                    setDateOfBirth(e.target.value);
+                    clearFieldError("date_of_birth");
+                  }}
                 />
+                <FieldError message={fieldErrors.date_of_birth} />
               </div>
               <div className="space-y-2">
                 <Label>Qualifications</Label>
                 <Input
                   placeholder="e.g. M.Sc., B.Ed."
                   value={qualifications}
-                  onChange={(e) => setQualifications(e.target.value)}
+                  className={fieldErrors.qualifications ? ERROR_INPUT : undefined}
+                  onChange={(e) => {
+                    setQualifications(e.target.value);
+                    clearFieldError("qualifications");
+                  }}
                 />
+                <FieldError message={fieldErrors.qualifications} />
               </div>
             </div>
 
@@ -979,8 +1164,13 @@ export default function AdminStaffPage() {
               <Input
                 placeholder="Home address"
                 value={address}
-                onChange={(e) => setAddress(e.target.value)}
+                className={fieldErrors.address ? ERROR_INPUT : undefined}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  clearFieldError("address");
+                }}
               />
+              <FieldError message={fieldErrors.address} />
             </div>
 
             {category === "busDriver" && (
@@ -989,8 +1179,13 @@ export default function AdminStaffPage() {
                 <Input
                   placeholder="e.g. UP32 20230001234"
                   value={licenseNumber}
-                  onChange={(e) => setLicenseNumber(e.target.value)}
+                  className={fieldErrors.license_number ? ERROR_INPUT : undefined}
+                  onChange={(e) => {
+                    setLicenseNumber(e.target.value);
+                    clearFieldError("license_number");
+                  }}
                 />
+                <FieldError message={fieldErrors.license_number} />
               </div>
             )}
 

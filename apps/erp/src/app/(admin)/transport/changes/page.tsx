@@ -28,6 +28,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { toast } from "sonner";
 import {
   Plus,
@@ -272,6 +278,59 @@ export default function TransportChangesPage() {
     return changes.filter((c) => c.status === statusFilter);
   }, [changes, statusFilter]);
 
+  // Header sort/filter accessors. `fromToLabel` renders JSX, so the From → To
+  // column gets a plain-text twin here for sorting and filter options.
+  const columns = useMemo<TableColumns<ChangeRow>>(
+    () => ({
+      student: {
+        label: "Student",
+        value: (r) => r.enrollment?.students?.full_name ?? null,
+        filter: "text",
+      },
+      type: { label: "Type", value: (r) => CHANGE_TYPE_LABELS[r.change_type] },
+      from_to: {
+        label: "From → To",
+        value: (r) => {
+          switch (r.change_type) {
+            case "bus_change":
+              return `${r.previous_bus?.bus_number ?? "—"} → ${r.amended_bus?.bus_number ?? "—"}`;
+            case "stop_change":
+              return `${r.previous_stop?.name ?? "—"} → ${r.amended_stop?.name ?? "—"}`;
+            case "direction_change":
+              return r.direction ? DIRECTION_LABELS[r.direction] : null;
+            case "drop":
+              return "Transport dropped";
+            default:
+              return null;
+          }
+        },
+        filter: "text",
+      },
+      reason: { label: "Reason", value: (r) => REASON_LABELS[r.reason_code] },
+      effective: {
+        label: "Effective",
+        value: (r) => effectiveLabel(r),
+        sortValue: (r) => r.effective_from,
+      },
+      source: {
+        label: "Source",
+        value: (r) => (r.source === "office" ? "Office" : "Parent"),
+      },
+      status: {
+        label: "Status",
+        value: (r) => r.status.charAt(0).toUpperCase() + r.status.slice(1),
+      },
+      application: {
+        label: "Application",
+        value: (r) => (r.applicationSignedUrl ? "Attached" : null),
+        emptyLabel: "None",
+      },
+    }),
+    []
+  );
+
+  const table = useTableControls({ rows: filteredChanges, columns });
+
   const filteredEnrollments = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
     if (!q) return enrollments.slice(0, 30);
@@ -467,22 +526,35 @@ export default function TransportChangesPage() {
             {statusFilter !== "all" ? ` with status "${statusFilter}"` : ""}.
           </p>
         ) : (
+          <>
+          <TableFilterSummary
+            ctl={table}
+            total={filteredChanges.length}
+            shown={table.rows.length}
+          />
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Student</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>From → To</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Effective</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Application</TableHead>
+                <SortFilterHead ctl={table} col="student" />
+                <SortFilterHead ctl={table} col="type" />
+                <SortFilterHead ctl={table} col="from_to" />
+                <SortFilterHead ctl={table} col="reason" />
+                <SortFilterHead ctl={table} col="effective" />
+                <SortFilterHead ctl={table} col="source" />
+                <SortFilterHead ctl={table} col="status" />
+                <SortFilterHead ctl={table} col="application" />
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredChanges.map((row) => {
+              {table.rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={9} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                    No change requests match the column filters.
+                  </TableCell>
+                </TableRow>
+              )}
+              {table.rows.map((row) => {
                 const student = row.enrollment?.students;
                 return (
                   <TableRow key={row.id}>
@@ -573,6 +645,7 @@ export default function TransportChangesPage() {
               })}
             </TableBody>
           </Table>
+          </>
         )}
       </div>
 

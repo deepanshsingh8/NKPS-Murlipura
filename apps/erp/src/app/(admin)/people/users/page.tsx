@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
@@ -29,6 +29,12 @@ import {
   TableHeader,
   TableRow,
 } from "@nkps/shared/components/ui/table";
+import {
+  SortFilterHead,
+  TableFilterSummary,
+  useTableControls,
+  type TableColumns,
+} from "@nkps/shared/components/ui/data-table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@nkps/shared/components/ui/tabs";
 import { LinkHealthPanel } from "@/components/admin/LinkHealthPanel";
 import { toast } from "sonner";
@@ -190,6 +196,49 @@ export default function AdminUsersPage() {
       r.full_name.toLowerCase().includes(regSearch.toLowerCase()) ||
       r.email.toLowerCase().includes(regSearch.toLowerCase());
     return matchesTab && matchesSearch;
+  });
+
+  // Header sort/filter accessors for the two tables on this page.
+  const profileColumns = useMemo<TableColumns<Profile>>(
+    () => ({
+      full_name: { label: "Name", value: (p) => p.full_name, filter: "text" },
+      email: { label: "Email", value: (p) => p.email, filter: "text" },
+      role: { label: "Role", value: (p) => p.role },
+      status: {
+        label: "Status",
+        value: (p) => (p.is_active ? "Active" : "Inactive"),
+      },
+      created: {
+        label: "Created",
+        value: (p) => new Date(p.created_at).toLocaleDateString(),
+        sortValue: (p) => new Date(p.created_at).getTime(),
+      },
+    }),
+    []
+  );
+  const profileTable = useTableControls({
+    rows: filteredProfiles,
+    columns: profileColumns,
+  });
+
+  const requestColumns = useMemo<TableColumns<RegistrationRequest>>(
+    () => ({
+      full_name: { label: "Name", value: (r) => r.full_name, filter: "text" },
+      email: { label: "Email", value: (r) => r.email, filter: "text" },
+      phone: { label: "Phone", value: (r) => r.phone || null, filter: "text" },
+      role: { label: "Role", value: (r) => r.role },
+      status: { label: "Status", value: (r) => r.status },
+      submitted: {
+        label: "Submitted",
+        value: (r) => new Date(r.created_at).toLocaleDateString(),
+        sortValue: (r) => new Date(r.created_at).getTime(),
+      },
+    }),
+    []
+  );
+  const requestTable = useTableControls({
+    rows: filteredRequests,
+    columns: requestColumns,
   });
 
   const resetForm = () => {
@@ -538,19 +587,32 @@ export default function AdminUsersPage() {
                   No users found.
                 </p>
               ) : (
+                <>
+                <TableFilterSummary
+                  ctl={profileTable}
+                  total={filteredProfiles.length}
+                  shown={profileTable.rows.length}
+                />
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Created</TableHead>
+                      <SortFilterHead ctl={profileTable} col="full_name" />
+                      <SortFilterHead ctl={profileTable} col="email" />
+                      <SortFilterHead ctl={profileTable} col="role" />
+                      <SortFilterHead ctl={profileTable} col="status" />
+                      <SortFilterHead ctl={profileTable} col="created" />
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredProfiles.map((profile) => (
+                    {profileTable.rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                          No users match the column filters.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {profileTable.rows.map((profile) => (
                       <TableRow key={profile.id}>
                         <TableCell className="font-medium">
                           {profile.full_name}
@@ -646,6 +708,7 @@ export default function AdminUsersPage() {
                     ))}
                   </TableBody>
                 </Table>
+                </>
               )}
             </TabsContent>
           ))}
@@ -691,20 +754,33 @@ export default function AdminUsersPage() {
                       No {tab === "all" ? "" : tab} registration requests found.
                     </p>
                   ) : (
+                    <>
+                    <TableFilterSummary
+                      ctl={requestTable}
+                      total={filteredRequests.length}
+                      shown={requestTable.rows.length}
+                    />
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Name</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>Phone</TableHead>
-                          <TableHead>Role</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Submitted</TableHead>
+                          <SortFilterHead ctl={requestTable} col="full_name" />
+                          <SortFilterHead ctl={requestTable} col="email" />
+                          <SortFilterHead ctl={requestTable} col="phone" />
+                          <SortFilterHead ctl={requestTable} col="role" />
+                          <SortFilterHead ctl={requestTable} col="status" />
+                          <SortFilterHead ctl={requestTable} col="submitted" />
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredRequests.map((req) => (
+                        {requestTable.rows.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                              No requests match the column filters.
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        {requestTable.rows.map((req) => (
                           <TableRow key={req.id}>
                             <TableCell className="font-medium">
                               {req.full_name}
@@ -777,6 +853,7 @@ export default function AdminUsersPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </>
                   )}
                 </TabsContent>
               ))}
