@@ -2116,6 +2116,48 @@ CREATE POLICY "Admins can delete editor permissions"
   USING (public.get_user_role() = 'admin');
 
 -- ============================================
+-- TEMPORARY PASSWORD VAULT (migration 086)
+-- ============================================
+-- Holds the generated password of an account that has not yet set its own, so
+-- an admin can read it back and pass it on when the welcome email doesn't
+-- reach the user. Encrypted at rest by the application
+-- (packages/shared/src/lib/temp-credentials.ts, AES-256-GCM) and deleted by the
+-- trigger below the moment profiles.must_change_password becomes false.
+
+CREATE TABLE IF NOT EXISTS user_temp_credentials (
+  user_id uuid PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+  ciphertext text NOT NULL,
+  issued_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  issued_at timestamptz NOT NULL DEFAULT now(),
+  last_revealed_at timestamptz,
+  last_revealed_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  reveal_count integer NOT NULL DEFAULT 0
+);
+
+-- RLS on with NO policies: service-role only. Deliberate — "Admins can read all
+-- profiles" also covers role='staff', so the ciphertext must not live on
+-- profiles where a browser client could select it.
+ALTER TABLE user_temp_credentials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_temp_credentials FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON user_temp_credentials FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.drop_temp_credential_on_password_set()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF OLD.must_change_password IS DISTINCT FROM NEW.must_change_password
+     AND NEW.must_change_password IS NOT TRUE THEN
+    DELETE FROM public.user_temp_credentials WHERE user_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS drop_temp_credential_on_password_set ON profiles;
+CREATE TRIGGER drop_temp_credential_on_password_set
+  AFTER UPDATE OF must_change_password ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.drop_temp_credential_on_password_set();
+
+-- ============================================
 -- ARTIFACTS (long-form news/announcements; surfaced on Latest Updates + own pages)
 -- ============================================
 

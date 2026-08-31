@@ -51,10 +51,15 @@ import {
   XCircle,
   KeyRound,
   Link2,
+  Eye,
 } from "lucide-react";
 import { adminFetch } from "@nkps/shared/lib/admin-api";
 import type { Profile, UserRole, RegistrationRequest, RegistrationStatus } from "@nkps/shared/types";
 import { EditorPermissionsDialog } from "@/components/EditorPermissionsDialog";
+import {
+  TempPasswordDialog,
+  type TempPasswordTarget,
+} from "@/components/TempPasswordDialog";
 
 const ROLES: UserRole[] = ["admin", "staff", "teacher", "student", "parent"];
 
@@ -113,6 +118,14 @@ export default function AdminUsersPage() {
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [approvePassword, setApprovePassword] = useState<string | null>(null);
   const [approvedName, setApprovedName] = useState("");
+
+  // Temporary-password dialog (reveal / issue credentials for accounts that
+  // never received a welcome email)
+  const [tempPwdOpen, setTempPwdOpen] = useState(false);
+  // Ids, not snapshots: the dialog can flip must_change_password (a reset), and
+  // the list it renders has to follow the refreshed profiles rather than the
+  // state the rows were in when it opened.
+  const [tempPwdIds, setTempPwdIds] = useState<string[]>([]);
 
   // Editor permissions dialog
   const [permsDialogOpen, setPermsDialogOpen] = useState(false);
@@ -504,6 +517,28 @@ export default function AdminUsersPage() {
     }
   };
 
+  const openTempPasswords = (ids: string[]) => {
+    setTempPwdIds(ids);
+    setTempPwdOpen(true);
+  };
+
+  // Accounts that have never set their own password. These are the ones whose
+  // credentials nobody can look up any other way once the welcome email is out
+  // of the picture, so they get a dedicated entry point.
+  const pendingPasswordProfiles = profiles.filter(
+    (p) => p.must_change_password
+  );
+
+  const tempPwdTargets: TempPasswordTarget[] = tempPwdIds
+    .map((id) => profiles.find((p) => p.id === id))
+    .filter((p): p is Profile => !!p)
+    .map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+      email: p.email,
+      must_change_password: !!p.must_change_password,
+    }));
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -517,16 +552,30 @@ export default function AdminUsersPage() {
           </div>
         </div>
         {activeTab !== "registrations" && (
-          <Button
-            onClick={() => {
-              resetForm();
-              setDialogOpen(true);
-            }}
-            className="bg-navy-900 hover:bg-navy-800 text-white shadow-sm"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add User
-          </Button>
+          <div className="flex items-center gap-2">
+            {pendingPasswordProfiles.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  openTempPasswords(pendingPasswordProfiles.map((p) => p.id))
+                }
+                title="Accounts that have never signed in and set a password"
+              >
+                <KeyRound className="h-4 w-4 mr-2" />
+                Pending passwords ({pendingPasswordProfiles.length})
+              </Button>
+            )}
+            <Button
+              onClick={() => {
+                resetForm();
+                setDialogOpen(true);
+              }}
+              className="bg-navy-900 hover:bg-navy-800 text-white shadow-sm"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add User
+            </Button>
+          </div>
         )}
       </div>
 
@@ -643,22 +692,55 @@ export default function AdminUsersPage() {
                           </Select>
                         </TableCell>
                         <TableCell>
-                          <Badge
-                            variant="secondary"
-                            className={
-                              profile.is_active
-                                ? "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400"
-                                : "bg-gray-100 dark:bg-muted text-gray-500 dark:text-gray-400"
-                            }
-                          >
-                            {profile.is_active ? "Active" : "Inactive"}
-                          </Badge>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge
+                              variant="secondary"
+                              className={
+                                profile.is_active
+                                  ? "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400"
+                                  : "bg-gray-100 dark:bg-muted text-gray-500 dark:text-gray-400"
+                              }
+                            >
+                              {profile.is_active ? "Active" : "Inactive"}
+                            </Badge>
+                            {profile.must_change_password && (
+                              <Badge
+                                variant="secondary"
+                                className="bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400"
+                                title="This account is still on its temporary password"
+                              >
+                                Temp password
+                              </Badge>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell className="text-gray-500 dark:text-gray-400">
                           {new Date(profile.created_at).toLocaleDateString()}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-2">
+                            {profile.must_change_password ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openTempPasswords([profile.id])}
+                                title="Show the temporary password so you can pass it on"
+                                className="border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-900/50 dark:text-amber-400 dark:hover:bg-amber-950/30"
+                              >
+                                <Eye className="h-4 w-4 mr-1" />
+                                Password
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => openTempPasswords([profile.id])}
+                                aria-label={`Reset password for ${profile.full_name}`}
+                                title="Reset this user's password"
+                              >
+                                <KeyRound className="h-4 w-4" />
+                              </Button>
+                            )}
                             {(profile.role === "staff" || profile.role === "teacher") && (
                               <Button
                                 variant="outline"
@@ -1156,6 +1238,16 @@ export default function AdminUsersPage() {
       </Dialog>
 
       {/* Editor Permissions Dialog */}
+      <TempPasswordDialog
+        open={tempPwdOpen}
+        onOpenChange={(open) => {
+          setTempPwdOpen(open);
+          if (!open) setTempPwdIds([]);
+        }}
+        targets={tempPwdTargets}
+        onChanged={fetchProfiles}
+      />
+
       <EditorPermissionsDialog
         open={permsDialogOpen}
         onOpenChange={(open) => {

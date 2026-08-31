@@ -135,6 +135,7 @@ export async function POST(request: Request) {
       phone: item.phone || null,
       studentId: type === "student" ? item.id : undefined,
       teacherId,
+      issuedBy: user.id,
     });
 
     if (userResult.success && userResult.userId) {

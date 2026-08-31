@@ -75,6 +75,7 @@ Required for auth, profiles, and calendar:
 |---|---|
 | `profiles` | Per-user role + display info (mirrors `auth.users`) |
 | `editor_permissions` | Per-feature CMS/ERP grants for editor role |
+| `user_temp_credentials` | Encrypted temporary password for accounts that haven't set their own yet; auto-deleted once they do |
 | `calendar_events` | Public school calendar (academic-calendar page reads it) |
 | `notifications` | Cross-module notification fanout |
 

@@ -3,6 +3,7 @@ import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { createClient } from "@nkps/shared/lib/supabase/server";
 import { createUserSchema } from "@nkps/shared/lib/validations";
 import { generateSecurePassword } from "@nkps/shared/lib/password";
+import { storeTempPassword } from "@nkps/shared/lib/temp-credentials";
 import { rateLimit } from "@nkps/shared/lib/rate-limit";
 import {
   linkProfileToStudent,
@@ -98,6 +99,11 @@ export async function POST(request: Request) {
           must_change_password: true,
         })
         .eq("id", newUser.user.id);
+
+      // Vault the temporary password so it stays retrievable from the users
+      // page until the account sets its own (migration 086). The welcome email
+      // below is best-effort; this is the fallback channel.
+      await storeTempPassword(supabase, newUser.user.id, password, user.id);
     }
 
     // For admin/staff role: these carry no domain link, so the student/teacher/

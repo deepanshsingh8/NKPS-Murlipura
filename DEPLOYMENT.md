@@ -154,6 +154,7 @@ Values live in `.env.example`. Which project needs which:
 | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` | ✅ | – | ✅ | Contact map; ERP transport autocomplete |
 | `TRUSTED_IP_HEADER` | ✅ | ✅ | ✅ | `x-vercel-forwarded-for` — see Part B |
 | `EXOTEL_*` | – | – | ✅ | Click-to-call; omit to disable |
+| `TEMP_PASSWORD_SECRET` | – | – | ⬦ | Encrypts stored temporary passwords; falls back to `SUPABASE_SERVICE_ROLE_KEY` when unset |
 
 `NEXT_PUBLIC_SITE_URL` must be `https://www.nkpublicschool.org` — the origin
 that doesn't redirect. Point it at the apex and every canonical tag, the
