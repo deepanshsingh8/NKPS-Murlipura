@@ -3,6 +3,7 @@ import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { createClient } from "@nkps/shared/lib/supabase/server";
 import { sendEmail, buildWelcomeEmail } from "@nkps/shared/lib/email";
 import { generateSecurePassword } from "@nkps/shared/lib/password";
+import { storeTempPassword } from "@nkps/shared/lib/temp-credentials";
 import { rateLimit } from "@nkps/shared/lib/rate-limit";
 import {
   linkProfileToStudent,
@@ -146,6 +147,11 @@ export async function POST(request: Request) {
           must_change_password: true,
         })
         .eq("id", newUser.user.id);
+
+      // Keep the temporary password readable by an admin until the user sets
+      // their own — the welcome email below can fail silently, and this is
+      // then the only way to hand the credentials over (migration 086).
+      await storeTempPassword(supabase, newUser.user.id, password, user.id);
     }
 
     // Surfaced to the admin UI when a record link couldn't be fully made, so

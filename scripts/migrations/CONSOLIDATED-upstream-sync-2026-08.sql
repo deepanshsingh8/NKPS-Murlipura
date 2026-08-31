@@ -26,6 +26,29 @@
 -- >>> Run against a backup / staging copy first if you can, then production. <<<
 -- =====================================================================
 
+-- =====================================================================
+-- WRONG-DATABASE GUARD — do not remove.
+-- =====================================================================
+-- This script targets the **NKPS Murlipura** Supabase project only. The
+-- parent NKPS (Rajawas) project is a separate database with its own
+-- migration history, and the two dashboards look identical — pasting into
+-- the wrong tab is an easy mistake to make.
+--
+-- `holiday_homework` and `prospectus_documents` back Murlipura-only CMS
+-- features with no upstream equivalent, so their presence identifies this
+-- database. If they are absent this raises, and because it sits above every
+-- statement in the file, the script aborts without changing anything.
+-- =====================================================================
+do $$
+begin
+  if to_regclass('public.holiday_homework') is null
+     or to_regclass('public.prospectus_documents') is null then
+    raise exception
+      'WRONG DATABASE - aborted, nothing was changed. This script targets the NKPS Murlipura project, but the Murlipura-only tables holiday_homework / prospectus_documents were not found. Switch projects in the Supabase dashboard and re-run.';
+  end if;
+end $$;
+
+
 
 -- #####################################################################
 -- ### 084 — erp/migration-084-staff-student-read-rls.sql

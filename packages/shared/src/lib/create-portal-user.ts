@@ -1,5 +1,6 @@
 import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
 import { generateSecurePassword } from "@nkps/shared/lib/password";
+import { storeTempPassword } from "@nkps/shared/lib/temp-credentials";
 
 interface CreatePortalUserParams {
   email: string;
@@ -9,6 +10,8 @@ interface CreatePortalUserParams {
   teacherId?: string | null;
   studentId?: string | null;
   parentId?: string | null;
+  /** Admin who triggered the creation — recorded on the temp-password vault row. */
+  issuedBy?: string | null;
 }
 
 interface CreatePortalUserResult {
@@ -25,6 +28,7 @@ export async function createPortalUser({
   teacherId,
   studentId,
   parentId,
+  issuedBy,
 }: CreatePortalUserParams): Promise<CreatePortalUserResult> {
   const supabase = createAdminClient();
 
@@ -99,6 +103,15 @@ export async function createPortalUser({
       await supabase.auth.admin.deleteUser(newUser.user.id);
       return { success: false, error: "Failed to finalize the portal account." };
     }
+  }
+
+  // Keep the generated password retrievable until the user sets their own.
+  // The welcome email below is best-effort — when it fails (or email isn't
+  // configured at all) this vault is the only remaining way for an admin to
+  // tell the user what their password is. Cleared automatically by the
+  // migration-086 trigger once must_change_password goes false.
+  if (newUser.user) {
+    await storeTempPassword(supabase, newUser.user.id, password, issuedBy);
   }
 
   try {
