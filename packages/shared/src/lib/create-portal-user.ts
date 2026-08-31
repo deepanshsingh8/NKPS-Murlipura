@@ -109,7 +109,7 @@ export async function createPortalUser({
   // The welcome email below is best-effort — when it fails (or email isn't
   // configured at all) this vault is the only remaining way for an admin to
   // tell the user what their password is. Cleared automatically by the
-  // migration-086 trigger once must_change_password goes false.
+  // migration-088 trigger once must_change_password goes false.
   if (newUser.user) {
     await storeTempPassword(supabase, newUser.user.id, password, issuedBy);
   }

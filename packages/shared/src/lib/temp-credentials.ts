@@ -15,7 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *  - Only pre-first-use temporary passwords are ever stored. A password the
  *    user chooses is never written here.
  *  - The row is deleted by a database trigger the instant
- *    `profiles.must_change_password` becomes false (migration 086), so a
+ *    `profiles.must_change_password` becomes false (migration 088), so a
  *    credential cannot outlive its window through any code path.
  *  - Ciphertext lives in `user_temp_credentials`, a table with RLS on and no
  *    policies — unreadable by every browser client, service role only.

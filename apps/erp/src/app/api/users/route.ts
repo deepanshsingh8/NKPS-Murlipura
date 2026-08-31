@@ -101,7 +101,7 @@ export async function POST(request: Request) {
         .eq("id", newUser.user.id);
 
       // Vault the temporary password so it stays retrievable from the users
-      // page until the account sets its own (migration 086). The welcome email
+      // page until the account sets its own (migration 088). The welcome email
       // below is best-effort; this is the fallback channel.
       await storeTempPassword(supabase, newUser.user.id, password, user.id);
     }

@@ -1,4 +1,4 @@
--- Migration 086: Retrievable temporary passwords for accounts that have never
+-- Migration 088: Retrievable temporary passwords for accounts that have never
 -- set their own password.
 --
 -- Why this exists

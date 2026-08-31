@@ -150,7 +150,7 @@ export async function POST(request: Request) {
 
       // Keep the temporary password readable by an admin until the user sets
       // their own — the welcome email below can fail silently, and this is
-      // then the only way to hand the credentials over (migration 086).
+      // then the only way to hand the credentials over (migration 088).
       await storeTempPassword(supabase, newUser.user.id, password, user.id);
     }
 

@@ -2131,7 +2131,7 @@ CREATE POLICY "Admins can delete editor permissions"
   USING (public.get_user_role() = 'admin');
 
 -- ============================================
--- TEMPORARY PASSWORD VAULT (migration 086)
+-- TEMPORARY PASSWORD VAULT (migration 088)
 -- ============================================
 -- Holds the generated password of an account that has not yet set its own, so
 -- an admin can read it back and pass it on when the welcome email doesn't
