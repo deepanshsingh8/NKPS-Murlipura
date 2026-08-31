@@ -2016,11 +2016,13 @@ CREATE POLICY "Service role manages content buckets"
   TO service_role
   USING (
     bucket_id IN ('gallery','transfer-certificates','site-media',
-                  'staff-photos','disclosure-documents','avatars')
+                  'staff-photos','disclosure-documents','avatars',
+                  'prospectus','holiday-homework')
   )
   WITH CHECK (
     bucket_id IN ('gallery','transfer-certificates','site-media',
-                  'staff-photos','disclosure-documents','avatars')
+                  'staff-photos','disclosure-documents','avatars',
+                  'prospectus','holiday-homework')
   );
 
 DROP POLICY IF EXISTS "Users manage own avatar object" ON storage.objects;
@@ -2041,7 +2043,7 @@ CREATE POLICY "Public read of public content buckets"
   ON storage.objects FOR SELECT
   USING (
     bucket_id IN ('gallery','site-media','staff-photos','avatars',
-                  'disclosure-documents')
+                  'disclosure-documents','prospectus','holiday-homework')
   );
 
 -- NOTE: the transfer-certificates bucket is flipped to private MANUALLY in
@@ -2067,6 +2069,19 @@ UPDATE storage.buckets
   SET allowed_mime_types = ARRAY['application/pdf'],
       file_size_limit = 10485760
   WHERE id IN ('transfer-certificates','disclosure-documents');
+
+-- Migration 087 — the prospectus and holiday-homework buckets were created by
+-- hand (migrations 059/060) and missed migration 061 entirely, so they had no
+-- MIME allowlist, no size cap and no version-controlled policies. Created here
+-- so a fresh project doesn't depend on the manual Dashboard step.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES
+  ('prospectus','prospectus', true, 10485760, ARRAY['application/pdf']),
+  ('holiday-homework','holiday-homework', true, 10485760, ARRAY['application/pdf'])
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 -- Migration 076 — private bucket for transport change-request applications.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
