@@ -533,6 +533,14 @@ export default function AdminStaffPage() {
         category === "busDriver" ? licenseNumber.trim() || null : null,
     };
 
+    // An open cropper means the chosen photo hasn't been turned into a File
+    // yet, so saving now would quietly store the record with no photo and
+    // still report success. Make the admin finish (or cancel) the crop first.
+    if (showCropper) {
+      toast.error('Finish the photo crop first — click "Confirm Crop", or cancel it.');
+      return;
+    }
+
     // Validate with the very schema the API will apply, before uploading
     // anything. Two reasons this runs first:
     //  - The admin gets the failure pinned to the offending input instead of a
@@ -1272,7 +1280,7 @@ export default function AdminStaffPage() {
             >
               Cancel
             </Button>
-            <Button onClick={handleSubmit} disabled={submitting}>
+            <Button onClick={handleSubmit} disabled={submitting || showCropper}>
               {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
               {editingId ? "Update" : "Add"}
             </Button>

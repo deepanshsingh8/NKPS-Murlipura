@@ -74,6 +74,26 @@ async function getCroppedImg(
 }
 
 /**
+ * Converts a crop to pixel units relative to the *displayed* <img>, which is
+ * the coordinate space getCroppedImg scales from. Percentage crops (what
+ * makeCenteredCrop and "Select All" produce) are resolution-independent, so
+ * this is done at confirm time against the element's current size rather than
+ * being cached at load time.
+ */
+function toPixelCrop(crop: Crop, image: HTMLImageElement): PixelCrop {
+  if (crop.unit === "px") return crop as PixelCrop;
+  const w = image.width || image.naturalWidth;
+  const h = image.height || image.naturalHeight;
+  return {
+    unit: "px",
+    x: (crop.x / 100) * w,
+    y: (crop.y / 100) * h,
+    width: (crop.width / 100) * w,
+    height: (crop.height / 100) * h,
+  };
+}
+
+/**
  * Creates a centered crop with the given aspect ratio.
  */
 function makeCenteredCrop(
@@ -103,6 +123,7 @@ export function ImageCropper({
   const [crop, setCrop] = useState<Crop>();
   const [completedCrop, setCompletedCrop] = useState<PixelCrop>();
   const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
 
   const onImageLoad = useCallback(
@@ -131,17 +152,30 @@ export function ImageCropper({
   };
 
   const handleConfirm = async () => {
-    if (!completedCrop || !imgRef.current) return;
+    const image = imgRef.current;
+    if (!image) return;
+    // `completedCrop` is only set once the user drags or resizes the selection.
+    // The centered crop drawn on load never produced one, so Confirm sat
+    // disabled and admins saved the form with no photo at all — fall back to
+    // whatever selection is currently on screen.
+    const pixelCrop =
+      completedCrop ?? (crop ? toPixelCrop(crop, image) : undefined);
+    if (!pixelCrop || pixelCrop.width < 1 || pixelCrop.height < 1) {
+      setError("Select an area of the image to crop.");
+      return;
+    }
+    setError(null);
     setProcessing(true);
     try {
-      const croppedFile = await getCroppedImg(
-        imgRef.current,
-        completedCrop,
-        fileName
-      );
+      const croppedFile = await getCroppedImg(image, pixelCrop, fileName);
       onCropComplete(croppedFile);
     } catch (err) {
       console.error("Crop failed:", err);
+      // Never fail silently: without this the button just did nothing and the
+      // admin went on to save a photo-less record.
+      setError(
+        err instanceof Error ? err.message : "Could not crop this image."
+      );
     } finally {
       setProcessing(false);
     }
@@ -169,7 +203,10 @@ export function ImageCropper({
       <div className="relative w-full max-h-[420px] overflow-auto rounded-xl bg-gray-900 flex items-center justify-center p-2">
         <ReactCrop
           crop={crop}
-          onChange={(c) => setCrop(c)}
+          onChange={(c) => {
+            setCrop(c);
+            if (error) setError(null);
+          }}
           onComplete={(c) => setCompletedCrop(c)}
           aspect={effectiveAspect}
           circularCrop={isRound}
@@ -243,13 +280,19 @@ export function ImageCropper({
         <Button
           type="button"
           onClick={handleConfirm}
-          disabled={processing || !completedCrop}
+          disabled={processing || (!completedCrop && !crop)}
           size="sm"
         >
           <Check className="h-4 w-4 mr-1" />
           {processing ? "Cropping..." : "Confirm Crop"}
         </Button>
       </div>
+
+      {error && (
+        <p className="text-xs text-center text-red-600" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
