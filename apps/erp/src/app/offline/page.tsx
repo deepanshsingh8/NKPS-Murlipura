@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 // network.
 export default function OfflinePage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-cream-50 p-6 text-center">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-cream-50 dark:bg-background p-6 text-center">
       <Image
         src="/icons/icon-192.png"
         alt="NK Public School"
@@ -20,7 +20,7 @@ export default function OfflinePage() {
         className="rounded-2xl shadow-md"
       />
       <div className="space-y-2">
-        <h1 className="font-heading text-2xl font-bold text-navy-900">
+        <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           You&rsquo;re offline
         </h1>
         <p className="max-w-sm text-sm text-navy-900/70">

@@ -174,6 +174,10 @@ export interface Teacher {
   aadhar_number: string | null;
   photo_url: string | null;
   is_active: boolean;
+  // migration 116 — set when is_active flips to false; kept on reinstatement
+  // so a rejoin stays visible in the record.
+  date_of_leaving?: string | null;
+  leaving_reason?: string | null;
   staff_member_id: string | null;
   created_at: string;
   updated_at: string;
@@ -313,6 +317,9 @@ export interface AcademicYear {
   created_at: string;
 }
 
+/** `stream` is an XI/XII academic stream; `wing` is a band of classes. */
+export type StreamKind = 'stream' | 'wing';
+
 export interface Stream {
   id: string;
   name: string;
@@ -320,6 +327,15 @@ export interface Stream {
   is_active: boolean;
   sort_order: number;
   created_at: string;
+  /**
+   * migration 118. `stream` keeps the original meaning — attachable to
+   * classes.stream_id and read by fee resolution. `wing` is a class band that
+   * exists only to push a subject set onto classes, and is filtered out of
+   * every stream picker and importer name-lookup.
+   */
+  kind?: StreamKind;
+  /** For wings: the class names covered, e.g. {VI,VII,VIII}. Empty for streams. */
+  class_names?: string[];
 }
 
 export interface Class {
@@ -372,6 +388,21 @@ export interface ClassSubject {
   class_id: string;
   subject_id: string;
   teacher_id: string | null;
+}
+
+/**
+ * Which subjects a teacher is qualified to teach (migration 117).
+ *
+ * Not the same question as `ClassSubject`: that says who teaches Maths to VI-B
+ * — one teacher, one class. This says who can teach Maths at all, and is what
+ * lets the assign-subject dropdown put the school's three maths teachers
+ * first instead of listing all sixty staff.
+ */
+export interface TeacherSubject {
+  id: string;
+  teacher_id: string;
+  subject_id: string;
+  created_at: string;
 }
 
 // =============================================================
@@ -769,7 +800,20 @@ export type EffectiveFeeLine =
   | (FeeStructure & { kind: 'fee_structure' })
   | TransportFeeLine;
 
-export type PaymentMethod = 'cash' | 'online' | 'cheque' | 'bank_transfer' | 'upi' | 'gateway' | 'waiver';
+// Mirrors the fee_payments_payment_method_check constraint. 'historical_unknown'
+// (migration 054) is what an import records when the previous software never
+// stored the tender type — the Account-wise Day Book has no mode column. The
+// Head-wise Day Book does, so its rows carry a real method and only an
+// unrecognised spelling falls back to this.
+export type PaymentMethod =
+  | 'cash'
+  | 'online'
+  | 'cheque'
+  | 'bank_transfer'
+  | 'upi'
+  | 'gateway'
+  | 'waiver'
+  | 'historical_unknown';
 export type PaymentStatus = 'pending' | 'processing' | 'paid' | 'partial' | 'failed' | 'refunded';
 
 export interface FeePayment {
@@ -804,6 +848,13 @@ export interface FeePayment {
   payer_name: string | null;
   transaction_ref: string | null;
   payment_provider: string | null;
+  // Migrations 051 + 115 — provenance. `source` separates money the office
+  // keyed in from money backfilled out of the previous ERP;
+  // `source_receipt_no` is that software's own receipt number and is what
+  // makes re-importing an overlapping export idempotent.
+  source: 'erp_native' | 'historical_import';
+  import_batch_id: string | null;
+  source_receipt_no: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -848,6 +899,16 @@ export interface TimetablePeriod {
   end_time: string;
   room: string | null;
   is_break: boolean;
+  /**
+   * migration 119 — one cell can hold several parallel teaching groups.
+   * `group_no` 0 is the primary group (every row that existed before), 1..n are
+   * the extra tracks that make a Games period or an XI/XII optional slot.
+   * `is_shared` marks a combined activity running across several classes, which
+   * exempts it from the teacher double-booking constraint.
+   */
+  group_no?: number;
+  group_label?: string | null;
+  is_shared?: boolean;
 }
 
 // ── Timetable templates (§2/§3) ──

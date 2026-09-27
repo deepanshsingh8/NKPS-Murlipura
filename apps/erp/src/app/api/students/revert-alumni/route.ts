@@ -94,7 +94,10 @@ export async function POST(request: NextRequest) {
       .from("student_enrollments")
       .select("id")
       .eq("student_id", student_id)
-      .eq("class_id", reactivate_class_id)
+      // Year-scoped, matching UNIQUE(student_id, academic_year_id) from
+      // migration 086: a row for this student in that session — in ANY class —
+      // must be reused, not duplicated.
+      .eq("academic_year_id", reactivate_academic_year_id)
       .maybeSingle();
     if (!existing) {
       const { error: enrollErr } = await admin
@@ -117,10 +120,11 @@ export async function POST(request: NextRequest) {
       }
       reenrolled = true;
     } else {
-      // Existing enrollment found; ensure it's active so the student shows on rosters.
+      // Existing enrollment found; point it at the requested class and make it
+      // active so the student shows on rosters.
       await admin
         .from("student_enrollments")
-        .update({ status: "active" })
+        .update({ status: "active", class_id: reactivate_class_id })
         .eq("id", existing.id);
       reenrolled = true;
     }

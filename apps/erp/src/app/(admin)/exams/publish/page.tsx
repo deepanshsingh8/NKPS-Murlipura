@@ -30,6 +30,9 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import {
   Dialog,
   DialogClose,
@@ -60,6 +63,11 @@ import type { Class, ExamType } from "@nkps/shared/types";
 interface PublishStatus {
   total: number;
   published: number;
+  // Co-scholastic rows publish through the same action and the same scope, so
+  // the stage-1 card reports them alongside the marks rather than hiding a
+  // second workflow behind another button.
+  non_scholastic_total: number;
+  non_scholastic_published: number;
 }
 
 interface MarksheetVersion {
@@ -131,14 +139,18 @@ export default function AdminPublishPage() {
   }>({ open: false, scope: "bulk", studentIds: [] });
   const [unpublishReason, setUnpublishReason] = useState("");
 
-  useEffect(() => {
+const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
+    useEffect(() => {
     async function bootstrap() {
       const supabase = createClient();
-      const { data: currentYear } = await supabase
-        .from("academic_years")
-        .select("id")
-        .eq("is_current", true)
-        .maybeSingle();
+      // Exam types belong to a session, so publishing follows the picker.
+      let yearQuery = supabase.from("academic_years").select("id");
+      yearQuery = sessionId
+        ? yearQuery.eq("id", sessionId)
+        : yearQuery.eq("is_current", true);
+      const { data: currentYear } = await yearQuery.maybeSingle();
       if (currentYear?.id) {
         const [{ data: cls }, { data: ets }] = await Promise.all([
           supabase
@@ -160,7 +172,7 @@ export default function AdminPublishPage() {
       setLoading(false);
     }
     bootstrap();
-  }, []);
+  }, [sessionId]);
 
   const fetchData = useCallback(async () => {
     if (!selectedClassId || !selectedExamTypeId) {
@@ -230,7 +242,12 @@ export default function AdminPublishPage() {
         toast.error(data.error ?? "Failed to update publish state");
         return;
       }
-      toast.success(`${next ? "Published" : "Unpublished"} ${data.affected} rows`);
+      toast.success(
+        `${next ? "Published" : "Unpublished"} ${data.affected} result rows` +
+          (data.non_scholastic_affected > 0
+            ? ` · ${data.non_scholastic_affected} co-scholastic`
+            : "")
+      );
       fetchData();
     } catch {
       toast.error("Network error");
@@ -526,6 +543,18 @@ export default function AdminPublishPage() {
     return { total: rows.length, finalized, pending };
   }, [rows]);
 
+  // Stage 1 acts on marks and co-scholastic grades together, so its empty
+  // state and button enablement key off the combined counts — a class with
+  // co-scholastic grades but no marks rows must still be publishable.
+  const stage1 = useMemo(() => {
+    if (!publishStatus) return null;
+    return {
+      total: publishStatus.total + publishStatus.non_scholastic_total,
+      published:
+        publishStatus.published + publishStatus.non_scholastic_published,
+    };
+  }, [publishStatus]);
+
   const activeSelectedIds = useMemo(
     () =>
       rows
@@ -544,14 +573,17 @@ export default function AdminPublishPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
-          Publish &amp; Finalize
-        </h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
-          Two-stage publish: flip online visibility first, then snapshot the
-          official marksheet PDF.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
+            Publish &amp; Finalize
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">
+            Two-stage publish: flip online visibility first, then snapshot the
+            official marksheet PDF.
+          </p>
+        </div>
+        <AcademicSessionPicker state={session} />
       </div>
 
       <Card className="bg-white dark:bg-card rounded-2xl">
@@ -620,16 +652,17 @@ export default function AdminPublishPage() {
                 Stage 1 · Online Publish
               </CardTitle>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Toggle visibility for students and parents. Marks stay editable
-                — re-publish after edits doesn&apos;t create a new version.
+                Toggle visibility of marks and co-scholastic grades for students
+                and parents. Both stay editable — re-publish after edits
+                doesn&apos;t create a new version.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
-              {loadingData || !publishStatus ? (
+              {loadingData || !publishStatus || !stage1 ? (
                 <div className="flex items-center justify-center py-8">
                   <Loader2 className="h-5 w-5 animate-spin" />
                 </div>
-              ) : publishStatus.total === 0 ? (
+              ) : stage1.total === 0 ? (
                 <p className="text-sm text-gray-400 dark:text-gray-500 py-4 text-center">
                   No results recorded for this class + exam yet.
                 </p>
@@ -646,25 +679,33 @@ export default function AdminPublishPage() {
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500 dark:text-gray-400">
+                        Co-scholastic rows
+                      </span>
+                      <span className="font-medium text-navy-900 dark:text-white">
+                        {publishStatus.non_scholastic_total}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-500 dark:text-gray-400">
                         Published
                       </span>
                       <Badge
                         variant="outline"
                         className={
-                          publishStatus.published === publishStatus.total &&
-                          publishStatus.published > 0
+                          stage1.published === stage1.total &&
+                          stage1.published > 0
                             ? "bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800"
                             : "text-gray-500 dark:text-gray-400"
                         }
                       >
-                        {publishStatus.published} / {publishStatus.total}
+                        {stage1.published} / {stage1.total}
                       </Badge>
                     </div>
                   </div>
                   <div className="flex gap-2">
                     <Button
                       onClick={() => togglePublishPost(true)}
-                      disabled={busy || publishStatus.published === publishStatus.total}
+                      disabled={busy || stage1.published === stage1.total}
                       className="flex-1 bg-navy-900 text-white hover:bg-navy-900/90"
                       size="sm"
                     >
@@ -673,7 +714,7 @@ export default function AdminPublishPage() {
                     </Button>
                     <Button
                       onClick={() => togglePublishPost(false)}
-                      disabled={busy || publishStatus.published === 0}
+                      disabled={busy || stage1.published === 0}
                       variant="outline"
                       className="flex-1"
                       size="sm"
@@ -711,7 +752,7 @@ export default function AdminPublishPage() {
                 </p>
               ) : (
                 <>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="grid grid-cols-3 gap-2 text-xs"> {/* mobile-layout-ok: counter tiles, a label and a number */}
                     <div className="rounded-lg border border-gray-200 dark:border-border p-2 text-center">
                       <div className="text-gray-500 dark:text-gray-400">Students</div>
                       <div className="font-semibold text-navy-900 dark:text-white">
@@ -798,7 +839,7 @@ export default function AdminPublishPage() {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid grid-cols-2 gap-2 text-xs"> {/* mobile-layout-ok: counter tiles, a label and a number */}
                   <div className="rounded-lg border border-gray-200 dark:border-border p-2 text-center">
                     <div className="text-gray-500 dark:text-gray-400">
                       Active enrollments
@@ -864,11 +905,20 @@ export default function AdminPublishPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <TableFilterSummary
-              ctl={table}
-              total={rows.length}
-              shown={visibleRows.length}
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <TableFilterSummary
+                ctl={table}
+                total={rows.length}
+                shown={visibleRows.length}
+                className="mb-0 mr-auto"
             />
+              <TableExportButton
+                ctl={table}
+                filename="result-publishing"
+                title="Result Publishing"
+                featureKey="publish_results"
+              />
+            </div>
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>

@@ -25,6 +25,7 @@ import {
   Users,
 } from "lucide-react";
 import type { AttendanceStatus } from "@nkps/shared/types";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 interface ChildOption {
   student_id: string;
@@ -55,7 +56,7 @@ const MONTH_NAMES = [
 const CALENDAR_COLORS: Record<string, string> = {
   present: "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800",
   absent: "bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800",
-  late: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800",
+  late: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800",
 };
 
 export default function ParentAttendancePage() {
@@ -100,6 +101,34 @@ export default function ParentAttendancePage() {
         return;
       }
 
+      // One enrollment read for every child. PostgREST rejects an empty
+      // `.in()` list, so skip the query when no link row carries a student.
+      const studentIds = studentParents
+        .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+        .filter((id): id is string => Boolean(id));
+
+      // Unordered, as this selector has always been: the first row the server
+      // returns for a student is the class label shown against their name.
+      const classByStudent = new Map<
+        string,
+        { name: string; section: string } | null
+      >();
+      if (studentIds.length > 0) {
+        const { data: enrollments } = await supabase
+          .from("student_enrollments")
+          .select("student_id, classes(name, section)")
+          .in("student_id", studentIds);
+
+        for (const row of (enrollments ?? []) as unknown as {
+          student_id: string;
+          classes: { name: string; section: string } | null;
+        }[]) {
+          if (!classByStudent.has(row.student_id)) {
+            classByStudent.set(row.student_id, row.classes ?? null);
+          }
+        }
+      }
+
       const childOptions: ChildOption[] = [];
       for (const sp of studentParents) {
         const student = sp.students as unknown as {
@@ -108,17 +137,7 @@ export default function ParentAttendancePage() {
         };
         if (!student) continue;
 
-        const { data: enrollment } = await supabase
-          .from("student_enrollments")
-          .select("classes(name, section)")
-          .eq("student_id", student.id)
-          .limit(1)
-          .single();
-
-        const classInfo = enrollment?.classes as unknown as {
-          name: string;
-          section: string;
-        } | null;
+        const classInfo = classByStudent.get(student.id) ?? null;
 
         childOptions.push({
           student_id: student.id,
@@ -266,10 +285,9 @@ export default function ParentAttendancePage() {
         {children.length > 1 && (
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-gray-400" />
-            <select
+            <NativeSelect
               value={selectedChild}
               onChange={(e) => setSelectedChild(e.target.value)}
-              className="rounded-lg border border-gray-200 dark:border-border bg-white dark:bg-card px-3 py-2 text-sm text-navy-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
             >
               {children.map((child) => (
                 <option key={child.student_id} value={child.student_id}>
@@ -277,7 +295,7 @@ export default function ParentAttendancePage() {
                   {child.class_name ? ` (${child.class_name} - ${child.section})` : ""}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
       </div>
@@ -320,8 +338,8 @@ export default function ParentAttendancePage() {
             </Card>
             <Card className="erp-card">
               <CardContent className="p-4 text-center">
-                <Clock className="h-5 w-5 text-yellow-500 mx-auto mb-1" />
-                <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-400">{lateDays}</p>
+                <Clock className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+                <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{lateDays}</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">Late</p>
               </CardContent>
             </Card>
@@ -378,7 +396,7 @@ export default function ParentAttendancePage() {
                   Absent
                 </span>
                 <span className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-sm bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-200 dark:border-border" />
+                  <span className="w-3 h-3 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-border" />
                   Late
                 </span>
                 <span className="flex items-center gap-1">
@@ -388,7 +406,7 @@ export default function ParentAttendancePage() {
               </div>
 
               {/* Day headers */}
-              <div className="grid grid-cols-7 gap-1 mb-1">
+              <div className="grid grid-cols-7 gap-1 mb-1"> {/* mobile-layout-ok: a month is seven days wide on every screen */}
                 {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                   <div key={d} className="text-center text-xs font-medium text-gray-500 dark:text-gray-400 py-1">
                     {d}
@@ -397,7 +415,7 @@ export default function ParentAttendancePage() {
               </div>
 
               {/* Calendar grid */}
-              <div className="grid grid-cols-7 gap-1">
+              <div className="grid grid-cols-7 gap-1"> {/* mobile-layout-ok: a month is seven days wide on every screen */}
                 {Array.from({ length: firstDay }).map((_, i) => (
                   <div key={`empty-${i}`} className="aspect-square" />
                 ))}
@@ -464,7 +482,7 @@ export default function ParentAttendancePage() {
                           <Badge className="bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 text-xs">
                             A:{m.absent}
                           </Badge>
-                          <Badge className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-xs">
+                          <Badge className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs">
                             L:{m.late}
                           </Badge>
                         </div>

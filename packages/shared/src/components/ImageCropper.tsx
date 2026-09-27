@@ -271,7 +271,7 @@ export function ImageCropper({
             onClick={handleCropAll}
             disabled={processing || !crop}
             size="sm"
-            className="text-violet-600 border-violet-300 hover:bg-violet-50"
+            className="text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950/30"
           >
             <CopyCheck className="h-4 w-4 mr-1" />
             Crop All

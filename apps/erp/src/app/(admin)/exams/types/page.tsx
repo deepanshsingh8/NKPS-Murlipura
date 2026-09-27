@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
 import {
@@ -47,6 +48,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { adminApi } from "@nkps/shared/lib/admin-api";
 import { cn } from "@nkps/shared/lib/utils";
+import { categoricalSolid } from "@nkps/shared/lib/palette";
 import type {
   ExamType,
   ExamKind,
@@ -144,23 +146,6 @@ const SCOPED_LEVELS: ExamClassLevel[] = LEVEL_DEFS.filter(
   (l) => l.value !== "all"
 ).map((l) => l.value);
 
-// Palette used to color individual exam segments inside the level bar.
-// Ordered so adjacent segments contrast well.
-const SEGMENT_PALETTE = [
-  "bg-blue-500",
-  "bg-emerald-500",
-  "bg-amber-500",
-  "bg-violet-500",
-  "bg-rose-500",
-  "bg-cyan-500",
-  "bg-fuchsia-500",
-  "bg-orange-500",
-  "bg-teal-500",
-  "bg-pink-500",
-  "bg-indigo-500",
-  "bg-lime-500",
-];
-
 function examAppliesToLevel(
   examLevel: ExamClassLevel,
   tab: ExamClassLevel
@@ -202,7 +187,12 @@ export default function AdminExamTypesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [selectedYearId, setSelectedYearId] = useState<string>("");
+  // This page's year dropdown IS the shared session selector: backing it with
+  // the same URL-held state means a session chosen here is the session every
+  // other admin page shows, instead of two controls that quietly disagree.
+  const session = useAcademicSession();
+  const selectedYearId = session.sessionId ?? "";
+  const setSelectedYearId = session.setSessionId;
   const [selectedLevel, setSelectedLevel] = useState<ExamClassLevel>("all");
 
   const [formData, setFormData] = useState({
@@ -232,11 +222,6 @@ export default function AdminExamTypesPage() {
     const years = (ayRes.data as AcademicYear[]) ?? [];
     setExamTypes(exams);
     setAcademicYears(years);
-
-    setSelectedYearId((prev) => {
-      if (prev && years.some((y) => y.id === prev)) return prev;
-      return years.find((y) => y.is_current)?.id ?? years[0]?.id ?? "";
-    });
 
     setLoading(false);
   }, [supabase]);
@@ -285,7 +270,7 @@ export default function AdminExamTypesPage() {
     const colors: Record<string, string> = {};
     const sorted = [...yearExams].sort((a, b) => a.sort_order - b.sort_order);
     sorted.forEach((exam, i) => {
-      colors[exam.id] = SEGMENT_PALETTE[i % SEGMENT_PALETTE.length];
+      colors[exam.id] = categoricalSolid(i);
     });
     return colors;
   }, [yearExams]);
@@ -485,7 +470,7 @@ export default function AdminExamTypesPage() {
           </Select>
           <Button
             onClick={openAdd}
-            className="bg-navy-900 hover:bg-navy-800 text-white shadow-sm"
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 shadow-sm"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add Exam Type
@@ -708,7 +693,7 @@ export default function AdminExamTypesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10">
-                <ClipboardList className="h-5 w-5 text-orange-600" />
+                <ClipboardList className="h-5 w-5 text-orange-600 dark:text-orange-400" />
               </div>
               <div>
                 <DialogTitle>
@@ -723,7 +708,7 @@ export default function AdminExamTypesPage() {
             </div>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Name</Label>
                 <Input
@@ -803,7 +788,7 @@ export default function AdminExamTypesPage() {
                 &quot;All Levels&quot; for school-wide exams counted everywhere.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Kind</Label>
                 <Select
@@ -845,7 +830,7 @@ export default function AdminExamTypesPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Max Marks</Label>
                 <Input
@@ -893,7 +878,7 @@ export default function AdminExamTypesPage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {editingId ? "Update" : "Create"}

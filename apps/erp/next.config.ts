@@ -51,7 +51,12 @@ const nextConfig: NextConfig = {
       // external bookmarks still resolve.
       { source: "/admin", destination: "/", permanent: true },
       { source: "/admin/login", destination: "/login", permanent: true },
-      { source: "/admin/users", destination: "/people/users", permanent: true },
+      { source: "/admin/users", destination: "/administration/users", permanent: true },
+      // Users moved out of People: People is the school's record of a person,
+      // Administration is who holds a login. Anyone with the old URL
+      // bookmarked — or a password-reset mail linking to it — still lands.
+      { source: "/people/users", destination: "/administration/users", permanent: true },
+      { source: "/people/users/:path*", destination: "/administration/users/:path*", permanent: true },
       { source: "/admin/students", destination: "/people/students", permanent: true },
       { source: "/admin/students/:path*", destination: "/people/students/:path*", permanent: true },
       { source: "/admin/staff", destination: "/people/staff", permanent: true },

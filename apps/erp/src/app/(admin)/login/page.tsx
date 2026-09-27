@@ -12,8 +12,8 @@ export default function ErpLoginPage() {
       roleBadges={[
         { label: "Administrators", color: "bg-gold-500" },
         { label: "Teachers", color: "bg-blue-400" },
-        { label: "Students", color: "bg-emerald-400" },
-        { label: "Parents", color: "bg-rose-400" },
+        { label: "Students", color: "bg-green-400" },
+        { label: "Parents", color: "bg-red-400" },
       ]}
       redirectByRole={{
         admin: "/",

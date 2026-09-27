@@ -30,6 +30,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import {
   Dialog,
   DialogClose,
@@ -57,6 +58,7 @@ import { toast } from "sonner";
 import { formatClassName } from "@nkps/shared/lib/utils";
 import { computeGrade, type GradeBand } from "@/lib/grading";
 import type { Class, Subject } from "@nkps/shared/types";
+import { gradeChip } from "@/lib/grades";
 
 interface ClassTest {
   id: string;
@@ -89,15 +91,6 @@ function formatDateShort(iso: string | null): string {
   });
 }
 
-const GRADE_COLORS: Record<string, string> = {
-  "A+": "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800",
-  A: "bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800",
-  "B+": "bg-blue-100 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800",
-  B: "bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800",
-  C: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800",
-  D: "bg-orange-100 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800",
-  F: "bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800",
-};
 
 export default function TeacherClassTestsPage() {
   const [classes, setClasses] = useState<Class[]>([]);
@@ -638,7 +631,7 @@ export default function TeacherClassTestsPage() {
                           <TableCell>
                             {grade ? (
                               <Badge
-                                className={`text-xs ${GRADE_COLORS[grade] ?? ""}`}
+                                className={`text-xs ${gradeChip(grade)}`}
                               >
                                 {grade}
                               </Badge>
@@ -772,11 +765,20 @@ export default function TeacherClassTestsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <TableFilterSummary
-                  ctl={testTable}
-                  total={tests.length}
-                  shown={testTable.rows.length}
-                />
+                <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                  <TableFilterSummary
+                    ctl={testTable}
+                    total={tests.length}
+                    shown={testTable.rows.length}
+                    className="mb-0 mr-auto"
+            />
+                  <TableExportButton
+                    ctl={testTable}
+                    filename="class-tests"
+                    title="Class Tests"
+                    featureKey="class_tests"
+                  />
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -891,7 +893,7 @@ export default function TeacherClassTestsPage() {
                 placeholder="e.g. Unit 1 Test"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Date</Label>
                 <Input

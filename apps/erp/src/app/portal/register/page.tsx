@@ -90,11 +90,11 @@ export default function PortalRegisterPage() {
               <span>Teachers</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="h-2 w-2 rounded-full bg-green-400" />
               <span>Students</span>
             </div>
             <div className="flex items-center justify-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-purple-400" />
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
               <span>Parents</span>
             </div>
           </div>
@@ -102,61 +102,61 @@ export default function PortalRegisterPage() {
       </div>
 
       {/* Right Panel — Registration Form */}
-      <div className="flex w-full lg:w-1/2 items-center justify-center bg-cream-50 px-6 py-12">
+      <div className="flex w-full lg:w-1/2 items-center justify-center bg-cream-50 dark:bg-background px-6 py-12">
         <div className="w-full max-w-md">
           {/* Mobile branding */}
           <div className="lg:hidden text-center mb-8">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-navy-900">
               <GraduationCap className="h-8 w-8 text-gold-500" />
             </div>
-            <h1 className="font-heading text-2xl font-bold text-navy-900">
+            <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
               NK Public School
             </h1>
           </div>
 
           {submitted ? (
             /* Success State */
-            <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8 text-center">
-              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-                <CheckCircle2 className="h-8 w-8 text-green-600" />
+            <div className="bg-white dark:bg-card rounded-2xl shadow-xl border border-gray-100 dark:border-border p-8 text-center">
+              <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-950/30">
+                <CheckCircle2 className="h-8 w-8 text-green-600 dark:text-green-400" />
               </div>
-              <h2 className="font-heading text-2xl font-bold text-navy-900 mb-3">
+              <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white mb-3">
                 Registration Submitted!
               </h2>
-              <p className="text-gray-500 text-sm leading-relaxed mb-6">
+              <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed mb-6">
                 Your registration request has been submitted successfully. You
                 will receive an email once your account has been reviewed and
                 approved by the administration.
               </p>
               <Link
                 href="/portal/login"
-                className="inline-flex items-center justify-center w-full h-11 bg-navy-900 hover:bg-navy-800 text-white font-medium rounded-lg transition-colors"
+                className="inline-flex items-center justify-center w-full h-11 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 font-medium rounded-lg transition-colors"
               >
                 Go to Sign In
               </Link>
             </div>
           ) : (
             /* Form Card */
-            <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+            <div className="bg-white dark:bg-card rounded-2xl shadow-xl border border-gray-100 dark:border-border p-8">
               <div className="mb-8">
-                <h2 className="font-heading text-2xl font-bold text-navy-900">
+                <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
                   Register for Portal
                 </h2>
-                <p className="text-gray-500 mt-1 text-sm">
+                <p className="text-gray-500 dark:text-gray-400 mt-1 text-sm">
                   Submit your details to request access
                 </p>
               </div>
 
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="full_name" className="text-navy-900 font-medium">
+                  <Label htmlFor="full_name" className="text-navy-900 dark:text-white font-medium">
                     Full Name
                   </Label>
                   <Input
                     id="full_name"
                     placeholder="Enter your full name"
                     {...register("full_name")}
-                    className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                    className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                   />
                   {errors.full_name && (
                     <p className="text-red-500 text-xs mt-1">
@@ -166,7 +166,7 @@ export default function PortalRegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-navy-900 font-medium">
+                  <Label htmlFor="email" className="text-navy-900 dark:text-white font-medium">
                     Email Address
                   </Label>
                   <Input
@@ -174,7 +174,7 @@ export default function PortalRegisterPage() {
                     type="email"
                     placeholder="you@example.com"
                     {...register("email")}
-                    className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                    className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                   />
                   {errors.email && (
                     <p className="text-red-500 text-xs mt-1">
@@ -184,15 +184,15 @@ export default function PortalRegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="phone" className="text-navy-900 font-medium">
+                  <Label htmlFor="phone" className="text-navy-900 dark:text-white font-medium">
                     Phone Number{" "}
-                    <span className="text-gray-400 font-normal">(optional)</span>
+                    <span className="text-gray-400 dark:text-gray-500 font-normal">(optional)</span>
                   </Label>
                   <Input
                     id="phone"
                     placeholder="10-digit phone number"
                     {...register("phone")}
-                    className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                    className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                   />
                   {errors.phone && (
                     <p className="text-red-500 text-xs mt-1">
@@ -202,14 +202,14 @@ export default function PortalRegisterPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-navy-900 font-medium">Role</Label>
+                  <Label className="text-navy-900 dark:text-white font-medium">Role</Label>
                   <Select onValueChange={(val) => {
                     if (val) {
                       setValue("role", val as "teacher" | "student" | "parent");
                       setSelectedRole(val);
                     }
                   }}>
-                    <SelectTrigger className="w-full h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900">
+                    <SelectTrigger className="w-full h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500">
                       <SelectValue placeholder="Select your role" />
                     </SelectTrigger>
                     <SelectContent>
@@ -228,24 +228,24 @@ export default function PortalRegisterPage() {
                 {selectedRole === "parent" && (
                   <>
                     <div className="space-y-2">
-                      <Label htmlFor="student_admission_no" className="text-navy-900 font-medium">
+                      <Label htmlFor="student_admission_no" className="text-navy-900 dark:text-white font-medium">
                         Child&apos;s Admission Number
                       </Label>
                       <Input
                         id="student_admission_no"
                         placeholder="e.g. NKPS-2024-0001"
                         {...register("student_admission_no")}
-                        className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                        className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                       />
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-400 dark:text-gray-500">
                         Enter your child&apos;s admission number for verification
                       </p>
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="text-navy-900 font-medium">Relationship</Label>
+                      <Label className="text-navy-900 dark:text-white font-medium">Relationship</Label>
                       <Select onValueChange={(val) => val && setValue("relationship", val as "father" | "mother" | "guardian")}>
-                        <SelectTrigger className="w-full h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900">
+                        <SelectTrigger className="w-full h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500">
                           <SelectValue placeholder="Select relationship" />
                         </SelectTrigger>
                         <SelectContent>
@@ -261,7 +261,7 @@ export default function PortalRegisterPage() {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white font-medium transition-colors"
+                  className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 font-medium transition-colors"
                 >
                   {loading ? (
                     <>
@@ -280,7 +280,7 @@ export default function PortalRegisterPage() {
           <div className="mt-4 text-center">
             <Link
               href="/portal/login"
-              className="text-sm text-gold-600 hover:text-gold-500 font-medium transition-colors"
+              className="text-sm text-gold-600 dark:text-gold-400 hover:text-gold-500 font-medium transition-colors"
             >
               Already have an account? Sign in
             </Link>
@@ -288,7 +288,7 @@ export default function PortalRegisterPage() {
           <div className="mt-3 text-center">
             <Link
               href={getWebsiteUrl("/")}
-              className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-navy-900 transition-colors"
+              className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-navy-900 transition-colors"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to website

@@ -28,6 +28,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
 import { toast } from "sonner";
 import {
@@ -55,6 +56,7 @@ import { ImageCropper, type Crop } from "@nkps/shared/components/ImageCropper";
 import { AcademicYearSelect } from "@nkps/shared/components/AcademicYearSelect";
 import { cn } from "@nkps/shared/lib/utils";
 import type { GalleryImage, GalleryEvent } from "@nkps/shared/types";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 const CATEGORIES = ["academics", "sports", "cultural", "campus", "events"];
 
@@ -875,13 +877,13 @@ export default function AdminGalleryPage() {
         </h1>
 
         {tab === "images" ? (
-          <Button className="bg-navy-900 hover:bg-navy-800 text-white" onClick={() => setImageDialogOpen(true)}>
+          <Button className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900" onClick={() => setImageDialogOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Add Images
           </Button>
         ) : (
           <Button
-            className="bg-navy-900 hover:bg-navy-800 text-white"
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             onClick={() => {
               resetEventForm();
               setEventDialogOpen(true);
@@ -894,13 +896,13 @@ export default function AdminGalleryPage() {
       </div>
 
       {/* Toggle Tabs */}
-      <div className="flex items-center gap-1 mb-6 bg-gray-100 rounded-xl p-1 w-fit">
+      <div className="flex items-center gap-1 mb-6 bg-gray-100 dark:bg-muted rounded-xl p-1 w-fit">
         <button
           onClick={() => setTab("images")}
           className={cn(
             "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200",
             tab === "images"
-              ? "bg-white text-navy-900 shadow-sm"
+              ? "bg-white dark:bg-card text-navy-900 dark:text-white shadow-sm"
               : "text-gray-500 hover:text-navy-900"
           )}
         >
@@ -915,7 +917,7 @@ export default function AdminGalleryPage() {
           className={cn(
             "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200",
             tab === "events"
-              ? "bg-white text-navy-900 shadow-sm"
+              ? "bg-white dark:bg-card text-navy-900 dark:text-white shadow-sm"
               : "text-gray-500 hover:text-navy-900"
           )}
         >
@@ -933,7 +935,7 @@ export default function AdminGalleryPage() {
               <DialogHeader>
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-                    <LucideImage className="h-5 w-5 text-blue-600" />
+                    <LucideImage className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                   </div>
                   <div>
                     <DialogTitle>Upload Gallery Images</DialogTitle>
@@ -998,29 +1000,29 @@ export default function AdminGalleryPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="category" className="text-xs font-medium">Category</Label>
-                    <select
+                    <NativeSelect
                       id="category"
                       value={category}
                       onChange={(e) => setCategory(e.target.value)}
-                      className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                      className="w-full"
                     >
                       {CATEGORIES.map((cat) => (
                         <option key={cat} value={cat}>
                           {cat.charAt(0).toUpperCase() + cat.slice(1)}
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="event" className="text-xs font-medium">Event (optional)</Label>
-                    <select
+                    <NativeSelect
                       id="event"
                       value={eventId}
                       onChange={(e) => setEventId(e.target.value)}
-                      className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                      className="w-full"
                     >
                       <option value="">No event</option>
                       {events.map((evt) => (
@@ -1028,14 +1030,14 @@ export default function AdminGalleryPage() {
                           {evt.title} ({evt.event_date})
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                   </div>
                 </div>
 
                 <Button
                   onClick={handleImageUpload}
                   disabled={uploading || !files || files.length === 0}
-                  className="w-full bg-navy-900 hover:bg-navy-800 text-white h-11 rounded-xl font-medium"
+                  className="w-full bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 h-11 rounded-xl font-medium"
                 >
                   {uploading ? (
                     <>
@@ -1173,12 +1175,20 @@ export default function AdminGalleryPage() {
             </div>
           ) : viewMode === "list" ? (
             <div className="erp-table-container overflow-hidden">
-              <TableFilterSummary
-                ctl={imageTable}
-                total={images.length}
-                shown={imageTable.rows.length}
-                className="px-4 pt-4"
-              />
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                <TableFilterSummary
+                  ctl={imageTable}
+                  total={images.length}
+                  shown={imageTable.rows.length}
+                  className="px-4 pt-4 mb-0 mr-auto"
+                />
+                <TableExportButton
+                  ctl={imageTable}
+                  filename="gallery-images"
+                  title="Gallery Images"
+                  featureKey="gallery"
+                />
+              </div>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1217,7 +1227,7 @@ export default function AdminGalleryPage() {
                           />
                         </TableCell>
                         <TableCell className="w-16">
-                          <div className="relative h-12 w-12 rounded-md overflow-hidden bg-navy-100 border border-gray-200 dark:border-border">
+                          <div className="relative h-12 w-12 rounded-md overflow-hidden bg-navy-100 dark:bg-navy-900/30 border border-gray-200 dark:border-border">
                             {image.src && (
                               <Image
                                 src={image.src}
@@ -1286,7 +1296,7 @@ export default function AdminGalleryPage() {
                         : "border-gray-200 dark:border-border hover:border-gray-300 hover:shadow-md"
                     )}
                   >
-                    <div className="aspect-square bg-navy-100 flex items-center justify-center relative">
+                    <div className="aspect-square bg-navy-100 dark:bg-navy-900/30 flex items-center justify-center relative">
                       {image.src ? (
                         <Image
                           src={image.src}
@@ -1362,7 +1372,7 @@ export default function AdminGalleryPage() {
               <DialogHeader>
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                    <FolderOpen className="h-5 w-5 text-amber-600" />
+                    <FolderOpen className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                   </div>
                   <div>
                     <DialogTitle>{editingId ? "Edit Gallery Event" : "Add Gallery Event"}</DialogTitle>
@@ -1383,7 +1393,7 @@ export default function AdminGalleryPage() {
                     className="h-9"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs font-medium">Event Date</Label>
                     <Input
@@ -1431,7 +1441,7 @@ export default function AdminGalleryPage() {
                   <Button
                     type="submit"
                     disabled={submitting}
-                    className="bg-navy-900 hover:bg-navy-800 text-white"
+                    className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
                   >
                     {submitting && (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -1449,13 +1459,13 @@ export default function AdminGalleryPage() {
               <DialogHeader>
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
-                    <Upload className="h-5 w-5 text-emerald-600" />
+                    <Upload className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                   </div>
                   <div>
                     <DialogTitle>Upload Photos to Event</DialogTitle>
                     <p className="text-xs text-gray-500 mt-0.5">
                       Bulk upload images for{" "}
-                      <span className="font-medium text-gray-700">
+                      <span className="font-medium text-gray-700 dark:text-gray-300">
                         {events.find((e) => e.id === uploadEventId)?.title}
                       </span>
                     </p>
@@ -1515,7 +1525,7 @@ export default function AdminGalleryPage() {
                 <Button
                   onClick={handleEventUpload}
                   disabled={eventUploading || !eventUploadFiles || eventUploadFiles.length === 0}
-                  className="w-full bg-navy-900 hover:bg-navy-800 text-white h-11 rounded-xl font-medium"
+                  className="w-full bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 h-11 rounded-xl font-medium"
                 >
                   {eventUploading ? (
                     <>
@@ -1539,7 +1549,7 @@ export default function AdminGalleryPage() {
               <Loader2 className="h-8 w-8 animate-spin text-navy-900 dark:text-white" />
             </div>
           ) : (
-            <div className="erp-table-container p-6">
+            <div className="erp-table-container p-4 sm:p-6">
               {events.length === 0 ? (
                 <div className="text-center py-12 text-gray-400 dark:text-gray-500">
                   <ImageIcon className="h-10 w-10 mx-auto mb-3 opacity-50" />
@@ -1550,11 +1560,20 @@ export default function AdminGalleryPage() {
                 </div>
               ) : (
                 <>
-                <TableFilterSummary
-                  ctl={eventTable}
-                  total={events.length}
-                  shown={eventTable.rows.length}
-                />
+                <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                  <TableFilterSummary
+                    ctl={eventTable}
+                    total={events.length}
+                    shown={eventTable.rows.length}
+                    className="mb-0 mr-auto"
+            />
+                  <TableExportButton
+                    ctl={eventTable}
+                    filename="gallery-events"
+                    title="Gallery Events"
+                    featureKey="gallery"
+                  />
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1624,7 +1643,7 @@ export default function AdminGalleryPage() {
                                   size="icon-sm"
                                   onClick={() => openEventUpload(evt.id)}
                                   aria-label="Upload photos to this event"
-                                  className="text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                                  className="text-green-500 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
                                   title="Upload photos to this event"
                                 >
                                   <Upload className="h-4 w-4" />
@@ -1667,7 +1686,7 @@ export default function AdminGalleryPage() {
                                       No photos in this event yet.
                                       <button
                                         onClick={() => openEventUpload(evt.id)}
-                                        className="text-emerald-600 hover:text-emerald-700 font-medium underline underline-offset-2"
+                                        className="text-green-600 dark:text-green-400 hover:text-green-700 font-medium underline underline-offset-2"
                                       >
                                         Upload photos
                                       </button>

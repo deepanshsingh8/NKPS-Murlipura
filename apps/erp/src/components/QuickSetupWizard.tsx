@@ -362,11 +362,11 @@ export default function QuickSetupWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-2xl max-h-[85dvh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-              <Sparkles className="h-5 w-5 text-amber-600" />
+              <Sparkles className="h-5 w-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
               <DialogTitle>Quick Setup — CBSE Curriculum</DialogTitle>
@@ -649,7 +649,7 @@ export default function QuickSetupWizard({
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto">
+              <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto"> {/* mobile-layout-ok: two counter tiles */}
                 <div className="rounded-xl border border-gray-200 dark:border-border p-4 text-center">
                   <p className="text-2xl font-bold text-navy-900 dark:text-white">
                     {newSubjectsCount}
@@ -714,7 +714,7 @@ export default function QuickSetupWizard({
             {step < 3 ? (
               <Button
                 onClick={() => setStep((s) => (s + 1) as Step)}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 Next
                 <ChevronRight className="h-4 w-4 ml-1" />
@@ -726,7 +726,7 @@ export default function QuickSetupWizard({
                   submitting ||
                   (newSubjectsCount === 0 && newAssignmentsCount === 0)
                 }
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting ? (
                   <>
@@ -774,7 +774,7 @@ function SubjectRow({
         type="checkbox"
         checked={entry.selected}
         onChange={onToggle}
-        className="rounded border-gray-300 dark:border-gray-600 text-navy-900 focus:ring-navy-900"
+        className="rounded border-gray-300 dark:border-gray-600 text-navy-900 dark:text-white focus:ring-navy-900"
       />
       <span className="text-sm font-medium text-gray-900 dark:text-white flex-1 min-w-0">
         {entry.name}
@@ -796,7 +796,7 @@ function SubjectRow({
         className={cn(
           "text-xs px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap",
           entry.is_elective
-            ? "border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400 bg-purple-100 dark:bg-purple-950/30"
+            ? "border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-400 bg-purple-100 dark:bg-purple-950/30" // color-ok: Elective vs Core is a two-way category, not a status — collapsing purple into blue makes the two chips identical
             : "border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-400 bg-blue-100 dark:bg-blue-950/30"
         )}
       >

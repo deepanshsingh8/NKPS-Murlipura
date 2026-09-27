@@ -10,7 +10,8 @@
 // final result.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeFinalResult, computeRanksForClass } from "@/lib/final-result";
+import { computeCohortFinalResults, computeRanksForClass } from "@/lib/final-result";
+import type { ClassResultContext } from "@/lib/final-result";
 import type { FinalResult } from "@nkps/shared/types";
 
 export interface GreenSheetExam {
@@ -171,27 +172,32 @@ export async function buildGreenSheetData(
     perExam.set(r.exam_type_id, agg);
   }
 
-  // Final result per student — computeFinalResult returns null without a
-  // master or when the student has zero recorded marks. We accept both.
+  // Final result per student — the cohort compute returns null for a student
+  // without a master or with zero recorded marks. We accept both. The class-
+  // level rules (master, subjects, exam configs, grade scale, class tests)
+  // are read once for the whole cohort rather than once per student.
   const finalByStudent = new Map<string, FinalResult | null>();
+  let cohortContext: ClassResultContext | undefined;
   if (masterRow?.id && studentIds.length > 0) {
-    const settled = await Promise.all(
-      studentIds.map((sid) =>
-        computeFinalResult(supabase, {
-          student_id: sid,
-          academic_year_id: year.id,
-        }).then((r) => [sid, r] as const)
-      )
-    );
-    for (const [sid, r] of settled) finalByStudent.set(sid, r);
+    const cohort = await computeCohortFinalResults(supabase, {
+      class_id: cls.id as string,
+      academic_year_id: year.id as string,
+      student_ids: studentIds,
+    });
+    cohortContext = cohort.context;
+    for (const sid of studentIds) {
+      finalByStudent.set(sid, cohort.results.get(sid) ?? null);
+    }
   }
 
-  // Rank overlay (separate O(N) compute — only when master opts in).
+  // Rank overlay (only when the master opts in). Handing the loaded context
+  // over means the ranks reuse the cohort above instead of recomputing it.
   let rankBy: Map<string, number> | null = null;
   if (masterRow?.show_rank) {
     rankBy = await computeRanksForClass(supabase, {
       class_id: cls.id,
       academic_year_id: year.id,
+      context: cohortContext,
     });
   }
 

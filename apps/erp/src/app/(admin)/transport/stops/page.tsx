@@ -33,6 +33,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import {
   Plus,
@@ -292,7 +293,7 @@ export default function TransportStopsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="erp-page-bar mb-6">
         <div>
           <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
             Stops & Fees
@@ -306,7 +307,7 @@ export default function TransportStopsPage() {
         </div>
         <Button
           onClick={openAddStop}
-          className="bg-navy-900 hover:bg-navy-800 text-white"
+          className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
         >
           <Plus className="h-4 w-4 mr-2" />
           Add Stop
@@ -323,7 +324,7 @@ export default function TransportStopsPage() {
         />
       </div>
 
-      <div className="erp-table-container p-6">
+      <div className="erp-table-container p-4 sm:p-6">
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
@@ -336,11 +337,20 @@ export default function TransportStopsPage() {
           </p>
         ) : (
           <>
-          <TableFilterSummary
-            ctl={table}
-            total={filteredStops.length}
-            shown={table.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={filteredStops.length}
+              shown={table.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="bus-stops"
+              title="Bus Stops"
+              featureKey="transport"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -383,7 +393,7 @@ export default function TransportStopsPage() {
                         onClick={() => openFeeDialog(stop)}
                         title="Set monthly fee"
                         aria-label="Set monthly fee"
-                        className="text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
+                        className="text-green-600 dark:text-green-400 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
                       >
                         <IndianRupee className="h-4 w-4" />
                       </Button>
@@ -421,7 +431,7 @@ export default function TransportStopsPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-500/10">
-                <MapPin className="h-5 w-5 text-teal-600" />
+                <MapPin className="h-5 w-5 text-teal-600 dark:text-teal-400" />
               </div>
               <div>
                 <DialogTitle>
@@ -480,7 +490,7 @@ export default function TransportStopsPage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -498,7 +508,7 @@ export default function TransportStopsPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
-                <IndianRupee className="h-5 w-5 text-green-600" />
+                <IndianRupee className="h-5 w-5 text-green-600 dark:text-green-400" />
               </div>
               <div>
                 <DialogTitle>Set Monthly Fee</DialogTitle>
@@ -535,7 +545,7 @@ export default function TransportStopsPage() {
               <Button
                 type="submit"
                 disabled={feeSubmitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {feeSubmitting && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

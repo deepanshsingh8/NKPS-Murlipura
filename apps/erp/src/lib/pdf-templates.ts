@@ -15,7 +15,8 @@ export type TemplateKey =
   | "white_sheet"
   | "green_sheet"
   | "blank_marks_list"
-  | "ptm_format";
+  | "ptm_format"
+  | "student_report";
 
 export interface PdfHeader {
   school_name: string;

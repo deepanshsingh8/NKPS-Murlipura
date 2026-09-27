@@ -17,6 +17,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import { Loader2, Info, Bus as BusIcon } from "lucide-react";
 import type { Bus } from "@nkps/shared/types";
@@ -174,7 +175,7 @@ export default function TransportDriversPage() {
         <p className="text-xs text-blue-800 dark:text-blue-300">
           Drivers are created under{" "}
           <Link
-            href="/people/staff"
+            href="/people/staff?group=support"
             className="font-medium underline underline-offset-2 hover:text-blue-900 dark:hover:text-blue-200"
           >
             People → Staff
@@ -190,7 +191,7 @@ export default function TransportDriversPage() {
         </p>
       </div>
 
-      <div className="erp-table-container p-6">
+      <div className="erp-table-container p-4 sm:p-6">
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
@@ -202,11 +203,20 @@ export default function TransportDriversPage() {
           </p>
         ) : (
           <>
-          <TableFilterSummary
-            ctl={table}
-            total={rows.length}
-            shown={table.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={rows.length}
+              shown={table.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="drivers"
+              title="Drivers"
+              featureKey="transport"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>

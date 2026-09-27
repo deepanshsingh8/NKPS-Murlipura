@@ -4,17 +4,13 @@ import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { createClient } from "@nkps/shared/lib/supabase/client";
-import { Settings, LogOut, ChevronUp, ExternalLink } from "lucide-react";
+import { Settings, LogOut, ChevronUp, ExternalLink, Lock } from "lucide-react";
 import { cn } from "@nkps/shared/lib/utils";
 import { getWebsiteUrl } from "@nkps/shared/lib/cross-app";
+import { useSession } from "@nkps/shared/components/providers/SessionProvider";
+import { ThemeToggle } from "@nkps/shared/components/ThemeToggle";
+import { useAppLock } from "@nkps/shared/components/security/AppLockProvider";
 import { toast } from "sonner";
-
-interface UserProfile {
-  full_name: string;
-  email: string;
-  role: string;
-  avatar_url: string | null;
-}
 
 export function SidebarProfileMenu({
   settingsHref,
@@ -25,38 +21,34 @@ export function SidebarProfileMenu({
   logoutRedirect?: string;
   collapsed?: boolean;
 }) {
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  // Shared with the sidebar, the app switcher and useIsAdmin — see
+  // SessionProvider. This used to be its own getUser() -> profiles pair.
+  const { profile } = useSession();
+  const { settings: lockSettings, lock } = useAppLock();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Close on outside press, or Escape.
+  //
+  // `pointerdown` rather than `mousedown`: touch devices only synthesise a
+  // mouse event after the gesture resolves, so on a phone the menu stayed open
+  // through the first tap outside it. Escape had no handler at all.
   useEffect(() => {
-    async function fetchProfile() {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data } = await supabase
-        .from("profiles")
-        .select("full_name, email, role, avatar_url")
-        .eq("id", user.id)
-        .single();
-
-      if (data) setProfile(data as UserProfile);
-    }
-    fetchProfile();
-  }, []);
-
-  // Close on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    if (!open) return;
+    function handlePress(e: Event) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-    if (open) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", handlePress);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("pointerdown", handlePress);
+      document.removeEventListener("keydown", handleKey);
+    };
   }, [open]);
 
   const handleLogout = async () => {
@@ -84,7 +76,9 @@ export function SidebarProfileMenu({
         <div
           className={cn(
             "absolute bottom-full mb-2 bg-navy-800 rounded-xl border border-white/10 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-150",
-            collapsed ? "left-1 w-48" : "left-3 right-3"
+            // w-60, not w-48: the theme control holds three labelled options
+            // and "System" was being clipped in the narrower menu.
+            collapsed ? "left-1 w-60" : "left-3 right-3"
           )}
         >
           {/* User info in popover when collapsed */}
@@ -96,6 +90,17 @@ export function SidebarProfileMenu({
               <p className="text-[11px] text-white/40 capitalize">{profile.role}</p>
             </div>
           )}
+          {/* Theme sits in the menu, not only in Settings: it is the one
+              preference people change on a whim — walking outside, turning the
+              lights off — and making that a two-page trip is how a toggle goes
+              unused. Settings keeps its own copy of the same control. */}
+          <div className="px-3 pt-3 pb-2">
+            <p className="px-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-white/40">
+              Theme
+            </p>
+            <ThemeToggle tone="sidebar" />
+          </div>
+          <div className="border-t border-white/10" />
           <Link
             href={settingsHref}
             onClick={() => setOpen(false)}
@@ -104,6 +109,18 @@ export function SidebarProfileMenu({
             <Settings className="h-4 w-4" />
             Settings
           </Link>
+          {lockSettings.enabled && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                lock();
+              }}
+              className="flex w-full items-center gap-3 px-4 py-3 text-sm text-white/70 hover:bg-white/5 hover:text-white transition-colors"
+            >
+              <Lock className="h-4 w-4" />
+              Lock now
+            </button>
+          )}
           <Link
             href={getWebsiteUrl("/")}
             onClick={() => setOpen(false)}
@@ -135,7 +152,7 @@ export function SidebarProfileMenu({
         {profile?.avatar_url ? (
           <Image
             src={profile.avatar_url}
-            alt={profile.full_name}
+            alt={profile.full_name ?? ""}
             width={36}
             height={36}
             className={cn(

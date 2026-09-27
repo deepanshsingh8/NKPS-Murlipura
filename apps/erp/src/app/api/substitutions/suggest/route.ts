@@ -106,7 +106,9 @@ export async function GET(request: NextRequest) {
     .eq("teacher_id", absence.teacher_id)
     .eq("day_of_week", dayOfWeek)
     .eq("is_break", false)
-    .order("start_time", { ascending: true });
+    .order("start_time", { ascending: true })
+    // Deterministic order across parallel groups. (migration 119)
+    .order("group_no", { ascending: true });
 
   if (absence.half_day === "first_half") {
     affectedQuery = affectedQuery.lte("period_number", HALF_DAY_CUTOFF_PERIOD);

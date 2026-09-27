@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { todayISO } from "@nkps/shared/lib/date";
 import Link from "next/link";
 import { Badge } from "@nkps/shared/components/ui/badge";
 import {
@@ -18,6 +19,7 @@ import {
 import { cn, dayOfWeekFromDate, formatTime12, timeStringToMinutes, nowMinutes } from "@nkps/shared/lib/utils";
 import { UpcomingEvents } from "@nkps/shared/components/UpcomingEvents";
 import type { Profile } from "@nkps/shared/types";
+import { fetchAllRows } from "@nkps/shared/lib/fetch-all-rows";
 
 interface TeacherStats {
   classCount: number;
@@ -28,6 +30,8 @@ interface TeacherStats {
 interface TimetablePeriodRow {
   id: string;
   period_number: number;
+  group_no?: number;
+  group_label?: string | null;
   start_time: string;
   end_time: string;
   room: string | null;
@@ -47,6 +51,7 @@ interface PendingResult {
 }
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 
 export default function TeacherDashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -123,7 +128,7 @@ export default function TeacherDashboard() {
       }
 
       // Check if attendance marked today
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayISO();
       let pendingAttendance = true;
       if (allClassIds.length > 0) {
         const { count } = await supabase
@@ -144,7 +149,7 @@ export default function TeacherDashboard() {
       const { data: ttRows } = await supabase
         .from("timetable_periods")
         .select(
-          "id, period_number, start_time, end_time, room, day_of_week, subject:subjects(name), class:classes(name, section)"
+          "id, period_number, start_time, end_time, room, day_of_week, group_no, group_label, subject:subjects(name), class:classes(name, section)"
         )
         .eq("teacher_id", teacherId)
         .order("day_of_week", { ascending: true })
@@ -163,7 +168,13 @@ export default function TeacherDashboard() {
           if (dow === 7) continue;
           const pick = allRows
             .filter((r) => r.day_of_week === dow)
-            .sort((a, b) => a.period_number - b.period_number)[0];
+            // Parallel groups share a period number (migration 119), so break
+            // the tie on group_no rather than leaving the pick to fetch order.
+            .sort(
+              (a, b) =>
+                a.period_number - b.period_number ||
+                (a.group_no ?? 0) - (b.group_no ?? 0)
+            )[0];
           if (pick) {
             setNextWeekPeriod(pick);
             break;
@@ -186,18 +197,64 @@ export default function TeacherDashboard() {
           .order("sort_order", { ascending: true });
 
         if (examTypes && examTypes.length > 0) {
+          const subjectIds = [
+            ...new Set((classSubjects ?? []).map((cs) => cs.subject_id)),
+          ];
+          const examTypeIds = examTypes.map((et) => et.id);
+
+          // The whole shortfall table comes from two reads, counted per
+          // combination in JS below. One count query per (class, subject,
+          // exam) was 30+ serial round trips before the dashboard rendered.
+          // Both lists are a single teacher's assignments, so they stay well
+          // inside the URL length an `.in()` filter can carry.
+          // Paged: `.range(0, 99999)` cannot lift PostgREST's 1000-row cap,
+          // it can only ask for less than it. A teacher with several classes
+          // across several exams holds well over a thousand result rows, and
+          // the ones past the cap read as marks still to be entered — the
+          // shortfall table's whole subject. Ordered by id so the pages are
+          // disjoint.
+          const [enrollmentRes, resultsRes] = await Promise.all([
+            fetchAllRows<{ class_id: string }>((from, to) =>
+              supabase
+                .from("student_enrollments")
+                .select("class_id")
+                .in("class_id", classIds)
+                .eq("status", "active")
+                .order("id", { ascending: true })
+                .range(from, to)
+            ),
+            fetchAllRows<{
+              class_id: string;
+              subject_id: string;
+              exam_type_id: string;
+            }>((from, to) =>
+              supabase
+                .from("results")
+                .select("class_id, subject_id, exam_type_id")
+                .in("class_id", classIds)
+                // Narrowed to the combinations actually consulted below, so a
+                // class's other subjects never cross the wire.
+                .in("subject_id", subjectIds)
+                .in("exam_type_id", examTypeIds)
+                .order("id", { ascending: true })
+                .range(from, to)
+            ),
+          ]);
+
           // Enrollment counts per class
           const enrollmentByClass: Record<string, number> = {};
-          await Promise.all(
-            classIds.map(async (cid) => {
-              const { count } = await supabase
-                .from("student_enrollments")
-                .select("*", { count: "exact", head: true })
-                .eq("class_id", cid)
-                .eq("status", "active");
-              enrollmentByClass[cid] = count ?? 0;
-            })
-          );
+          for (const row of enrollmentRes.data ?? []) {
+            enrollmentByClass[row.class_id] =
+              (enrollmentByClass[row.class_id] ?? 0) + 1;
+          }
+
+          // Results already entered, keyed by the same triple the shortfall
+          // is computed against.
+          const resultsByCombo: Record<string, number> = {};
+          for (const row of resultsRes.data ?? []) {
+            const key = `${row.class_id}|${row.subject_id}|${row.exam_type_id}`;
+            resultsByCombo[key] = (resultsByCombo[key] ?? 0) + 1;
+          }
 
           // For each (class, subject, exam) compute results count
           const pending: PendingResult[] = [];
@@ -208,12 +265,7 @@ export default function TeacherDashboard() {
             const enrolled = enrollmentByClass[cls.id] ?? 0;
             if (enrolled === 0) continue;
             for (const et of examTypes) {
-              const { count: resCount } = await supabase
-                .from("results")
-                .select("*", { count: "exact", head: true })
-                .eq("class_id", cls.id)
-                .eq("subject_id", sub.id)
-                .eq("exam_type_id", et.id);
+              const resCount = resultsByCombo[`${cls.id}|${sub.id}|${et.id}`];
               const shortfall = enrolled - (resCount ?? 0);
               if (shortfall > 0) {
                 pending.push({
@@ -320,13 +372,13 @@ export default function TeacherDashboard() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5">
         <div className="erp-stat-card relative overflow-hidden group">
           <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-500/8 to-transparent rounded-bl-full" />
           <div className="relative">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                <BookOpen className="h-5 w-5 text-blue-600" />
+                <BookOpen className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               </div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">My Classes</span>
             </div>
@@ -338,11 +390,11 @@ export default function TeacherDashboard() {
         </div>
 
         <div className="erp-stat-card relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-emerald-500/8 to-transparent rounded-bl-full" />
+          <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-green-500/8 to-transparent rounded-bl-full" />
           <div className="relative">
             <div className="flex items-center gap-3 mb-3">
-              <div className="h-10 w-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-                <Users className="h-5 w-5 text-emerald-600" />
+              <div className="h-10 w-10 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                <Users className="h-5 w-5 text-green-600 dark:text-green-400" />
               </div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Students</span>
             </div>
@@ -380,7 +432,7 @@ export default function TeacherDashboard() {
                 <ClipboardCheck
                   className={cn(
                     "h-5 w-5",
-                    stats.pendingAttendance ? "text-amber-600" : "text-green-600"
+                    stats.pendingAttendance ? "text-amber-600 dark:text-amber-400" : "text-green-600"
                   )}
                 />
               </div>
@@ -409,7 +461,7 @@ export default function TeacherDashboard() {
       {/* Quick Actions */}
       <div>
         <h2 className="erp-section-title mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
             {
               href: "/teacher/attendance",
@@ -464,7 +516,7 @@ export default function TeacherDashboard() {
           </h2>
           <Link
             href="/teacher/timetable"
-            className="text-xs text-gold-600 hover:text-gold-500 font-medium inline-flex items-center gap-1"
+            className="text-xs text-gold-600 dark:text-gold-400 hover:text-gold-500 font-medium inline-flex items-center gap-1"
           >
             Full timetable
             <ArrowRight className="h-3 w-3" />
@@ -544,7 +596,7 @@ export default function TeacherDashboard() {
             </div>
             <Link
               href="/teacher/results"
-              className="text-xs text-gold-600 hover:text-gold-500 font-medium inline-flex items-center gap-1"
+              className="text-xs text-gold-600 dark:text-gold-400 hover:text-gold-500 font-medium inline-flex items-center gap-1"
             >
               Open results
               <ArrowRight className="h-3 w-3" />

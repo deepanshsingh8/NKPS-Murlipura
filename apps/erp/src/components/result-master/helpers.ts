@@ -105,13 +105,36 @@ export interface ExamTypeRow {
   max_marks: number;
   sort_order: number;
   academic_year_id: string;
+  /** The exam type's own weightage, used to seed a class that has not set one.
+   *  See mergeExamConfigsWithExamTypes for why this matters. */
+  weightage: number | null;
 }
 
 // Union-merge existing `class_exam_configs` rows with every exam_type for the
-// academic year. Exam types without a row show up with default values
-// (is_applicable=true, weightage=null, max_marks_override=null) so the admin
-// can configure newly-added exam types without needing to touch the
-// exam_types page first. A saved PUT will upsert whatever the admin leaves.
+// academic year. Exam types without a row show up so the admin can configure
+// newly-added exam types without touching the exam_types page first. A saved
+// PUT upserts whatever the admin leaves.
+//
+// Weightage is seeded from the exam type rather than left null, and that is
+// load-bearing. The final-result engine reads weightage ONLY from
+// class_exam_configs and treats null as zero:
+//
+//     const weight = ec.weightage ?? 0;
+//     if (weight <= 0) continue;          // final-result.ts
+//
+// So a row that arrives null and is saved untouched makes that exam contribute
+// NOTHING to the final result — silently, on real report cards. An admin who
+// balanced weightages on the Exam Types page and never opened this grid got a
+// zero-weight result and no warning.
+//
+// A stored value is NEVER overwritten. Per-class weightages are a real
+// override, not a copy of the defaults — in production the exam types carry
+// 60/15/10/15 while a configured class carries 20/15/20/45, both deliberate.
+// The exam type's value is a starting point for a class that has not decided
+// yet, nothing more. A stored NULL is healed, because null is indistinguishable
+// from "never set" here and renders as an empty box that silently means zero;
+// an admin who wants an exam excluded uses is_applicable, and one who wants no
+// weight types 0.
 export function mergeExamConfigsWithExamTypes(
   existingConfigs: readonly ExamConfigWithType[],
   allExamTypes: readonly ExamTypeRow[]
@@ -126,6 +149,8 @@ export function mergeExamConfigsWithExamTypes(
       // route dropped it (defense in depth).
       return {
         ...existing,
+        // Heal a stored null; never touch a value the admin actually set.
+        weightage: existing.weightage ?? et.weightage ?? null,
         exam_types: existing.exam_types ?? {
           id: et.id,
           name: et.name,
@@ -141,7 +166,7 @@ export function mergeExamConfigsWithExamTypes(
       class_id: null,
       exam_type_id: et.id,
       is_applicable: true,
-      weightage: null,
+      weightage: et.weightage ?? null,
       max_marks_override: null,
       sort_order: et.sort_order,
       exam_types: {

@@ -5,6 +5,7 @@ import { createClient } from "@nkps/shared/lib/supabase/client";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 import { Label } from "@nkps/shared/components/ui/label";
 import { Badge } from "@nkps/shared/components/ui/badge";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
@@ -22,29 +23,17 @@ import { adminFetch } from "@nkps/shared/lib/admin-api";
 import { compareScheduleRows } from "@/lib/fees";
 import { FEE_HEADS } from "@nkps/shared/types";
 import type { FeeStructure, FeeStudentType, Stream } from "@nkps/shared/types";
+import { CLASS_ORDER } from "@nkps/shared/lib/constants";
 
 // Classes carrying their own fee schedule. The school publishes one schedule
 // per class for Nursery–X and XII, and one per stream for XI — so XI alone is
 // stream-scoped here. (The legacy single-row dialog in AdminFeesContent still
 // offers an optional stream on XII as well; it predates the published
 // schedule and stays as-is so existing XII stream rows remain editable.)
-const CLASS_NAMES = [
-  "Nursery",
-  "LKG",
-  "UKG",
-  "I",
-  "II",
-  "III",
-  "IV",
-  "V",
-  "VI",
-  "VII",
-  "VIII",
-  "IX",
-  "X",
-  "XI",
-  "XII",
-];
+// The class list is CLASS_ORDER from shared constants. It used to be
+// retyped in this file (and two others), which is three places for the
+// school's class list to disagree with itself.
+const CLASS_NAMES: readonly string[] = CLASS_ORDER;
 
 const STREAM_CLASSES = ["XI"];
 
@@ -171,9 +160,13 @@ export function FeeScheduleGrid() {
           .select("id")
           .eq("is_current", true)
           .maybeSingle(),
+        // kind='stream' only — this picker's value becomes
+        // fee_structures.stream_id. A wing here would change what students are
+        // charged. (migration 118)
         supabase
           .from("streams")
           .select("*")
+          .eq("kind", "stream")
           .eq("is_active", true)
           .order("sort_order"),
       ]);
@@ -415,8 +408,185 @@ export function FeeScheduleGrid() {
     setCopyTargets([]);
   };
 
-  const cellInput =
-    "h-9 w-full rounded-md border border-gray-300 dark:border-border bg-white dark:bg-muted px-2 text-sm";
+  // The schedule's columns, in order. Held here rather than inline in the
+  // <thead> so the header and the cells cannot fall out of step, and so the
+  // card layout can borrow the same labels.
+  const COLUMNS: {
+    key: string;
+    label: string;
+    width: string;
+    align?: "right";
+  }[] = [
+    { key: "fee_type", label: "Fee Head", width: "w-44" },
+    { key: "due_date", label: "Due Date", width: "w-40" },
+    { key: "instalment_name", label: "Instalment Name", width: "w-56" },
+    { key: "amount", label: "Amount", width: "w-32" },
+    { key: "student_type", label: "Student Type", width: "w-36" },
+    { key: "month_label", label: "Month Name", width: "w-36" },
+    { key: "late_fee_start_date", label: "Late Fee Start Date", width: "w-40" },
+    { key: "late_fee", label: "Late Fee", width: "w-24", align: "right" },
+  ];
+
+  // One row's controls. Both layouts call this, so a change to a control
+  // reaches the table and the card at once.
+  const rowFields = (
+    row: DraftRow,
+    i: number
+  ): { key: string; label: string; control: React.ReactNode; below?: React.ReactNode }[] => [
+    {
+      key: "fee_type",
+      label: "Fee Head",
+      control: (
+        <NativeSelect
+          value={row.fee_type}
+          onChange={(e) => updateRow(row.key, { fee_type: e.target.value })}
+          className="w-full"
+          aria-label={`Fee head for row ${i + 1}`}
+        >
+          {/* A legacy row may carry a head that predates this list — keep it
+              selectable so saving doesn't silently relabel the fee. */}
+          {!FEE_HEADS.includes(row.fee_type as (typeof FEE_HEADS)[number]) &&
+            row.fee_type && <option value={row.fee_type}>{row.fee_type}</option>}
+          {FEE_HEADS.map((head) => (
+            <option key={head} value={head}>
+              {head}
+            </option>
+          ))}
+        </NativeSelect>
+      ),
+    },
+    {
+      key: "due_date",
+      label: "Due Date",
+      control: (
+        <Input
+          type="date"
+          value={row.due_date}
+          onChange={(e) => updateRow(row.key, { due_date: e.target.value })}
+          aria-label={`Due date for row ${i + 1}`}
+        />
+      ),
+    },
+    {
+      key: "instalment_name",
+      label: "Instalment Name",
+      control: (
+        <Input
+          type="text"
+          value={row.instalment_name}
+          placeholder="1st Instalment (Tuition Fee)"
+          onChange={(e) =>
+            updateRow(row.key, { instalment_name: e.target.value })
+          }
+          aria-label={`Instalment name for row ${i + 1}`}
+        />
+      ),
+    },
+    {
+      key: "amount",
+      label: "Amount",
+      control: (
+        <Input
+          type="number"
+          min="0"
+          step="0.01"
+          value={row.amount}
+          onChange={(e) => updateRow(row.key, { amount: e.target.value })}
+          aria-label={`Amount for row ${i + 1}`}
+        />
+      ),
+      below: row.legacy_frequency ? (
+        <Badge
+          variant="secondary"
+          className="mt-1 text-[10px] whitespace-nowrap"
+          title={`This fee is currently stored as a ${row.legacy_frequency.replace(
+            "_",
+            " "
+          )} fee, so the system bills it ${
+            LEGACY_MULTIPLIER[row.legacy_frequency] ?? 1
+          }× a year. Saving converts it to this single dated instalment.`}
+        >
+          × {LEGACY_MULTIPLIER[row.legacy_frequency] ?? 1}{" "}
+          {row.legacy_frequency.replace("_", " ")}
+        </Badge>
+      ) : undefined,
+    },
+    {
+      key: "student_type",
+      label: "Student Type",
+      control: (
+        <NativeSelect
+          value={row.student_type}
+          onChange={(e) =>
+            updateRow(row.key, {
+              student_type: e.target.value as FeeStudentType,
+            })
+          }
+          className="w-full"
+          aria-label={`Student type for row ${i + 1}`}
+        >
+          {(Object.keys(STUDENT_TYPE_LABELS) as FeeStudentType[]).map((t) => (
+            <option key={t} value={t}>
+              {STUDENT_TYPE_LABELS[t]}
+            </option>
+          ))}
+        </NativeSelect>
+      ),
+    },
+    {
+      key: "month_label",
+      label: "Month Name",
+      control: (
+        <Input
+          type="text"
+          value={row.month_label}
+          placeholder="April, 2026"
+          onChange={(e) => updateRow(row.key, { month_label: e.target.value })}
+          aria-label={`Month name for row ${i + 1}`}
+        />
+      ),
+    },
+    {
+      key: "late_fee_start_date",
+      label: "Late Fee Start Date",
+      control: (
+        <Input
+          type="date"
+          value={row.late_fee_start_date}
+          min={row.due_date || undefined}
+          onChange={(e) =>
+            updateRow(row.key, { late_fee_start_date: e.target.value })
+          }
+          aria-label={`Late fee start date for row ${i + 1}`}
+        />
+      ),
+    },
+    {
+      key: "late_fee",
+      label: "Late Fee",
+      control: (
+        // The button is shorter than the inputs beside it, so it gets a box
+        // the height of one to sit on their midline.
+        <div className="flex h-11 items-center sm:h-8 sm:justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => setLateFeeRowKey(row.key)}
+            title="Late fee rate for this instalment"
+          >
+            <AlarmClock className="h-3.5 w-3.5 mr-1" />
+            {row.late_fee_per_day
+              ? `₹${row.late_fee_per_day}/day`
+              : row.late_fee_percent
+                ? `${row.late_fee_percent}%`
+                : "Set"}
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
 
   return (
     <div>
@@ -427,7 +597,7 @@ export function FeeScheduleGrid() {
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <Label className="mb-2 block text-xs font-medium">Class</Label>
-                <select
+                <NativeSelect
                   value={selectedClass}
                   onChange={(e) => {
                     setClassName(e.target.value);
@@ -435,24 +605,24 @@ export function FeeScheduleGrid() {
                       setStreamId("");
                     }
                   }}
-                  className="rounded-md border border-gray-300 dark:border-border px-3 py-2 text-sm dark:bg-muted min-w-[160px]"
+                  className="min-w-[160px]"
                 >
                   {CLASS_NAMES.map((cn) => (
                     <option key={cn} value={cn}>
                       {cn}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               {supportsStream && (
                 <div>
                   <Label className="mb-2 block text-xs font-medium">
                     Stream
                   </Label>
-                  <select
+                  <NativeSelect
                     value={effectiveStreamId}
                     onChange={(e) => setStreamId(e.target.value)}
-                    className="rounded-md border border-gray-300 dark:border-border px-3 py-2 text-sm dark:bg-muted min-w-[180px]"
+                    className="min-w-[180px]"
                   >
                     <option value="">Select a stream…</option>
                     {streams.map((s) => (
@@ -460,7 +630,7 @@ export function FeeScheduleGrid() {
                         {s.code ? `${s.name} (${s.code})` : s.name}
                       </option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 </div>
               )}
             </div>
@@ -525,215 +695,117 @@ export function FeeScheduleGrid() {
                   with one row per instalment and press Save to fix that.
                 </div>
               )}
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[1100px] border-collapse text-sm">
-                  <thead>
-                    <tr className="text-left text-xs font-semibold text-gray-600 dark:text-gray-300">
-                      <th className="px-2 py-2 w-14">S No</th>
-                      <th className="px-2 py-2 w-44">Fee Head</th>
-                      <th className="px-2 py-2 w-40">Due Date</th>
-                      <th className="px-2 py-2 w-56">Instalment Name</th>
-                      <th className="px-2 py-2 w-32">Amount</th>
-                      <th className="px-2 py-2 w-36">Student Type</th>
-                      <th className="px-2 py-2 w-36">Month Name</th>
-                      <th className="px-2 py-2 w-40">Late Fee Start Date</th>
-                      <th className="px-2 py-2 w-24 text-right">Late Fee</th>
-                      <th className="px-2 py-2 w-12" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={10}
-                          className="px-2 py-10 text-center text-gray-500 dark:text-gray-400"
-                        >
-                          No fee schedule set for {selectedClass}. Add rows
-                          below, or copy one from another class.
-                        </td>
-                      </tr>
-                    ) : (
-                      rows.map((row, i) => (
-                        <tr
-                          key={row.key}
-                          // Top-align every cell: a row carrying the legacy
-                          // frequency badge is taller than its neighbours, and
-                          // the default middle alignment then floats that
-                          // row's other inputs out of line with the rest.
-                          className="border-t border-gray-200 dark:border-border [&>td]:align-top"
-                        >
-                          <td className="px-2 py-2 text-gray-500 dark:text-gray-400 leading-9">
-                            {i + 1}
-                          </td>
-                          <td className="px-2 py-2">
-                            <select
-                              value={row.fee_type}
-                              onChange={(e) =>
-                                updateRow(row.key, { fee_type: e.target.value })
-                              }
-                              className={cellInput}
-                              aria-label={`Fee head for row ${i + 1}`}
-                            >
-                              {/* A legacy row may carry a head that predates
-                                  this list — keep it selectable so saving
-                                  doesn't silently relabel the fee. */}
-                              {!FEE_HEADS.includes(
-                                row.fee_type as (typeof FEE_HEADS)[number]
-                              ) &&
-                                row.fee_type && (
-                                  <option value={row.fee_type}>
-                                    {row.fee_type}
-                                  </option>
-                                )}
-                              {FEE_HEADS.map((head) => (
-                                <option key={head} value={head}>
-                                  {head}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-2 py-2">
-                            <input
-                              type="date"
-                              value={row.due_date}
-                              onChange={(e) =>
-                                updateRow(row.key, { due_date: e.target.value })
-                              }
-                              className={cellInput}
-                              aria-label={`Due date for row ${i + 1}`}
-                            />
-                          </td>
-                          <td className="px-2 py-2">
-                            <input
-                              type="text"
-                              value={row.instalment_name}
-                              placeholder="1st Instalment (Tuition Fee)"
-                              onChange={(e) =>
-                                updateRow(row.key, {
-                                  instalment_name: e.target.value,
-                                })
-                              }
-                              className={cellInput}
-                              aria-label={`Instalment name for row ${i + 1}`}
-                            />
-                          </td>
-                          <td className="px-2 py-2">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={row.amount}
-                              onChange={(e) =>
-                                updateRow(row.key, { amount: e.target.value })
-                              }
-                              className={cellInput}
-                              aria-label={`Amount for row ${i + 1}`}
-                            />
-                            {row.legacy_frequency && (
-                              <Badge
-                                variant="secondary"
-                                className="mt-1 text-[10px] whitespace-nowrap"
-                                title={`This fee is currently stored as a ${row.legacy_frequency.replace(
-                                  "_",
-                                  " "
-                                )} fee, so the system bills it ${
-                                  LEGACY_MULTIPLIER[row.legacy_frequency] ?? 1
-                                }× a year. Saving converts it to this single dated instalment.`}
-                              >
-                                × {LEGACY_MULTIPLIER[row.legacy_frequency] ?? 1}{" "}
-                                {row.legacy_frequency.replace("_", " ")}
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="px-2 py-2">
-                            <select
-                              value={row.student_type}
-                              onChange={(e) =>
-                                updateRow(row.key, {
-                                  student_type: e.target
-                                    .value as FeeStudentType,
-                                })
-                              }
-                              className={cellInput}
-                              aria-label={`Student type for row ${i + 1}`}
-                            >
-                              {(
-                                Object.keys(
-                                  STUDENT_TYPE_LABELS
-                                ) as FeeStudentType[]
-                              ).map((t) => (
-                                <option key={t} value={t}>
-                                  {STUDENT_TYPE_LABELS[t]}
-                                </option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-2 py-2">
-                            <input
-                              type="text"
-                              value={row.month_label}
-                              placeholder="April, 2026"
-                              onChange={(e) =>
-                                updateRow(row.key, {
-                                  month_label: e.target.value,
-                                })
-                              }
-                              className={cellInput}
-                              aria-label={`Month name for row ${i + 1}`}
-                            />
-                          </td>
-                          <td className="px-2 py-2">
-                            <input
-                              type="date"
-                              value={row.late_fee_start_date}
-                              min={row.due_date || undefined}
-                              onChange={(e) =>
-                                updateRow(row.key, {
-                                  late_fee_start_date: e.target.value,
-                                })
-                              }
-                              className={cellInput}
-                              aria-label={`Late fee start date for row ${i + 1}`}
-                            />
-                          </td>
-                          {/* The action cells hold buttons shorter than the
-                              h-9 inputs beside them, so each gets an h-9 box
-                              that centres its control on the input's midline. */}
-                          <td className="px-2 py-2">
-                            <div className="flex h-9 items-center justify-end">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 px-2 text-xs"
-                                onClick={() => setLateFeeRowKey(row.key)}
-                                title="Late fee rate for this instalment"
-                              >
-                                <AlarmClock className="h-3.5 w-3.5 mr-1" />
-                                {row.late_fee_per_day
-                                  ? `₹${row.late_fee_per_day}/day`
-                                  : row.late_fee_percent
-                                    ? `${row.late_fee_percent}%`
-                                    : "Set"}
-                              </Button>
+              {/* The schedule is ten columns wide. On a desktop that is a
+                  spreadsheet, which is the right shape for editing a year of
+                  instalments side by side. On a phone it was a 1100px table
+                  in a horizontal scroller — about a third visible at a time,
+                  and a sideways drag through ten live inputs to reach the
+                  delete button, with no sticky column to say which row you
+                  were on.
+
+                  So the row is defined once, below, and drawn twice: as
+                  table cells from `sm` up, and as a labelled card under it.
+                  One definition means the two cannot drift. */}
+              {rows.length === 0 ? (
+                <p className="px-2 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No fee schedule set for {selectedClass}. Add rows below, or
+                  copy one from another class.
+                </p>
+              ) : (
+                <>
+                  {/* Phone: one card per instalment. */}
+                  <ul className="space-y-3 sm:hidden">
+                    {rows.map((row, i) => (
+                      <li
+                        key={row.key}
+                        className="rounded-xl border border-gray-200 dark:border-border p-3"
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                            Row {i + 1}
+                          </span>
+                          <button
+                            onClick={() => removeRow(row.key)}
+                            className="rounded-md bg-gold-500 hover:bg-gold-600 text-white p-2"
+                            aria-label={`Delete row ${i + 1}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="space-y-3">
+                          {rowFields(row, i).map((f) => (
+                            <div key={f.key} className="min-w-0">
+                              <Label className="mb-1 block text-xs font-medium">
+                                {f.label}
+                              </Label>
+                              {f.control}
+                              {f.below}
                             </div>
-                          </td>
-                          <td className="px-2 py-2">
-                            <div className="flex h-9 items-center justify-end">
-                              <button
-                                onClick={() => removeRow(row.key)}
-                                className="rounded-md bg-gold-500 hover:bg-gold-600 text-white p-1.5"
-                                aria-label={`Delete row ${i + 1}`}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </td>
+                          ))}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Tablet and up: the spreadsheet. overscroll-x-contain so a
+                      sideways swipe that reaches the end does not hand the
+                      gesture to the browser's back navigation. */}
+                  <div className="hidden overflow-x-auto overscroll-x-contain sm:block">
+                    <table className="w-full min-w-[1100px] border-collapse text-sm">
+                      <thead>
+                        <tr className="text-left text-xs font-semibold text-gray-600 dark:text-gray-300">
+                          <th className="px-2 py-2 w-14">S No</th>
+                          {COLUMNS.map((c) => (
+                            <th
+                              key={c.key}
+                              className={`px-2 py-2 ${c.width} ${
+                                c.align === "right" ? "text-right" : ""
+                              }`}
+                            >
+                              {c.label}
+                            </th>
+                          ))}
+                          <th className="px-2 py-2 w-12" />
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
+                      <tbody>
+                        {rows.map((row, i) => (
+                          <tr
+                            key={row.key}
+                            // Top-align every cell: a row carrying the legacy
+                            // frequency badge is taller than its neighbours,
+                            // and the default middle alignment then floats
+                            // that row's other inputs out of line with the
+                            // rest.
+                            className="border-t border-gray-200 dark:border-border [&>td]:align-top"
+                          >
+                            <td className="px-2 py-2 leading-8 text-gray-500 dark:text-gray-400">
+                              {i + 1}
+                            </td>
+                            {rowFields(row, i).map((f) => (
+                              <td key={f.key} className="px-2 py-2">
+                                {f.control}
+                                {f.below}
+                              </td>
+                            ))}
+                            <td className="px-2 py-2">
+                              <div className="flex h-8 items-center justify-end">
+                                <button
+                                  onClick={() => removeRow(row.key)}
+                                  className="rounded-md bg-gold-500 hover:bg-gold-600 text-white p-1.5"
+                                  aria-label={`Delete row ${i + 1}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
 
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                 <Button variant="outline" onClick={addRow}>

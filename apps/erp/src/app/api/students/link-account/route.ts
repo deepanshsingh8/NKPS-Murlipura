@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyAdmin } from "@nkps/shared/lib/verify-admin";
 import { z } from "zod";
 import { linkProfileToStudent, linkParentAccountToStudent } from "@/lib/identity/link";
+import { findStudentByAdmissionNo } from "@/lib/identity/student-lookup";
 
 // Admin repair tool: connect an existing student/parent login to a student
 // record by admission number. Fixes accounts that were created without a link
@@ -19,11 +20,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "admission_no is required" }, { status: 400 });
   }
 
-  const { data: student } = await admin
-    .from("students")
-    .select("id, full_name, admission_no, is_active, student_enrollments(status, classes(name, section))")
-    .eq("admission_no", admissionNo)
-    .maybeSingle();
+  const student = await findStudentByAdmissionNo<{
+    id: string;
+    full_name: string;
+    admission_no: string;
+    is_active: boolean | null;
+    student_enrollments: unknown;
+  }>(
+    admin,
+    admissionNo,
+    "id, full_name, admission_no, is_active, student_enrollments(status, classes(name, section))"
+  );
 
   if (!student) {
     return NextResponse.json({ found: false });
@@ -82,11 +89,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: student } = await admin
-    .from("students")
-    .select("id, full_name, admission_no")
-    .eq("admission_no", admission_no.trim())
-    .maybeSingle();
+  const student = await findStudentByAdmissionNo<{
+    id: string;
+    full_name: string;
+    admission_no: string;
+  }>(admin, admission_no, "id, full_name, admission_no");
   if (!student) {
     return NextResponse.json(
       { error: `No student found with admission number "${admission_no}".` },

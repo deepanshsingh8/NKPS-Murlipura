@@ -4,6 +4,11 @@ import { useEffect, useState, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
+import {
+  CLASS_ORDER,
+  CLASS_SECTIONS,
+  classSortOrder,
+} from "@nkps/shared/lib/constants";
 import { Label } from "@nkps/shared/components/ui/label";
 import {
   Dialog,
@@ -33,9 +38,13 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, Layers, ListOrdered } from "lucide-react";
-import { adminApi, adminFetch } from "@nkps/shared/lib/admin-api";
+import { adminApi, adminFetch, fetchRowDependencies } from "@nkps/shared/lib/admin-api";
+import { describeDependencies } from "@nkps/shared/lib/row-dependencies";
+import { formatClassName } from "@nkps/shared/lib/utils";
+import { teacherOptions } from "@nkps/shared/lib/teacher-options";
 import type { Class, AcademicYear, Teacher, Stream } from "@nkps/shared/types";
 
 type RollSortKey = "name" | "admission_no" | "previous_rank";
@@ -45,26 +54,6 @@ const ROLL_SORT_OPTIONS: { value: RollSortKey; label: string }[] = [
   { value: "admission_no", label: "Admission Number" },
   { value: "previous_rank", label: "Previous Result Rank" },
 ];
-
-const CLASS_NAMES = [
-  "Nursery",
-  "LKG",
-  "UKG",
-  "I",
-  "II",
-  "III",
-  "IV",
-  "V",
-  "VI",
-  "VII",
-  "VIII",
-  "IX",
-  "X",
-  "XI",
-  "XII",
-];
-
-const SECTIONS = ["A", "B", "C"];
 
 const SENIOR_CLASSES = ["XI", "XII"];
 
@@ -93,8 +82,8 @@ export default function AdminClassesPage() {
   const [rollSubmitting, setRollSubmitting] = useState(false);
 
   // Form state
-  const [className, setClassName] = useState(CLASS_NAMES[0]);
-  const [section, setSection] = useState(SECTIONS[0]);
+  const [className, setClassName] = useState<string>(CLASS_ORDER[0]);
+  const [section, setSection] = useState<string>(CLASS_SECTIONS[0]);
   const [academicYearId, setAcademicYearId] = useState("");
   const [classTeacherId, setClassTeacherId] = useState("");
   const [streamId, setStreamId] = useState("");
@@ -111,14 +100,17 @@ export default function AdminClassesPage() {
         .from("academic_years")
         .select("*")
         .order("start_date", { ascending: false }),
-      supabase
-        .from("teachers")
-        .select("*")
-        .eq("is_active", true)
-        .order("full_name"),
+      // Retired teachers included on purpose: a class saved before they left
+      // still names them as class teacher, and dropping them from the list
+      // would render the Select blank and let the next save clear the
+      // assignment. teacherChoices keeps them unpickable. (migration 116)
+      supabase.from("teachers").select("*").order("full_name"),
+      // kind='stream' only: a wing is a class band, not something a class can
+      // be attached to. classes.stream_id feeds fee resolution. (migration 118)
       supabase
         .from("streams")
         .select("*")
+        .eq("kind", "stream")
         .eq("is_active", true)
         .order("sort_order"),
     ]);
@@ -152,8 +144,8 @@ export default function AdminClassesPage() {
   }, []);
 
   const resetForm = () => {
-    setClassName(CLASS_NAMES[0]);
-    setSection(SECTIONS[0]);
+    setClassName(CLASS_ORDER[0]);
+    setSection(CLASS_SECTIONS[0]);
     setAcademicYearId("");
     setClassTeacherId("");
     setStreamId("");
@@ -176,7 +168,7 @@ export default function AdminClassesPage() {
         academic_year_id: academicYearId,
         class_teacher_id: classTeacherId || null,
         stream_id: SENIOR_CLASSES.includes(className) && streamId ? streamId : null,
-        sort_order: CLASS_NAMES.indexOf(className) * 10 + SECTIONS.indexOf(section),
+        sort_order: classSortOrder(className, section),
       },
     });
 
@@ -192,18 +184,35 @@ export default function AdminClassesPage() {
     setSubmitting(false);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Delete this class? This will also remove associated enrollments."))
+  // Almost everything filed under a class — enrolments, attendance, results,
+  // datesheets, the timetable — is ON DELETE CASCADE, so an unguarded delete
+  // erases a cohort's whole year. Ask the server what is at stake first.
+  const handleDelete = async (cls: ClassWithRelations) => {
+    const label = formatClassName(cls);
+    const deps = await fetchRowDependencies("classes", cls.id);
+
+    if (deps && deps.blockingTotal > 0) {
+      toast.error(
+        `${label} still has ${describeDependencies(deps.blocking)}. Deleting it would erase them — move the students out first.`,
+        { duration: 10000 }
+      );
       return;
+    }
+
+    const willRemove = deps ? describeDependencies(deps.cascade) : "";
+    const consequence = willRemove
+      ? `This also removes ${willRemove}.`
+      : "This also removes its subject assignments and timetable.";
+    if (!confirm(`Delete ${label}?\n\n${consequence}\n\nThis cannot be undone.`)) return;
 
     const result = await adminApi({
       action: "delete",
       table: "classes",
-      match: { column: "id", value: id },
+      match: { column: "id", value: cls.id },
     });
 
     if (!result.success) {
-      toast.error("Failed to delete class");
+      toast.error(result.error || "Failed to delete class", { duration: 10000 });
       return;
     }
 
@@ -273,7 +282,7 @@ export default function AdminClassesPage() {
         academic_year_id: academicYearId,
         class_teacher_id: classTeacherId || null,
         stream_id: SENIOR_CLASSES.includes(className) && streamId ? streamId : null,
-        sort_order: CLASS_NAMES.indexOf(className) * 10 + SECTIONS.indexOf(section),
+        sort_order: classSortOrder(className, section),
       },
       match: { column: "id", value: editingClass.id },
     });
@@ -288,6 +297,18 @@ export default function AdminClassesPage() {
     }
     setSubmitting(false);
   };
+
+  // Active teachers to pick from, plus the one this class already names even
+  // if they have since been retired. (migration 116)
+  const teacherChoices = useMemo(
+    () =>
+      teacherOptions(
+        teachers.filter((t) => t.is_active),
+        classTeacherId,
+        teachers
+      ),
+    [teachers, classTeacherId]
+  );
 
   // Header sort/filter accessors — mirror what the matching cell renders.
   const columns = useMemo<TableColumns<ClassWithRelations>>(
@@ -305,7 +326,7 @@ export default function AdminClassesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="erp-page-bar mb-6">
         <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           Classes
         </h1>
@@ -314,14 +335,14 @@ export default function AdminClassesPage() {
             resetForm();
             setDialogOpen(true);
           }}
-          className="bg-navy-900 hover:bg-navy-800 text-white"
+          className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
         >
           <Plus className="h-4 w-4 mr-2" />
           Add Class
         </Button>
       </div>
 
-      <div className="erp-table-container p-6">
+      <div className="erp-table-container p-4 sm:p-6">
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
@@ -332,11 +353,20 @@ export default function AdminClassesPage() {
           </p>
         ) : (
           <>
-          <TableFilterSummary
-            ctl={table}
-            total={classes.length}
-            shown={table.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={classes.length}
+              shown={table.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="classes"
+              title="Classes"
+              featureKey="classes"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -377,7 +407,7 @@ export default function AdminClassesPage() {
                         onClick={() => openRollDialog(cls)}
                         title="Generate Roll Numbers"
                         aria-label="Generate roll numbers"
-                        className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                        className="text-amber-600 dark:text-amber-400 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
                       >
                         <ListOrdered className="h-4 w-4" />
                       </Button>
@@ -393,7 +423,7 @@ export default function AdminClassesPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => handleDelete(cls.id)}
+                        onClick={() => handleDelete(cls)}
                         aria-label="Delete class"
                         className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
                       >
@@ -415,7 +445,7 @@ export default function AdminClassesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-                <Pencil className="h-5 w-5 text-blue-600" />
+                <Pencil className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
                 <DialogTitle>Edit Class</DialogTitle>
@@ -425,7 +455,13 @@ export default function AdminClassesPage() {
           </DialogHeader>
 
           <form onSubmit={handleEditSubmit} className="space-y-3">
-            <div className={`grid ${SENIOR_CLASSES.includes(className) ? "grid-cols-3" : "grid-cols-2"} gap-3`}>
+            <div
+              className={`grid grid-cols-1 gap-3 ${
+                SENIOR_CLASSES.includes(className)
+                  ? "sm:grid-cols-3"
+                  : "sm:grid-cols-2"
+              }`}
+            >
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Class Name</Label>
                 <Select value={className} onValueChange={(val) => { if (val) { setClassName(val); if (!SENIOR_CLASSES.includes(val)) setStreamId(""); } }}>
@@ -433,7 +469,7 @@ export default function AdminClassesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CLASS_NAMES.map((name) => (
+                    {CLASS_ORDER.map((name) => (
                       <SelectItem key={name} value={name}>
                         {name}
                       </SelectItem>
@@ -448,7 +484,7 @@ export default function AdminClassesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {SECTIONS.map((s) => (
+                    {CLASS_SECTIONS.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
                       </SelectItem>
@@ -482,7 +518,7 @@ export default function AdminClassesPage() {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Academic Year</Label>
                 <Select
@@ -506,10 +542,7 @@ export default function AdminClassesPage() {
                 <Label className="text-xs font-medium">Class Teacher (optional)</Label>
                 <Select
                   value={classTeacherId}
-                  items={[
-                    { value: "none", label: "None" },
-                    ...teachers.map((t) => ({ value: t.id, label: `${t.full_name} (${t.employee_id})` })),
-                  ]}
+                  items={[{ value: "none", label: "None" }, ...teacherChoices]}
                   onValueChange={(val) => setClassTeacherId(!val || val === "none" ? "" : val)}
                 >
                   <SelectTrigger className="w-full">
@@ -517,9 +550,9 @@ export default function AdminClassesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
-                    {teachers.map((t) => (
-                      <SelectItem key={t.id} value={t.id} label={`${t.full_name} (${t.employee_id})`}>
-                        {t.full_name} ({t.employee_id})
+                    {teacherChoices.map((t) => (
+                      <SelectItem key={t.value} value={t.value} label={t.label}>
+                        {t.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -530,7 +563,7 @@ export default function AdminClassesPage() {
               <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={submitting} className="bg-navy-900 hover:bg-navy-800 text-white">
+              <Button type="submit" disabled={submitting} className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900">
                 {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Update Class
               </Button>
@@ -545,7 +578,7 @@ export default function AdminClassesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                <ListOrdered className="h-5 w-5 text-amber-600" />
+                <ListOrdered className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
                 <DialogTitle>Generate Roll Numbers</DialogTitle>
@@ -599,7 +632,7 @@ export default function AdminClassesPage() {
               type="button"
               disabled={rollSubmitting}
               onClick={handleGenerateRollNumbers}
-              className="bg-navy-900 hover:bg-navy-800 text-white"
+              className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {rollSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Confirm
@@ -614,7 +647,7 @@ export default function AdminClassesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-500/10">
-                <Layers className="h-5 w-5 text-teal-600" />
+                <Layers className="h-5 w-5 text-teal-600 dark:text-teal-400" />
               </div>
               <div>
                 <DialogTitle>Add New Class</DialogTitle>
@@ -624,7 +657,13 @@ export default function AdminClassesPage() {
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div className={`grid ${SENIOR_CLASSES.includes(className) ? "grid-cols-3" : "grid-cols-2"} gap-3`}>
+            <div
+              className={`grid grid-cols-1 gap-3 ${
+                SENIOR_CLASSES.includes(className)
+                  ? "sm:grid-cols-3"
+                  : "sm:grid-cols-2"
+              }`}
+            >
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Class Name</Label>
                 <Select value={className} onValueChange={(val) => { if (val) { setClassName(val); if (!SENIOR_CLASSES.includes(val)) setStreamId(""); } }}>
@@ -632,7 +671,7 @@ export default function AdminClassesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {CLASS_NAMES.map((name) => (
+                    {CLASS_ORDER.map((name) => (
                       <SelectItem key={name} value={name}>
                         {name}
                       </SelectItem>
@@ -647,7 +686,7 @@ export default function AdminClassesPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {SECTIONS.map((s) => (
+                    {CLASS_SECTIONS.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
                       </SelectItem>
@@ -681,7 +720,7 @@ export default function AdminClassesPage() {
                 </div>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Academic Year</Label>
                 <Select
@@ -705,10 +744,7 @@ export default function AdminClassesPage() {
                 <Label className="text-xs font-medium">Class Teacher (optional)</Label>
                 <Select
                   value={classTeacherId}
-                  items={[
-                    { value: "none", label: "None" },
-                    ...teachers.map((t) => ({ value: t.id, label: `${t.full_name} (${t.employee_id})` })),
-                  ]}
+                  items={[{ value: "none", label: "None" }, ...teacherChoices]}
                   onValueChange={(val) => setClassTeacherId(!val || val === "none" ? "" : val)}
                 >
                   <SelectTrigger className="w-full">
@@ -716,9 +752,9 @@ export default function AdminClassesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">None</SelectItem>
-                    {teachers.map((t) => (
-                      <SelectItem key={t.id} value={t.id} label={`${t.full_name} (${t.employee_id})`}>
-                        {t.full_name} ({t.employee_id})
+                    {teacherChoices.map((t) => (
+                      <SelectItem key={t.value} value={t.value} label={t.label}>
+                        {t.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -737,7 +773,7 @@ export default function AdminClassesPage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

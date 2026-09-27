@@ -102,16 +102,24 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const pathname = request.nextUrl.pathname;
 
-  // API routes: refresh session only, no redirect (handlers do their own auth).
+  // API routes bail out BEFORE getUser(). Nothing below this line runs for
+  // them — no redirect, no role gate — so the GoTrue round trip getUser()
+  // makes was bought and thrown away on every single API call.
+  //
+  // The refreshed-cookie side effect it also carried is not load-bearing here:
+  // Bearer-authed handlers (verify-admin / verify-portal) never read the
+  // session cookie, and every cookie-authed handler builds its own server
+  // client and calls getUser() itself — inside a route handler that write goes
+  // through Next's cookie store and lands on the response the same way.
   if (pathname.startsWith("/api/")) {
     return supabaseResponse;
   }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   // Unauthenticated → bounce to the right login page based on what they
   // were trying to reach.
@@ -197,7 +205,7 @@ export async function updateSession(request: NextRequest) {
 
     // Per-feature capability gate on the admin area. Admins bypass; everyone
     // else (staff and teachers) must hold the matching editor_permissions row.
-    // Admin-only paths (e.g. /people/users) reject all non-admins.
+    // Admin-only paths (e.g. /administration/users) reject all non-admins.
     if (isAdminAreaPath(pathname) && role !== "admin") {
       if (isAdminOnlyPath(pathname)) {
         const url = request.nextUrl.clone();

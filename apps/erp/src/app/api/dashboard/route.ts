@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCallerAccess } from "@nkps/shared/lib/verify-admin";
 import type { FeatureKey } from "@nkps/shared/lib/permissions";
+import { todayISO } from "@nkps/shared/lib/date";
 
 // ERP-side dashboard counts. Privileged stats never appear in the response
 // for an editor who lacks the grant, so nothing leaks into the DOM.
@@ -12,7 +13,7 @@ export async function GET() {
   const { admin, isAdmin, permissions } = access;
   const can = (key: FeatureKey) => isAdmin || permissions.has(key);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayISO();
 
   const [studentsRes, staffRes, eventsRes, pendingRegsRes, profilesRes] =
     await Promise.all([

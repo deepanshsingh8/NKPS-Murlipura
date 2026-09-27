@@ -354,7 +354,7 @@ export default function AdmitCardsPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => setDeleteTarget(t)}
-                          className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
+                          className="text-red-600 dark:text-red-400 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -381,7 +381,7 @@ export default function AdmitCardsPage() {
 
       {editing && (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-3xl max-h-[90dvh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 {isCreating ? "New Admit Card Template" : "Edit Template"}
@@ -526,7 +526,7 @@ export default function AdmitCardsPage() {
                           })
                         }
                         aria-label="Remove signature label"
-                        className="h-9 w-9 text-red-600"
+                        className="h-9 w-9 text-red-600 dark:text-red-400"
                       >
                         <X className="h-4 w-4" />
                       </Button>
@@ -621,7 +621,7 @@ export default function AdmitCardsPage() {
               <div className="space-y-2">
                 <Label>Promote to default:</Label>
                 {deleteCandidates.length === 0 ? (
-                  <p className="text-xs text-red-600">
+                  <p className="text-xs text-red-600 dark:text-red-400">
                     No other templates exist. Create one first.
                   </p>
                 ) : (

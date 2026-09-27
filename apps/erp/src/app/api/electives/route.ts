@@ -7,16 +7,27 @@ import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
  * GET  /api/electives                 → returns slot options + class XI/XII students with current selections
  * POST /api/electives/options         → admin: add a (slot, subject_id) row
  *  DEL /api/electives/options?id=…    → admin: remove a slot option
- * POST /api/electives/students        → admin: set a student's elective slot (creates/updates student_subjects)
+ * POST /api/electives/students        → admin: set a student's elective slot
  *  DEL /api/electives/students?id=…   → admin: clear an elective slot for a student
+ *
+ * The two write routes above keep student_elective_picks (the intent, with its
+ * slot) and student_subjects (what every report and export actually reads) in
+ * step — see the header of api/electives/students/route.ts. This GET reads the
+ * picks table directly because it is the only surface that cares about slots.
  *
  * Editor capability: gated by the `students` feature key (slot-option edits
  * fall under `subjects` — checked individually).
  */
 
-export async function GET() {
+export async function GET(request: Request) {
   const admin = await verifyAdminOrEditor("students");
   if (!admin) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  // An explicit ?academic_year_id= lets the page's session picker show a past
+  // year's elective picks; without one we fall back to the current year.
+  const requestedYearId = new URL(request.url).searchParams.get(
+    "academic_year_id"
+  );
 
   // 1) Slot options with subject details
   const { data: optionsData } = await admin
@@ -26,12 +37,14 @@ export async function GET() {
     .order("slot")
     .order("sort_order");
 
-  // 2) Current academic year + XI/XII enrollments with stream
-  const { data: yearRow } = await admin
-    .from("academic_years")
-    .select("id")
-    .eq("is_current", true)
-    .maybeSingle();
+  // 2) Academic year + XI/XII enrollments with stream
+  const { data: yearRow } = requestedYearId
+    ? { data: { id: requestedYearId } }
+    : await admin
+        .from("academic_years")
+        .select("id")
+        .eq("is_current", true)
+        .maybeSingle();
 
   const yearId = yearRow?.id ?? null;
 

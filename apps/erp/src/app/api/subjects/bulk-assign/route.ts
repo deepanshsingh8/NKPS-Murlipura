@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
 import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
+import {
+  assignSubjectsToClasses,
+  type ClassSubjectPair,
+} from "@/lib/class-subject-assign";
 
 interface AssignmentRow {
   class_name: string;
@@ -71,10 +75,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Fetch streams
+    // Fetch streams. kind='stream' only — the table also holds wings
+    // (migration 118), which are never attached to a class.
     const { data: streamsData } = await admin
       .from("streams")
-      .select("id, name");
+      .select("id, name")
+      .eq("kind", "stream");
 
     const streamMap = new Map<string, string>();
     for (const s of streamsData ?? []) {
@@ -115,9 +121,12 @@ export async function POST(request: Request) {
       teacherMap.set(t.employee_id.toLowerCase(), t.id);
     }
 
-    let created = 0;
+    // Resolved rows are collected and written in one pass at the end; the
+    // shared writer skips what already exists and chunks the insert.
     let skipped = 0;
     const errors: { row: number; error: string }[] = [];
+    const pairs: ClassSubjectPair[] = [];
+    const rowByLabel = new Map<string, number>();
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -196,25 +205,25 @@ export async function POST(request: Request) {
         }
       }
 
-      // Insert class_subjects
-      const { error: insertErr } = await admin.from("class_subjects").insert({
+      // Queue the assignment; the shared writer applies them all below.
+      const label = `${className}-${section} / ${subjectName}`;
+      rowByLabel.set(label, i + 1);
+      pairs.push({
         class_id: classId,
         subject_id: subjectId,
         teacher_id: teacherId,
+        label,
       });
+    }
 
-      if (insertErr) {
-        if (insertErr.code === "23505") {
-          skipped++;
-        } else {
-          errors.push({
-            row: i + 1,
-            error: `Failed to assign ${subjectName} to class: ${insertErr.message}`,
-          });
-        }
-      } else {
-        created++;
-      }
+    const outcome = await assignSubjectsToClasses(admin, pairs);
+    const created = outcome.created;
+    skipped += outcome.skipped;
+    for (const e of outcome.errors) {
+      errors.push({
+        row: rowByLabel.get(e.label) ?? 0,
+        error: `Failed to assign ${e.label}: ${e.error}`,
+      });
     }
 
     // Total failure (nothing created, every row errored) must not read as a

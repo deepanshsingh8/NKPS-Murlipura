@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { todayISO } from "@nkps/shared/lib/date";
 import {
   Card,
   CardContent,
@@ -22,10 +23,10 @@ import {
 import { CreditCard, CheckCircle, AlertCircle, Loader2, Users, Wallet, Download } from "lucide-react";
 import { toast } from "sonner";
 import {
-  amountBilledToDate,
+  computeDuesBreakdown,
+  resolveBillingCutoff,
   resolveEffectiveFeeLines,
   resolveStudentType,
-  sumAnnualized,
 } from "@/lib/fees";
 import type { StopFeeLookup } from "@/lib/fees";
 import type {
@@ -35,12 +36,34 @@ import type {
   TransportDirection,
   EffectiveFeeLine,
 } from "@nkps/shared/types";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 interface ChildOption {
   student_id: string;
   full_name: string;
   class_name: string | null;
   section: string | null;
+}
+
+// The enrollment row drives both halves of this page — the class label in the
+// child selector and every fee figure below it — so it is read once per parent
+// and shared, rather than once for the label and again for the fees.
+interface WardEnrollment {
+  student_id: string;
+  class_id: string | null;
+  stream_id: string | null;
+  academic_year_id: string | null;
+  has_transport: boolean | null;
+  bus_stop_id: string | null;
+  transport_direction: TransportDirection | null;
+  transport_fee_override: number | null;
+  // The three fields resolveBillingCutoff() reads. A ward who has left stops
+  // being billed on their leaving date instead of accruing the rest of the
+  // session's instalments.
+  status: string | null;
+  exit_date: string | null;
+  status_changed_at: string | null;
+  classes: { name: string; section: string } | null;
 }
 
 const formatCurrency = (amount: number) =>
@@ -55,10 +78,20 @@ export default function ParentFeesPage() {
   const preselectedChild = searchParams.get("child");
 
   const [children, setChildren] = useState<ChildOption[]>([]);
+  const [enrollments, setEnrollments] = useState<Map<string, WardEnrollment>>(
+    () => new Map()
+  );
   const [selectedChild, setSelectedChild] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [loadingFees, setLoadingFees] = useState(false);
   const [feeLines, setFeeLines] = useState<EffectiveFeeLine[]>([]);
+  // A failed fee read must not pass for "this child owes less". RLS filtering
+  // returns an empty set with no error and is indistinguishable from a genuine
+  // nil, but an actual transport error is catchable — so catch it and say so
+  // rather than rendering a confidently smaller balance. lib/student-dues.ts
+  // takes the same position for the download gate ("never swallow a DB error
+  // here"); this is that rule applied to what the family reads.
+  const [feeLoadError, setFeeLoadError] = useState<string | null>(null);
   // The year's start anchors recurring fees that carry no due date of their
   // own (transport stop fees, legacy monthly/quarterly rows).
   const [academicYear, setAcademicYear] = useState<{
@@ -102,6 +135,33 @@ export default function ParentFeesPage() {
         return;
       }
 
+      // One enrollment read for every child, carrying the class + stream +
+      // transport columns the fee maths needs as well as the label. PostgREST
+      // rejects an empty `.in()` list, so skip the query when no link row
+      // carries a student.
+      const studentIds = studentParents
+        .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+        .filter((id): id is string => Boolean(id));
+
+      // Newest enrollment wins, as the fee read has always done: rows arrive
+      // newest-first, so keep the first one seen for each student.
+      const enrollmentByStudent = new Map<string, WardEnrollment>();
+      if (studentIds.length > 0) {
+        const { data: enrollmentRows } = await supabase
+          .from("student_enrollments")
+          .select(
+            "student_id, class_id, stream_id, academic_year_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, exit_date, status_changed_at, classes(name, section)"
+          )
+          .in("student_id", studentIds)
+          .order("enrollment_date", { ascending: false });
+
+        for (const row of (enrollmentRows ?? []) as unknown as WardEnrollment[]) {
+          if (!enrollmentByStudent.has(row.student_id)) {
+            enrollmentByStudent.set(row.student_id, row);
+          }
+        }
+      }
+
       const childOptions: ChildOption[] = [];
       for (const sp of studentParents) {
         const student = sp.students as unknown as {
@@ -110,17 +170,7 @@ export default function ParentFeesPage() {
         };
         if (!student) continue;
 
-        const { data: enrollment } = await supabase
-          .from("student_enrollments")
-          .select("classes(name, section)")
-          .eq("student_id", student.id)
-          .limit(1)
-          .single();
-
-        const classInfo = enrollment?.classes as unknown as {
-          name: string;
-          section: string;
-        } | null;
+        const classInfo = enrollmentByStudent.get(student.id)?.classes ?? null;
 
         childOptions.push({
           student_id: student.id,
@@ -130,6 +180,7 @@ export default function ParentFeesPage() {
         });
       }
 
+      setEnrollments(enrollmentByStudent);
       setChildren(childOptions);
 
       const initial = preselectedChild && childOptions.some((c) => c.student_id === preselectedChild)
@@ -148,30 +199,20 @@ export default function ParentFeesPage() {
 
     async function fetchFees() {
       setLoadingFees(true);
+      setFeeLoadError(null);
       const supabase = createClient();
 
-      // Fetch enrollment to determine class + stream + transport opt-in.
-      const { data: enrollment } = await supabase
-        .from("student_enrollments")
-        .select(
-          "class_id, stream_id, academic_year_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, classes(name)"
-        )
-        .eq("student_id", selectedChild)
-        .order("enrollment_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // Class + stream + transport opt-in come from the enrollment already
+      // read for the child selector.
+      const enrollment = enrollments.get(selectedChild);
 
-      const className =
-        (enrollment?.classes as unknown as { name: string } | null)?.name ?? "";
-      const streamId = (enrollment?.stream_id as string | null) ?? null;
+      const className = enrollment?.classes?.name ?? "";
+      const streamId = enrollment?.stream_id ?? null;
       const hasTransport = Boolean(enrollment?.has_transport);
-      const busStopId = (enrollment?.bus_stop_id as string | null) ?? null;
-      const direction =
-        (enrollment?.transport_direction as TransportDirection | null) ?? "both";
-      const feeOverride =
-        (enrollment?.transport_fee_override as number | null) ?? null;
-      const academicYearId =
-        (enrollment?.academic_year_id as string | null) ?? null;
+      const busStopId = enrollment?.bus_stop_id ?? null;
+      const direction = enrollment?.transport_direction ?? "both";
+      const feeOverride = enrollment?.transport_fee_override ?? null;
+      const academicYearId = enrollment?.academic_year_id ?? null;
 
       // A schedule row can bill newly-admitted or returning students only
       // (the admission fee applies to this year's intake), so resolve which
@@ -217,15 +258,28 @@ export default function ParentFeesPage() {
         if (academicYearId) {
           structuresQuery = structuresQuery.eq("academic_year_id", academicYearId);
         }
-        const [{ data: structuresData }, { data: stopFeesData }] = await Promise.all([
+        const [
+          { data: structuresData, error: structuresError },
+          { data: stopFeesData, error: stopFeesError },
+        ] = await Promise.all([
           structuresQuery,
           academicYearId
             ? supabase
                 .from("bus_stop_fees")
                 .select("bus_stop_id, amount, frequency, is_active, bus_stops(name)")
                 .eq("academic_year_id", academicYearId)
-            : Promise.resolve({ data: [] }),
+            : Promise.resolve({ data: [], error: null }),
         ]);
+        // Name which half failed: a missing transport line and a missing
+        // academic line are different amounts of wrong, and the parent is the
+        // one placed to notice which of the two they were expecting.
+        setFeeLoadError(
+          structuresError
+            ? "Couldn't load the fee structure for this class, so the figures below are incomplete. Please refresh, or contact the school office."
+            : stopFeesError
+              ? "Couldn't load transport fees, so any bus fee is missing from the figures below. Please refresh, or contact the school office."
+              : null
+        );
         const stopFees: StopFeeLookup[] = (
           (stopFeesData as
             | {
@@ -284,7 +338,7 @@ export default function ParentFeesPage() {
     }
 
     fetchFees();
-  }, [selectedChild]);
+  }, [selectedChild, enrollments]);
 
   if (loading) {
     return (
@@ -300,40 +354,43 @@ export default function ParentFeesPage() {
   //   totalFees    — the whole session's obligation (annualized).
   //   billedToDate — the slice of it that has actually fallen due.
   // "Payable Now" is measured against the second, because a January instalment
-  // isn't an arrear in August. This is the same figure the download dues gate
-  // uses (see lib/student-dues.ts), so what a parent sees here is exactly what
-  // decides whether their child's admit card downloads.
-  const today = new Date().toISOString().slice(0, 10);
-  const totalFees = sumAnnualized(feeLines);
-  const billedToDate = feeLines.reduce(
-    (sum, line) =>
-      sum + amountBilledToDate(line, today, academicYear?.start_date),
-    0
-  );
-  // Match the admin dues view: a fee is "settled" by cash paid AND any waiver
-  // granted. Counting only amount_paid makes a fully-waived fee look unpaid to
-  // the parent while the office considers it cleared. A partially-refunded
-  // payment keeps status 'refunded' with amount_paid unchanged, so include
-  // refunded rows too and net out refund_amount (never below 0 per row) —
-  // otherwise the whole receipt vanishes and dues look overstated.
-  const totalPaid = payments
-    .filter(
+  // isn't an arrear in August.
+  //
+  // This delegates to computeDuesBreakdown — the same function the office's
+  // dues register runs (AdminFeesContent) — so the number a parent reads here
+  // is the number the school will quote back when they ring up about it. This
+  // page used to do the arithmetic inline and omit the late fee, which showed
+  // families a smaller balance than /fees/dues showed the office.
+  //
+  // It is deliberately NOT the figure the download gate uses: student-dues.ts
+  // carries no late-fee term, so the gate stays the more lenient of the two. A
+  // parent can therefore owe a late fee here and still pull an admit card.
+  const today = todayISO();
+  // computeDuesBreakdown requires payments pre-scoped to the billed year (done
+  // in the query above) and to receipt-bearing statuses. 'refunded' belongs in
+  // that set: a partially-refunded payment keeps status 'refunded' with
+  // amount_paid intact, and settledAmount() nets out refund_amount per row —
+  // dropping those rows would make the whole receipt vanish and overstate dues.
+  const dues = computeDuesBreakdown({
+    lines: feeLines,
+    payments: payments.filter(
       (p) =>
         p.status === "paid" ||
         p.status === "partial" ||
         p.status === "refunded"
-    )
-    .reduce(
-      (sum, p) =>
-        sum +
-        Math.max(
-          0,
-          Number(p.amount_paid) - Number(p.refund_amount ?? 0)
-        ) +
-        Number(p.waiver_amount ?? 0),
-      0
-    );
-  const pending = billedToDate - totalPaid;
+    ),
+    today,
+    yearStartDate: academicYear?.start_date,
+    // Priced to the ward's leaving date once they have left, so a family that
+    // settled up and moved on is not shown a balance that keeps growing
+    // behind them.
+    billingCutoff: resolveBillingCutoff(enrollments.get(selectedChild)),
+  });
+  const totalFees = dues.expected;
+  const billedToDate = dues.billedToDate;
+  const totalPaid = dues.paid;
+  // Already floored at 0 and inclusive of any late fee.
+  const pending = dues.dues;
 
   // Lines marked paid: match by fee_structure_id (academic) or
   // bus_stop_id (transport). Both keys live in the EffectiveFeeLine.id
@@ -363,10 +420,9 @@ export default function ParentFeesPage() {
         {children.length > 1 && (
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-gray-400" />
-            <select
+            <NativeSelect
               value={selectedChild}
               onChange={(e) => setSelectedChild(e.target.value)}
-              className="rounded-lg border border-gray-200 dark:border-border bg-white dark:bg-card px-3 py-2 text-sm text-navy-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
             >
               {children.map((child) => (
                 <option key={child.student_id} value={child.student_id}>
@@ -374,7 +430,7 @@ export default function ParentFeesPage() {
                   {child.class_name ? ` (${child.class_name} - ${child.section})` : ""}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
       </div>
@@ -392,6 +448,13 @@ export default function ParentFeesPage() {
         </div>
       ) : (
         <>
+          {feeLoadError && (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <p>{feeLoadError}</p>
+            </div>
+          )}
+
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card className="erp-card">
@@ -419,7 +482,7 @@ export default function ParentFeesPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-3xl font-bold text-green-600">
+                <p className="text-3xl font-bold text-green-600 dark:text-green-400">
                   {formatCurrency(totalPaid)}
                 </p>
               </CardContent>
@@ -433,9 +496,18 @@ export default function ParentFeesPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-3xl font-bold text-red-600">
-                  {formatCurrency(pending > 0 ? pending : 0)}
+                <p className="text-3xl font-bold text-red-600 dark:text-red-400">
+                  {formatCurrency(pending)}
                 </p>
+                {/* Name the surcharge rather than letting it inflate the
+                    headline unexplained — a parent comparing this against
+                    their own sum should be able to see where it came from. */}
+                {dues.lateFee > 0 && (
+                  <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    Includes a late fee of {formatCurrency(dues.lateFee)} on
+                    overdue instalments.
+                  </p>
+                )}
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {billedToDate < totalFees
                     ? `Instalments due so far: ${formatCurrency(billedToDate)}. The rest falls due later in the session.`
@@ -451,7 +523,7 @@ export default function ParentFeesPage() {
               <CardContent className="p-6 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="h-10 w-10 rounded-xl bg-gold-100 dark:bg-gold-900/30 flex items-center justify-center">
-                    <Wallet className="h-5 w-5 text-gold-600" />
+                    <Wallet className="h-5 w-5 text-gold-600 dark:text-gold-400" />
                   </div>
                   <div>
                     <p className="font-medium text-navy-900 dark:text-white">

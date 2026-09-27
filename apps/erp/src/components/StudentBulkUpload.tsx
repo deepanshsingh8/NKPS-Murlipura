@@ -2,7 +2,9 @@
 
 import { useState, useCallback, useEffect, Fragment } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
-import * as XLSX from "xlsx";
+// xlsx parses to roughly 900KB. Nothing on this screen needs it until
+// someone picks a file or asks for the template, so it is fetched then
+// rather than shipped with the page that renders the button.
 import {
   Dialog,
   DialogContent,
@@ -33,9 +35,15 @@ import {
   ChevronRight,
   X,
   Pencil,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import { formatClassName } from "@nkps/shared/lib/utils";
 import { adminFetch } from "@nkps/shared/lib/admin-api";
+import {
+  describeColumns,
+  type MappingSuggestion,
+} from "@nkps/shared/lib/import-mapping";
 import {
   STUDENT_TEMPLATE_FIELDS,
   type StudentTemplateField,
@@ -51,6 +59,7 @@ import {
   normalizeYesNo,
   toTitleCase,
 } from "@nkps/shared/lib/student-template";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 // All cell values are kept as display strings in the preview (booleans as
 // "YES"/"NO", enums as their stored value) — the server's zod preprocessing
@@ -218,6 +227,40 @@ function splitSubjects(raw: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Turn the raw sheet into preview rows under a given column mapping.
+ *
+ * Lifted out of the file handler so a mapping the operator accepted after the
+ * fact can be applied without re-reading the file — which also means the file
+ * is parsed exactly once, and a remap is instant.
+ */
+function buildParsedRows(
+  mapping: Record<number, string>,
+  rawRows: string[][]
+): ParsedRow[] {
+  const parsed: ParsedRow[] = [];
+
+  for (let i = 1; i < rawRows.length; i++) {
+    const row = rawRows[i];
+    if (!row || row.every((cell) => !cell || String(cell).trim() === "")) continue;
+
+    const rowData: Record<string, string> = {};
+    const warnings: string[] = [];
+    for (const [colIndex, key] of Object.entries(mapping)) {
+      const field = fieldByKey.get(key);
+      if (!field) continue;
+      const cellValue = String(row[Number(colIndex)] ?? "");
+      const { value, warning } = normalizeCell(field, cellValue);
+      rowData[key] = value;
+      if (warning) warnings.push(warning);
+    }
+
+    parsed.push({ data: rowData, warnings, errors: validateRow(rowData) });
+  }
+
+  return parsed;
+}
+
 export function StudentBulkUpload({
   open,
   onOpenChange,
@@ -228,6 +271,13 @@ export function StudentBulkUpload({
   const [fileName, setFileName] = useState("");
   const [mappedKeys, setMappedKeys] = useState<string[]>([]);
   const [unrecognizedHeaders, setUnrecognizedHeaders] = useState<string[]>([]);
+  // Kept so a mapping accepted later can be applied without re-reading the file.
+  const [rawHeaders, setRawHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<string[][]>([]);
+  const [columnMapping, setColumnMapping] = useState<Record<number, string>>({});
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<MappingSuggestion[] | null>(null);
+  const [aiAccepted, setAiAccepted] = useState<Set<number>>(new Set());
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [existingClassKeys, setExistingClassKeys] = useState<Set<string>>(new Set());
@@ -236,12 +286,38 @@ export function StudentBulkUpload({
   const [classSubjects, setClassSubjects] = useState<
     Map<string, { tokens: Set<string>; names: string[] }>
   >(new Map());
+  // Target session. Empty = the current year, i.e. today's behaviour.
+  // Choosing a past year switches the import into backfill mode.
+  const [academicYears, setAcademicYears] = useState<
+    { id: string; name: string; is_current: boolean }[]
+  >([]);
+  const [targetYearId, setTargetYearId] = useState("");
+  const [backfillStatus, setBackfillStatus] = useState("passed");
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
 
   // Fetch existing classes (+ their subjects, for Subjects column preview
   // matching) when entering preview.
+  // Sessions for the target-year picker. Fetched once, on the upload step.
+  useEffect(() => {
+    if (step !== "upload") return;
+    const supabase = createClient();
+    (async () => {
+      const { data } = await supabase
+        .from("academic_years")
+        .select("id, name, is_current")
+        .order("start_date", { ascending: false });
+      setAcademicYears(data ?? []);
+    })();
+  }, [step]);
+
+  // Backfill mode is derived, never stored: it is simply "a session other
+  // than the live one was chosen".
+  const isBackfill = Boolean(
+    targetYearId && !academicYears.find((y) => y.id === targetYearId)?.is_current
+  );
+
   useEffect(() => {
     if (step !== "preview") return;
     const supabase = createClient();
@@ -311,8 +387,9 @@ export function StudentBulkUpload({
       setFileName(file.name);
 
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
         try {
+          const XLSX = await import("xlsx");
           const data = new Uint8Array(evt.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: "array" });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -339,32 +416,19 @@ export function StudentBulkUpload({
             return;
           }
 
-          const parsed: ParsedRow[] = [];
-          for (let i = 1; i < rawRows.length; i++) {
-            const row = rawRows[i];
-            if (!row || row.every((cell) => !cell || String(cell).trim() === "")) {
-              continue;
-            }
-
-            const rowData: Record<string, string> = {};
-            const warnings: string[] = [];
-            for (const [colIndex, key] of Object.entries(mapping)) {
-              const field = fieldByKey.get(key);
-              if (!field) continue;
-              const cellValue = String(row[Number(colIndex)] ?? "");
-              const { value, warning } = normalizeCell(field, cellValue);
-              rowData[key] = value;
-              if (warning) warnings.push(warning);
-            }
-
-            parsed.push({ data: rowData, warnings, errors: validateRow(rowData) });
-          }
+          const rows = rawRows.map((r) => (r ?? []).map((c) => String(c ?? "")));
+          const parsed = buildParsedRows(mapping, rows);
 
           if (parsed.length === 0) {
             toast.error("No data rows found in the file");
             return;
           }
 
+          setRawHeaders(headers);
+          setRawRows(rows);
+          setColumnMapping(mapping);
+          setAiSuggestions(null);
+          setAiAccepted(new Set());
           setMappedKeys(keys);
           setUnrecognizedHeaders(unrecognized);
           setParsedRows(parsed);
@@ -453,6 +517,93 @@ export function StudentBulkUpload({
     });
   };
 
+  /**
+   * Ask the assistant to match the columns mapTemplateHeaders could not.
+   *
+   * Only the leftovers are sent, and only as SHAPES — "12 digits, all
+   * distinct" rather than twelve real Aadhaar numbers. describeColumns does
+   * that work; see its header for where the line is drawn and why.
+   */
+  const requestMapping = useCallback(async () => {
+    const claimed = new Set(Object.values(columnMapping));
+    const unmatchedIndexes = rawHeaders
+      .map((_, i) => i)
+      .filter((i) => columnMapping[i] === undefined);
+
+    if (unmatchedIndexes.length === 0) return;
+
+    const profiles = describeColumns(rawHeaders, rawRows.slice(1)).filter((c) =>
+      unmatchedIndexes.includes(c.index)
+    );
+    const candidates = STUDENT_TEMPLATE_FIELDS.filter((f) => !claimed.has(f.key)).map(
+      (f) => ({
+        key: f.key,
+        label: f.label,
+        kind: f.enumValues?.length
+          ? `one of: ${f.enumValues.map((e) => e.label).join(" | ")}`
+          : f.kind,
+      })
+    );
+
+    setAiBusy(true);
+    try {
+      const res = await adminFetch("/api/ai/import-mapping", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns: profiles, candidates }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? "Couldn't match those columns.");
+        return;
+      }
+      const withHome = ((data.suggestions ?? []) as MappingSuggestion[]).filter(
+        (x) => x.fieldKey
+      );
+      setAiSuggestions(withHome);
+      // High-confidence matches start ticked — the operator is confirming,
+      // not doing the work again. Anything less starts unticked, because a
+      // plausible-but-wrong mapping waved through writes the wrong data into
+      // every row of the file.
+      setAiAccepted(
+        new Set(withHome.filter((x) => x.confidence === "high").map((x) => x.index))
+      );
+      toast.success(
+        withHome.length
+          ? `Found a home for ${withHome.length} column${withHome.length === 1 ? "" : "s"}`
+          : "No matches found for the leftover columns"
+      );
+    } catch {
+      toast.error("Couldn't reach the assistant. Map the columns by hand.");
+    } finally {
+      setAiBusy(false);
+    }
+  }, [columnMapping, rawHeaders, rawRows]);
+
+  /** Fold the ticked suggestions into the mapping and rebuild the preview. */
+  const applyAcceptedMapping = useCallback(() => {
+    const accepted = (aiSuggestions ?? []).filter(
+      (x) => x.fieldKey && aiAccepted.has(x.index)
+    );
+    if (accepted.length === 0) return;
+
+    const next = { ...columnMapping };
+    for (const s of accepted) next[s.index] = s.fieldKey as string;
+
+    const rebuilt = buildParsedRows(next, rawRows);
+    setColumnMapping(next);
+    setParsedRows(rebuilt);
+    setMappedKeys(Object.values(next));
+    setUnrecognizedHeaders(
+      rawHeaders.filter((_, i) => next[i] === undefined && rawHeaders[i]?.trim())
+    );
+    setAiSuggestions(null);
+    setAiAccepted(new Set());
+    toast.success(
+      `Added ${accepted.length} column${accepted.length === 1 ? "" : "s"} — check the preview below`
+    );
+  }, [aiSuggestions, aiAccepted, columnMapping, rawRows, rawHeaders]);
+
   const handleSubmit = async () => {
     if (validRows.length === 0) {
       toast.error("No valid rows to import");
@@ -510,6 +661,12 @@ export function StudentBulkUpload({
           body: JSON.stringify({
             provided_keys: mappedKeys,
             students: chunk.map(toPayloadRow),
+            ...(isBackfill
+              ? {
+                  academic_year_id: targetYearId,
+                  enrollment_status: backfillStatus,
+                }
+              : {}),
           }),
         });
         const data = await res.json();
@@ -541,7 +698,8 @@ export function StudentBulkUpload({
     }
   };
 
-  const downloadTemplate = () => {
+  const downloadTemplate = async () => {
+    const XLSX = await import("xlsx");
     const headers = bulkTemplateHeaders();
     const sample = (values: Record<string, string>) =>
       STUDENT_TEMPLATE_FIELDS.map((f) => values[f.key] ?? "");
@@ -632,11 +790,11 @@ export function StudentBulkUpload({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-5xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-5xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10">
-              <Upload className="h-5 w-5 text-violet-600" />
+              <Upload className="h-5 w-5 text-violet-600 dark:text-violet-400" />
             </div>
             <div>
               <DialogTitle>
@@ -659,7 +817,7 @@ export function StudentBulkUpload({
               <Label>Upload Excel or CSV File</Label>
               <div className="mt-2 border-2 border-dashed border-gray-300 rounded-xl p-8 text-center hover:border-navy-400 transition-colors">
                 <Upload className="h-10 w-10 mx-auto text-gray-400 mb-3" />
-                <p className="text-sm text-gray-600 mb-2">
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
                   Drop your file here or click to browse
                 </p>
                 <p className="text-xs text-gray-400 mb-4">
@@ -674,9 +832,72 @@ export function StudentBulkUpload({
               </div>
             </div>
 
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
-              <p className="text-xs text-blue-700 font-medium mb-1">How it works</p>
-              <ul className="text-xs text-blue-600 space-y-0.5 list-disc pl-4">
+            {/* Target session. Defaults to the current year, which is exactly
+                how this dialog behaved before backfill existed. */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label className="text-xs font-medium">Import into session</Label>
+                <NativeSelect
+                  className="w-full"
+                  value={targetYearId}
+                  onChange={(e) => setTargetYearId(e.target.value)}
+                >
+                  <option value="">Current session</option>
+                  {academicYears
+                    .filter((y) => !y.is_current)
+                    .map((y) => (
+                      <option key={y.id} value={y.id}>
+                        {y.name} (past session)
+                      </option>
+                    ))}
+                </NativeSelect>
+              </div>
+              {isBackfill && (
+                <div className="space-y-1">
+                  <Label className="text-xs font-medium">
+                    Record these students as
+                  </Label>
+                  <NativeSelect
+                    className="w-full"
+                    value={backfillStatus}
+                    onChange={(e) => setBackfillStatus(e.target.value)}
+                  >
+                    <option value="passed">Passed</option>
+                    <option value="failed">Failed</option>
+                    <option value="exited">Exited</option>
+                    <option value="terminated">Terminated</option>
+                  </NativeSelect>
+                </div>
+              )}
+            </div>
+
+            {isBackfill && (
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 p-3">
+                <p className="text-xs text-amber-800 dark:text-amber-300 font-medium mb-1">
+                  Backfill mode
+                </p>
+                <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-0.5 list-disc pl-4">
+                  <li>
+                    Students who already exist are <strong>left untouched</strong> —
+                    an old sheet cannot overwrite current addresses or phone
+                    numbers. Only the past-session enrollment is added.
+                  </li>
+                  <li>
+                    Enrollments are recorded as{" "}
+                    <strong>{backfillStatus}</strong>, never active, so this
+                    cannot affect the live roster or current roll numbers.
+                  </li>
+                  <li>
+                    Missing classes are created inside that past session, not
+                    the current one. The Subjects column is ignored.
+                  </li>
+                </ul>
+              </div>
+            )}
+
+            <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 p-3">
+              <p className="text-xs text-blue-700 dark:text-blue-400 font-medium mb-1">How it works</p>
+              <ul className="text-xs text-blue-600 dark:text-blue-400 space-y-0.5 list-disc pl-4">
                 <li>Only <strong>Admission No</strong>, <strong>Name</strong> and <strong>Class</strong> are required (marked with <strong>*</strong> in the template) — every other column is optional.</li>
                 <li>Re-uploading a student (same admission no) <strong>updates</strong> them: columns present in your file overwrite (a blank cell clears the value), columns missing from the file stay untouched.</li>
                 <li><strong>Section</strong> defaults to A. <strong>Stream</strong> applies to XI/XII (Science, Commerce, Humanities). Missing classes are auto-created.</li>
@@ -706,21 +927,21 @@ export function StudentBulkUpload({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-600 dark:text-gray-300">
                   File: <span className="font-medium">{fileName}</span>
                 </p>
-                <Badge variant="secondary" className="bg-green-100 text-green-700">
+                <Badge variant="secondary" className="bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400">
                   <CheckCircle2 className="h-3 w-3 mr-1" />
                   {validRows.length} valid
                 </Badge>
                 {invalidRows.length > 0 && (
-                  <Badge variant="secondary" className="bg-red-100 text-red-700">
+                  <Badge variant="secondary" className="bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400">
                     <AlertCircle className="h-3 w-3 mr-1" />
                     {invalidRows.length} errors
                   </Badge>
                 )}
                 {totalWarnings > 0 && (
-                  <Badge variant="secondary" className="bg-amber-100 text-amber-700">
+                  <Badge variant="secondary" className="bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400">
                     <AlertTriangle className="h-3 w-3 mr-1" />
                     {totalWarnings} warnings
                   </Badge>
@@ -742,25 +963,144 @@ export function StudentBulkUpload({
             </div>
 
             {/* Column mapping summary */}
-            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
-              <p className="text-xs text-gray-700 font-medium mb-1">
+            <div className="rounded-lg bg-gray-50 dark:bg-muted border border-gray-200 p-3">
+              <p className="text-xs text-gray-700 dark:text-gray-300 font-medium mb-1">
                 {mappedKeys.length} of {STUDENT_TEMPLATE_FIELDS.length} template columns present in this file
               </p>
               {unrecognizedHeaders.length > 0 && (
                 <div className="mt-1.5">
-                  <p className="text-xs text-amber-700 mb-1">
-                    Unrecognised columns (ignored):
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      Unrecognised columns (ignored):
+                    </p>
+                    {!aiSuggestions && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={aiBusy}
+                        onClick={() => void requestMapping()}
+                        className="h-7 text-xs"
+                      >
+                        {aiBusy ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                            Matching…
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3 w-3 mr-1.5" />
+                            Match these with AI
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {unrecognizedHeaders.map((h) => (
                       <span
                         key={h}
-                        className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 text-xs font-medium text-amber-700"
+                        className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/30 text-xs font-medium text-amber-700 dark:text-amber-400"
                       >
                         {h}
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {aiSuggestions && (
+                <div className="mt-2.5 rounded-md border border-blue-200 bg-blue-50/60 p-2.5">
+                  {aiSuggestions.length === 0 ? (
+                    <p className="text-xs text-gray-600 dark:text-gray-300">
+                      No home found for those columns — they stay ignored, which
+                      is the right answer when a sheet carries data this template
+                      does not hold.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-xs font-medium text-navy-900 dark:text-white mb-1.5">
+                        Suggested matches — tick the ones that are right
+                      </p>
+                      <div className="space-y-1">
+                        {aiSuggestions.map((sugg) => {
+                          const field = fieldByKey.get(sugg.fieldKey as string);
+                          const on = aiAccepted.has(sugg.index);
+                          return (
+                            <label
+                              key={sugg.index}
+                              className="flex items-start gap-2 rounded px-1.5 py-1 hover:bg-white/70 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={(e) =>
+                                  setAiAccepted((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(sugg.index);
+                                    else next.delete(sugg.index);
+                                    return next;
+                                  })
+                                }
+                                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                              />
+                              <span className="text-xs leading-relaxed">
+                                <span className="font-medium text-gray-800 dark:text-gray-100">
+                                  {rawHeaders[sugg.index] || `Column ${sugg.index + 1}`}
+                                </span>
+                                <span className="text-gray-400"> → </span>
+                                <span className="font-medium text-navy-900 dark:text-white">
+                                  {field?.label ?? sugg.fieldKey}
+                                </span>
+                                <span
+                                  className={
+                                    sugg.confidence === "high"
+                                      ? "ml-1.5 text-green-700 dark:text-green-400"
+                                      : sugg.confidence === "medium"
+                                        ? "ml-1.5 text-amber-700"
+                                        : "ml-1.5 text-gray-500"
+                                  }
+                                >
+                                  ({sugg.confidence})
+                                </span>
+                                <span className="block text-gray-500">{sugg.why}</span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-2">
+                        <p className="text-[11px] text-gray-500">
+                          Only the column headers and a description of their
+                          shape were sent — no student data left the school.
+                        </p>
+                        <div className="flex gap-1.5 shrink-0">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setAiSuggestions(null);
+                              setAiAccepted(new Set());
+                            }}
+                            className="h-7 text-xs"
+                          >
+                            Discard
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={aiAccepted.size === 0}
+                            onClick={applyAcceptedMapping}
+                            className="h-7 text-xs"
+                          >
+                            Add {aiAccepted.size} column
+                            {aiAccepted.size === 1 ? "" : "s"}
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
               <p className="text-[11px] text-gray-400 mt-1.5">
@@ -769,15 +1109,15 @@ export function StudentBulkUpload({
             </div>
 
             {missingClasses.length > 0 && (
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <p className="text-xs text-amber-700 font-medium mb-1.5">
+              <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 p-3">
+                <p className="text-xs text-amber-700 dark:text-amber-400 font-medium mb-1.5">
                   {missingClasses.length} new class{missingClasses.length === 1 ? "" : "es"} will be auto-created
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {missingClasses.map((cls) => (
                     <span
                       key={cls}
-                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 text-xs font-medium text-amber-700"
+                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/30 text-xs font-medium text-amber-700 dark:text-amber-400"
                     >
                       {cls}
                     </span>
@@ -787,15 +1127,15 @@ export function StudentBulkUpload({
             )}
 
             {existingClasses.length > 0 && (
-              <div className="rounded-lg bg-green-50 border border-green-200 p-3">
-                <p className="text-xs text-green-700 font-medium mb-1.5">
+              <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 p-3">
+                <p className="text-xs text-green-700 dark:text-green-400 font-medium mb-1.5">
                   {existingClasses.length} existing class{existingClasses.length === 1 ? "" : "es"}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {existingClasses.map((cls) => (
                     <span
                       key={cls}
-                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-green-100 text-xs font-medium text-green-700"
+                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-green-100 dark:bg-green-950/30 text-xs font-medium text-green-700 dark:text-green-400"
                     >
                       {cls}
                     </span>
@@ -833,7 +1173,7 @@ export function StudentBulkUpload({
                       return (
                         <Fragment key={i}>
                           <TableRow
-                            className={row.errors.length > 0 ? "bg-red-50" : undefined}
+                            className={row.errors.length > 0 ? "bg-red-50 dark:bg-red-950/30" : undefined}
                           >
                             <TableCell className="pr-0">
                               <button
@@ -924,14 +1264,14 @@ export function StudentBulkUpload({
                             <TableCell>
                               {row.errors.length > 0 ? (
                                 <span
-                                  className="text-xs text-red-600"
+                                  className="text-xs text-red-600 dark:text-red-400"
                                   title={row.errors.join(", ")}
                                 >
                                   {row.errors[0]}
                                 </span>
                               ) : warnings.length > 0 ? (
                                 <span
-                                  className="inline-flex items-center gap-1 text-xs text-amber-600"
+                                  className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"
                                   title={warnings.join("\n")}
                                 >
                                   <AlertTriangle className="h-3.5 w-3.5" />
@@ -945,7 +1285,7 @@ export function StudentBulkUpload({
                               <div className="flex items-center gap-0.5">
                                 <button
                                   onClick={() => setEditingIndex(isEditing ? null : i)}
-                                  className={`p-1 rounded transition-colors ${isEditing ? "text-blue-600 bg-blue-50" : "text-gray-400 hover:text-blue-500"}`}
+                                  className={`p-1 rounded transition-colors ${isEditing ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30" : "text-gray-400 hover:text-blue-500"}`}
                                   title={isEditing ? "Done editing" : "Edit row"}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
@@ -974,7 +1314,7 @@ export function StudentBulkUpload({
                                         <p className="text-gray-400 truncate" title={f.label}>
                                           {f.label}
                                         </p>
-                                        <p className="text-gray-700 break-words">
+                                        <p className="text-gray-700 dark:text-gray-300 break-words">
                                           {previewDisplayValue(f, row.data[f.key])}
                                         </p>
                                       </div>
@@ -983,7 +1323,7 @@ export function StudentBulkUpload({
                                 {warnings.length > 0 && (
                                   <div className="mt-2 px-2 space-y-0.5">
                                     {warnings.map((w, wi) => (
-                                      <p key={wi} className="text-xs text-amber-600 flex items-start gap-1 whitespace-normal break-words">
+                                      <p key={wi} className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1 whitespace-normal break-words">
                                         <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
                                         <span>{w}</span>
                                       </p>
@@ -1012,7 +1352,7 @@ export function StudentBulkUpload({
               <Button
                 onClick={handleSubmit}
                 disabled={validRows.length === 0 || uploading}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {uploading ? (
                   <>
@@ -1036,32 +1376,32 @@ export function StudentBulkUpload({
               <>
                 {/* Summary stats */}
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                  <div className="rounded-xl bg-green-50 border border-green-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-green-700">{uploadResult.created}</p>
-                    <p className="text-xs text-green-600">Created</p>
+                  <div className="rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-green-700 dark:text-green-400">{uploadResult.created}</p>
+                    <p className="text-xs text-green-600 dark:text-green-400">Created</p>
                   </div>
-                  <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-blue-700">{uploadResult.updated}</p>
-                    <p className="text-xs text-blue-600">Updated</p>
+                  <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{uploadResult.updated}</p>
+                    <p className="text-xs text-blue-600 dark:text-blue-400">Updated</p>
                   </div>
-                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-amber-700">{uploadResult.classesCreated}</p>
-                    <p className="text-xs text-amber-600">Classes Created</p>
+                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{uploadResult.classesCreated}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400">Classes Created</p>
                   </div>
-                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-amber-700">{uploadResult.warnings.length}</p>
-                    <p className="text-xs text-amber-600">Warnings</p>
+                  <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{uploadResult.warnings.length}</p>
+                    <p className="text-xs text-amber-600 dark:text-amber-400">Warnings</p>
                   </div>
-                  <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-center">
-                    <p className="text-2xl font-bold text-red-700">{uploadResult.errors.length}</p>
-                    <p className="text-xs text-red-600">Failed</p>
+                  <div className="rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-red-700 dark:text-red-400">{uploadResult.errors.length}</p>
+                    <p className="text-xs text-red-600 dark:text-red-400">Failed</p>
                   </div>
                 </div>
 
                 {uploadResult.errors.length === 0 ? (
-                  <div className="rounded-xl bg-green-50 border border-green-200 p-6 text-center">
+                  <div className="rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 p-6 text-center">
                     <CheckCircle2 className="h-10 w-10 text-green-500 mx-auto mb-2" />
-                    <p className="text-sm font-medium text-green-700">
+                    <p className="text-sm font-medium text-green-700 dark:text-green-400">
                       All {uploadResult.inserted} students imported successfully!
                     </p>
                   </div>
@@ -1069,7 +1409,7 @@ export function StudentBulkUpload({
                   <div className="space-y-3">
                     <div className="flex items-center gap-2">
                       <AlertCircle className="h-4 w-4 text-red-500" />
-                      <p className="text-sm font-medium text-red-700">
+                      <p className="text-sm font-medium text-red-700 dark:text-red-400">
                         {uploadResult.errors.length} student{uploadResult.errors.length === 1 ? "" : "s"} failed to import
                       </p>
                     </div>
@@ -1094,7 +1434,7 @@ export function StudentBulkUpload({
                                 <TableCell className="text-xs">
                                   {err.class_name || "—"}{err.section ? `-${err.section}` : ""}
                                 </TableCell>
-                                <TableCell className="text-xs text-red-600">{err.error}</TableCell>
+                                <TableCell className="text-xs text-red-600 dark:text-red-400">{err.error}</TableCell>
                               </TableRow>
                             ))}
                           </TableBody>
@@ -1111,7 +1451,7 @@ export function StudentBulkUpload({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
                       <AlertTriangle className="h-4 w-4 text-amber-500" />
-                      <p className="text-sm font-medium text-amber-700">
+                      <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
                         {uploadResult.warnings.length} warning{uploadResult.warnings.length === 1 ? "" : "s"} (students were still imported)
                       </p>
                     </div>
@@ -1119,7 +1459,7 @@ export function StudentBulkUpload({
                       <div className="max-h-[200px] overflow-y-auto divide-y divide-amber-100">
                         {uploadResult.warnings.map((w, i) => (
                           <div key={i} className="px-3 py-1.5 bg-amber-50/50">
-                            <p className="text-xs text-amber-800">
+                            <p className="text-xs text-amber-800 dark:text-amber-300">
                               <span className="font-medium">{w.admission_no}</span>
                               {w.full_name ? ` · ${w.full_name}` : ""} — {w.warning}
                             </p>
@@ -1139,7 +1479,8 @@ export function StudentBulkUpload({
               {uploadResult && uploadResult.errors.length > 0 && (
                 <Button
                   variant="outline"
-                  onClick={() => {
+                  onClick={async () => {
+                    const XLSX = await import("xlsx");
                     // Download failed students as a sheet for easy re-upload
                     const failedData = uploadResult.errors.map((e) => ({
                       "Admission No": e.admission_no,

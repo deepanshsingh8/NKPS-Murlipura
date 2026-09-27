@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import * as XLSX from "xlsx";
+// xlsx parses to roughly 900KB. Nothing on this screen needs it until
+// someone picks a file or asks for the template, so it is fetched then
+// rather than shipped with the page that renders the button.
 import {
   Dialog,
   DialogContent,
@@ -156,8 +158,9 @@ export function SubjectBulkUpload({
       setFileName(file.name);
 
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
         try {
+          const XLSX = await import("xlsx");
           const data = new Uint8Array(evt.target?.result as ArrayBuffer);
           const workbook = XLSX.read(data, { type: "array" });
           const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -242,7 +245,8 @@ export function SubjectBulkUpload({
     []
   );
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
+    const XLSX = await import("xlsx");
     const templateData = [
       ["Class", "Section", "Stream", "Subject Name", "Subject Code", "Teacher Employee ID"],
       ["V", "A", "", "Mathematics", "MATH", ""],
@@ -340,11 +344,11 @@ export function SubjectBulkUpload({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-3xl max-h-[85dvh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
-              <Upload className="h-5 w-5 text-green-600" />
+              <Upload className="h-5 w-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
               <DialogTitle>Bulk Upload Subject Assignments</DialogTitle>
@@ -363,7 +367,7 @@ export function SubjectBulkUpload({
                 <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">
                   Upload an Excel file (.xlsx, .xls) with subject assignments
                 </p>
-                <label className="inline-flex items-center gap-2 px-4 py-2 bg-navy-900 hover:bg-navy-800 text-white text-sm font-medium rounded-lg cursor-pointer transition-colors">
+                <label className="inline-flex items-center gap-2 px-4 py-2 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 text-sm font-medium rounded-lg cursor-pointer transition-colors">
                   <Upload className="h-4 w-4" />
                   Choose File
                   <input
@@ -379,7 +383,7 @@ export function SubjectBulkUpload({
                 <p className="text-sm text-blue-800 dark:text-blue-300 font-medium mb-2">
                   Expected columns:
                 </p>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-blue-700 dark:text-blue-400">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-blue-700 dark:text-blue-400"> {/* mobile-layout-ok: a two-column list of column names */}
                   <span>
                     <strong>Class</strong> — e.g. V, IX, XI (required)
                   </span>
@@ -520,7 +524,7 @@ export function SubjectBulkUpload({
             <Button
               onClick={handleSubmit}
               disabled={validCount === 0}
-              className="bg-navy-900 hover:bg-navy-800 text-white"
+              className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               <Upload className="h-4 w-4 mr-2" />
               Upload {validCount} Assignment{validCount === 1 ? "" : "s"}

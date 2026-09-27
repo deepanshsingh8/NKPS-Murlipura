@@ -9,7 +9,12 @@
     "typecheck": "turbo run typecheck",
     "dev:website": "pnpm --filter @nkps/website run dev",
     "dev:cms": "pnpm --filter @nkps/cms run dev",
-    "dev:erp": "pnpm --filter @nkps/erp run dev"
+    "dev:erp": "pnpm --filter @nkps/erp run dev",
+    "check:guide": "node scripts/check-guide-coverage.mjs",
+    "check:api-auth": "node scripts/check-api-auth.mjs",
+    "check:mobile": "node scripts/check-mobile-layout.mjs",
+    "check:colors": "node scripts/check-colors.mjs",
+    "check:pwa": "node scripts/check-pwa-icons.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",

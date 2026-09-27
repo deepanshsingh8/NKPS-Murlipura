@@ -16,6 +16,11 @@ interface CommitRow {
   start_time: string;
   end_time: string;
   room: string | null;
+  // migration 119. Absent on a sheet with no Group/Shared column, which is
+  // every sheet written before this existed — hence the defaults below.
+  group_no?: number;
+  group_label?: string | null;
+  is_shared?: boolean;
 }
 
 export async function POST(request: Request) {
@@ -79,11 +84,15 @@ export async function POST(request: Request) {
     end_time: r.end_time,
     room: r.room,
     is_break: false,
+    group_no: r.group_no ?? 0,
+    group_label: r.group_label ?? null,
+    is_shared: r.is_shared ?? false,
   }));
 
   const { error: insErr } = await admin
     .from("timetable_periods")
-    .upsert(insertRows, { onConflict: "class_id,day_of_week,period_number" });
+    // group_no joined the key in migration 119.
+    .upsert(insertRows, { onConflict: "class_id,day_of_week,period_number,group_no" });
   if (insErr) {
     // The DB enforces "a teacher can't be in two overlapping periods" via the
     // timetable_teacher_no_overlap EXCLUDE constraint. Surface that as a clear
@@ -95,7 +104,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "A teacher would be double-booked: two periods overlap in time. Fix the clashing rows (or use Replace) and re-import.",
+            'A teacher would be double-booked: two periods overlap in time. If they really are with several classes at once — a games period, say — put "yes" in the Shared column on those rows. Otherwise fix the clashing rows (or use Replace) and re-import.',
         },
         { status: 409 }
       );

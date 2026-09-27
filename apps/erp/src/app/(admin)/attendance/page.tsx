@@ -2,8 +2,11 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { firstDayOfMonthISO, todayISO } from "@nkps/shared/lib/date";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Badge } from "@nkps/shared/components/ui/badge";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import { Input } from "@nkps/shared/components/ui/input";
 import {
   Card,
@@ -32,6 +35,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import {
   ClipboardCheck,
   Users,
@@ -41,6 +45,9 @@ import {
   BarChart3,
 } from "lucide-react";
 import { formatClassName } from "@nkps/shared/lib/utils";
+import { fetchAllRows } from "@nkps/shared/lib/fetch-all-rows";
+import { toast } from "sonner";
+
 
 interface ClassOption {
   id: string;
@@ -65,12 +72,11 @@ export default function AdminAttendancePage() {
   const [classes, setClasses] = useState<ClassOption[]>([]);
   // Filter state lives in the URL so back-navigation restores it (UX-1).
   const [selectedClassId, setSelectedClassId] = useUrlState("class_id", "all");
-  const defaultDateFrom = (() => {
-    const d = new Date();
-    d.setDate(1); // first day of current month
-    return d.toISOString().split("T")[0];
-  })();
-  const defaultDateTo = new Date().toISOString().split("T")[0];
+  // Both anchored on the school's civil date. Mutating a Date with
+  // setDate(1) and converting with toISOString() afterwards returned the
+  // PREVIOUS month's last day when opened before 05:30 IST.
+  const defaultDateFrom = firstDayOfMonthISO();
+  const defaultDateTo = todayISO();
   const [dateFrom, setDateFrom] = useUrlState("from", defaultDateFrom);
   const [dateTo, setDateTo] = useUrlState("to", defaultDateTo);
   const [classStats, setClassStats] = useState<ClassAttendanceStat[]>([]);
@@ -85,11 +91,21 @@ export default function AdminAttendancePage() {
   const supabase = createClient();
 
   // Fetch all classes
+  const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
   useEffect(() => {
     async function fetchClasses() {
       const { data } = await supabase
         .from("classes")
         .select("id, name, section, streams:stream_id(name)")
+        // Classes belong to a session. Without this the register offers this
+        // year's classes while showing a past year's dates, which is a class
+        // list that never had those students in it.
+        .eq(
+          "academic_year_id",
+          sessionId ?? "00000000-0000-0000-0000-000000000000"
+        )
         .order("sort_order");
 
       setClasses((data as unknown as ClassOption[]) ?? []);
@@ -98,34 +114,38 @@ export default function AdminAttendancePage() {
 
     fetchClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionId]);
 
   // Fetch today's summary stats
   useEffect(() => {
     async function fetchTodaySummary() {
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayISO();
 
-      // Total enrolled students
-      const { count: studentCount } = await supabase
-        .from("student_enrollments")
-        .select("*", { count: "exact", head: true });
-      setTotalStudents(studentCount ?? 0);
+      // The three counts have nothing to say to each other, so they go out
+      // together — awaited in sequence the card row cost three round trips
+      // before any of it rendered.
+      const [studentRes, presentRes, absentRes] = await Promise.all([
+        // Total enrolled students
+        supabase
+          .from("student_enrollments")
+          .select("*", { count: "exact", head: true }),
+        // Present today
+        supabase
+          .from("attendance")
+          .select("*", { count: "exact", head: true })
+          .eq("date", today)
+          .in("status", ["present", "late"]),
+        // Absent today
+        supabase
+          .from("attendance")
+          .select("*", { count: "exact", head: true })
+          .eq("date", today)
+          .eq("status", "absent"),
+      ]);
 
-      // Present today
-      const { count: pCount } = await supabase
-        .from("attendance")
-        .select("*", { count: "exact", head: true })
-        .eq("date", today)
-        .in("status", ["present", "late"]);
-      setPresentToday(pCount ?? 0);
-
-      // Absent today
-      const { count: aCount } = await supabase
-        .from("attendance")
-        .select("*", { count: "exact", head: true })
-        .eq("date", today)
-        .eq("status", "absent");
-      setAbsentToday(aCount ?? 0);
+      setTotalStudents(studentRes.count ?? 0);
+      setPresentToday(presentRes.count ?? 0);
+      setAbsentToday(absentRes.count ?? 0);
     }
 
     fetchTodaySummary();
@@ -141,43 +161,114 @@ export default function AdminAttendancePage() {
         ? classes
         : classes.filter((c) => c.id === selectedClassId);
 
-    const stats: ClassAttendanceStat[] = [];
+    const classIds = targetClasses.map((c) => c.id);
 
-    for (const cls of targetClasses) {
-      // Get enrolled student count
-      const { count: studentCount } = await supabase
-        .from("student_enrollments")
-        .select("*", { count: "exact", head: true })
-        .eq("class_id", cls.id);
+    // An empty `.in()` list is not a query PostgREST will accept, and there is
+    // nothing to report anyway (a stale class_id in the URL lands here).
+    if (classIds.length === 0) {
+      setClassStats([]);
+      setLoadingStats(false);
+      return;
+    }
 
-      // Get attendance in date range
-      const { data: attendanceData } = await supabase
-        .from("attendance")
-        .select("status")
-        .eq("class_id", cls.id)
-        .gte("date", dateFrom)
-        .lte("date", dateTo);
+    // One read per table for every class at once, grouped in JS below. Asking
+    // per class was two serial round trips each: a full school's 32 classes
+    // spent ~10s here against ~0.5s for the pair.
+    const [enrollmentRes, attendanceRes] = await Promise.all([
+      // TODO: unfiltered by status, so an exited student still counts toward
+      // the class roster here — the teacher dashboard counts only 'active'.
+      // Left as-is: this refactor is not changing what the numbers mean.
+      fetchAllRows<{ class_id: string }>((from, to) =>
+        supabase
+          .from("student_enrollments")
+          .select("class_id")
+          .in("class_id", classIds)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
+      // A term-long range over every class runs to tens of thousands of rows.
+      // `.range(0, 99999)` did not lift PostgREST's 1000-row cap — a Range
+      // header can only ask for less than the cap — so this table was drawn
+      // from the first thousand marks of the term and under-reported every
+      // class, with no error to notice. Paged, and ordered by id so the pages
+      // are disjoint.
+      fetchAllRows<{ class_id: string; status: string }>((from, to) =>
+        supabase
+          .from("attendance")
+          .select("class_id, status")
+          .in("class_id", classIds)
+          .gte("date", dateFrom)
+          .lte("date", dateTo)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
+    ]);
 
-      const records = attendanceData ?? [];
-      const present = records.filter(
-        (r) => r.status === "present" || r.status === "late"
-      ).length;
-      const absent = records.filter((r) => r.status === "absent").length;
-      const late = records.filter((r) => r.status === "late").length;
+    // A read that failed or stopped short would show up as a low percentage
+    // rather than as an error, so it is reported and nothing is drawn.
+    if (
+      enrollmentRes.error ||
+      enrollmentRes.truncated ||
+      attendanceRes.error ||
+      attendanceRes.truncated
+    ) {
+      console.error(
+        "Attendance stats read failed:",
+        enrollmentRes.error ?? attendanceRes.error ?? "read stopped at the paging guard"
+      );
+      toast.error("Could not load attendance figures");
+      setClassStats([]);
+      setLoadingStats(false);
+      return;
+    }
 
-      stats.push({
+    const enrolledByClass = new Map<string, number>();
+    for (const row of enrollmentRes.data ?? []) {
+      enrolledByClass.set(
+        row.class_id,
+        (enrolledByClass.get(row.class_id) ?? 0) + 1
+      );
+    }
+
+    interface Tally {
+      total: number;
+      present: number;
+      absent: number;
+      late: number;
+    }
+    const tallyByClass = new Map<string, Tally>();
+    for (const row of attendanceRes.data ?? []) {
+      let tally = tallyByClass.get(row.class_id);
+      if (!tally) {
+        tally = { total: 0, present: 0, absent: 0, late: 0 };
+        tallyByClass.set(row.class_id, tally);
+      }
+      tally.total += 1;
+      // A late arrival still attended, so it counts as present here and is
+      // reported again on its own in the Late column.
+      if (row.status === "present" || row.status === "late") tally.present += 1;
+      if (row.status === "absent") tally.absent += 1;
+      if (row.status === "late") tally.late += 1;
+    }
+
+    const stats: ClassAttendanceStat[] = targetClasses.map((cls) => {
+      const tally = tallyByClass.get(cls.id);
+      const totalRecords = tally?.total ?? 0;
+      const present = tally?.present ?? 0;
+
+      return {
         classId: cls.id,
         className: cls.name,
         section: cls.section,
-        totalStudents: studentCount ?? 0,
-        totalRecords: records.length,
+        totalStudents: enrolledByClass.get(cls.id) ?? 0,
+        totalRecords,
         presentCount: present,
-        absentCount: absent,
-        lateCount: late,
+        absentCount: tally?.absent ?? 0,
+        lateCount: tally?.late ?? 0,
         attendancePercent:
-          records.length > 0 ? Math.round((present / records.length) * 100) : 0,
-      });
-    }
+          totalRecords > 0 ? Math.round((present / totalRecords) * 100) : 0,
+      };
+    });
 
     setClassStats(stats);
     setLoadingStats(false);
@@ -241,13 +332,16 @@ export default function AdminAttendancePage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
-          Attendance Reports
-        </h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
-          Overview of attendance across all classes.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
+            Attendance Reports
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">
+            Overview of attendance across all classes.
+          </p>
+        </div>
+        <AcademicSessionPicker state={session} />
       </div>
 
       {/* Summary Cards */}
@@ -354,11 +448,20 @@ export default function AdminAttendancePage() {
             </p>
           ) : (
             <>
-            <TableFilterSummary
-              ctl={table}
-              total={classStats.length}
-              shown={table.rows.length}
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <TableFilterSummary
+                ctl={table}
+                total={classStats.length}
+                shown={table.rows.length}
+                className="mb-0 mr-auto"
             />
+              <TableExportButton
+                ctl={table}
+                filename="attendance-summary"
+                title="Attendance Summary"
+                featureKey="attendance"
+              />
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -401,7 +504,7 @@ export default function AdminAttendancePage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge className="bg-yellow-100 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-400 text-xs">
+                      <Badge className="bg-amber-100 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 text-xs">
                         {stat.lateCount}
                       </Badge>
                     </TableCell>
@@ -413,7 +516,7 @@ export default function AdminAttendancePage() {
                               stat.attendancePercent >= 75
                                 ? "bg-green-500"
                                 : stat.attendancePercent >= 50
-                                  ? "bg-yellow-500"
+                                  ? "bg-amber-500"
                                   : "bg-red-500"
                             }`}
                             style={{
@@ -426,7 +529,7 @@ export default function AdminAttendancePage() {
                             stat.attendancePercent >= 75
                               ? "text-green-700 dark:text-green-400"
                               : stat.attendancePercent >= 50
-                                ? "text-yellow-700 dark:text-yellow-400"
+                                ? "text-amber-700 dark:text-amber-400"
                                 : "text-red-700 dark:text-red-400"
                           }`}
                         >

@@ -21,6 +21,8 @@ import { Badge } from "@nkps/shared/components/ui/badge";
 import { Button } from "@nkps/shared/components/ui/button";
 import { toast } from "sonner";
 import { Download, BarChart3, AlertTriangle } from "lucide-react";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
+import { gradeChip } from "@/lib/grades";
 
 interface SubjectResult {
   subject_id: string;
@@ -42,20 +44,17 @@ interface ExamGroup {
   overall_grade: string;
 }
 
-const GRADE_COLORS: Record<string, string> = {
-  "A+": "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800",
-  A: "bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800",
-  "B+": "bg-blue-100 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800",
-  B: "bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800",
-  C: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800",
-  D: "bg-orange-100 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800",
-  F: "bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800",
-};
 
 export default function StudentResultsPage() {
   const [exams, setExams] = useState<ExamGroup[]>([]);
   const [studentId, setStudentId] = useState<string>("");
   const [selectedExam, setSelectedExam] = useState<string>("");
+  // Past sessions. Empty selection = the current session, i.e. how this page
+  // behaved before multi-year results were reachable.
+  const [availableYears, setAvailableYears] = useState<
+    { id: string; name: string; is_current: boolean }[]
+  >([]);
+  const [selectedYear, setSelectedYear] = useState<string>("");
   const [studentName, setStudentName] = useState("");
   const [className, setClassName] = useState("");
   const [rollNumber, setRollNumber] = useState<number | null>(null);
@@ -94,7 +93,8 @@ export default function StudentResultsPage() {
 
       // Fetch report card via API using the students table ID
       const res = await fetch(
-        `/api/results/report-card?student_id=${sid}`
+        `/api/results/report-card?student_id=${sid}` +
+          (selectedYear ? `&academic_year_id=${selectedYear}` : "")
       );
 
       if (!res.ok) {
@@ -111,6 +111,7 @@ export default function StudentResultsPage() {
           : ""
       );
       setRollNumber(data.student?.roll_number ?? null);
+      setAvailableYears(data.available_years ?? []);
       setExams(data.exams ?? []);
       if (data.exams?.[0]?.exam_type_id) {
         setSelectedExam(data.exams[0].exam_type_id);
@@ -119,7 +120,7 @@ export default function StudentResultsPage() {
     }
 
     fetchResults();
-  }, []);
+  }, [selectedYear]);
 
   async function handleDownload() {
     if (!studentId || !selectedExam) {
@@ -165,7 +166,7 @@ export default function StudentResultsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="erp-page-bar sm:items-start">
         <div>
           <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
             My Results
@@ -211,6 +212,29 @@ export default function StudentResultsPage() {
         </div>
       )}
 
+      {availableYears.length > 1 && (
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="session-picker"
+            className="text-sm text-gray-500 dark:text-gray-400"
+          >
+            Session
+          </label>
+          <NativeSelect
+            id="session-picker"
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(e.target.value)}
+          >
+            {availableYears.map((y) => (
+              <option key={y.id} value={y.is_current ? "" : y.id}>
+                {y.name}
+                {y.is_current ? " (current)" : ""}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+      )}
+
       {exams.length === 0 ? (
         <Card className="bg-white dark:bg-card rounded-2xl">
           <CardContent className="flex items-center justify-center py-16">
@@ -225,7 +249,7 @@ export default function StudentResultsPage() {
         </Card>
       ) : (
         <Tabs value={selectedExam} onValueChange={setSelectedExam}>
-          <TabsList variant="line" className="mb-4 flex-wrap">
+          <TabsList variant="line" className="mb-4">
             {exams.map((exam) => (
               <TabsTrigger key={exam.exam_type_id} value={exam.exam_type_id}>
                 {exam.exam_type_name}
@@ -241,7 +265,7 @@ export default function StudentResultsPage() {
                     <span>{exam.exam_type_name}</span>
                     <div className="flex items-center gap-3">
                       <Badge
-                        className={`text-sm px-3 py-1 ${GRADE_COLORS[exam.overall_grade] ?? ""}`}
+                        className={`text-sm px-3 py-1 ${gradeChip(exam.overall_grade)}`}
                       >
                         {exam.overall_grade}
                       </Badge>
@@ -298,7 +322,7 @@ export default function StudentResultsPage() {
                               </TableCell>
                               <TableCell className="text-center">
                                 <Badge
-                                  className={`text-xs ${GRADE_COLORS[sub.grade ?? ""] ?? ""}`}
+                                  className={`text-xs ${gradeChip(sub.grade ?? "")}`}
                                 >
                                   {sub.grade ?? "--"}
                                 </Badge>
@@ -321,7 +345,7 @@ export default function StudentResultsPage() {
                           </TableCell>
                           <TableCell className="text-center">
                             <Badge
-                              className={`text-xs ${GRADE_COLORS[exam.overall_grade] ?? ""}`}
+                              className={`text-xs ${gradeChip(exam.overall_grade)}`}
                             >
                               {exam.overall_grade}
                             </Badge>

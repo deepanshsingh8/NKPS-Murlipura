@@ -1,0 +1,23 @@
+{
+  "apps/website/src/app/about/page.tsx": {
+    "vh": 1
+  },
+  "apps/website/src/app/contact/ContactPageClient.tsx": {
+    "select": 1
+  },
+  "apps/website/src/app/error.tsx": {
+    "vh": 1
+  },
+  "apps/website/src/app/facilities/FacilitiesContent.tsx": {
+    "vh": 1
+  },
+  "apps/website/src/app/gallery/GalleryPageClient.tsx": {
+    "vh": 2
+  },
+  "apps/website/src/app/global-error.tsx": {
+    "vh": 1
+  },
+  "apps/website/src/app/transfer-certificates/TransferCertificatesPageClient.tsx": {
+    "input": 2
+  }
+}

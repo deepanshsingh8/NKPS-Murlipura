@@ -1,7 +1,7 @@
 export default function TeacherLoading() {
   return (
     <div className="space-y-6">
-      <div className="h-8 w-48 rounded-lg bg-gray-200 animate-pulse" />
+      <div className="h-8 w-48 rounded-lg bg-gray-200 dark:bg-gray-700 animate-pulse" />
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
         {[1, 2, 3].map((i) => (
           <div

@@ -4,9 +4,15 @@
 // and icons) — never API responses or authenticated HTML. Non-navigation
 // requests pass straight through untouched, so nothing authenticated is cached.
 //
-// Bump CACHE_VERSION to invalidate the shell on the next deploy.
+// Bump CACHE_VERSION to invalidate the shell on the next deploy. Its trailing
+// -vN must match ICON_VERSION in packages/shared/src/lib/pwa-manifest.ts, which
+// a static file in public/ cannot import — `pnpm run check:pwa` enforces it.
+// Going to v2 here is what drops the caches still holding the pre-31cb00e
+// icons: `activate` only deletes caches whose key differs from the current one,
+// so leaving the name alone left the old PNGs on every device that had already
+// installed the app.
 
-const CACHE_VERSION = "nkps-cms-v1";
+const CACHE_VERSION = "nkps-cms-v2";
 const OFFLINE_URL = "/offline";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png"];
 

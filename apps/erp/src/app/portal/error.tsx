@@ -14,12 +14,12 @@ export default function PortalError({
   }, [error]);
 
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
-      <h1 className="font-heading text-4xl font-bold text-navy-900">Oops</h1>
-      <h2 className="mt-4 text-lg font-semibold text-navy-800">
+    <div className="flex min-h-[60dvh] flex-col items-center justify-center px-6 text-center">
+      <h1 className="font-heading text-4xl font-bold text-navy-900 dark:text-white">Oops</h1>
+      <h2 className="mt-4 text-lg font-semibold text-navy-800 dark:text-navy-200">
         Something went wrong
       </h2>
-      <p className="mt-3 max-w-md text-gray-600">
+      <p className="mt-3 max-w-md text-gray-600 dark:text-gray-300">
         An error occurred. Please try again.
       </p>
       <button

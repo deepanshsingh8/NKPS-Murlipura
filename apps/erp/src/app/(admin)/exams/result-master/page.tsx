@@ -249,7 +249,7 @@ function AdminResultMasterContent() {
         {bundle?.master && (
           <Button
             variant="outline"
-            className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
+            className="text-red-600 dark:text-red-400 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
             onClick={() => setDeleteOpen(true)}
           >
             <Trash2 className="h-4 w-4 mr-2" />

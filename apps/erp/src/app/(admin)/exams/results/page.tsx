@@ -25,12 +25,15 @@ import {
   TableRow,
 } from "@nkps/shared/components/ui/table";
 import { Badge } from "@nkps/shared/components/ui/badge";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import { BarChart3, TrendingUp, Users, Award, Pencil } from "lucide-react";
 import Link from "next/link";
 import { formatClassName } from "@nkps/shared/lib/utils";
 import { computeGrade, type GradeBand } from "@/lib/grading";
 import type { Class, ExamType } from "@nkps/shared/types";
 import { HistoricalResultsImportDialog } from "@/components/HistoricalResultsImportDialog";
+import { gradeChip } from "@/lib/grades";
 
 interface SubjectBreakdown {
   subject_id: string;
@@ -50,15 +53,6 @@ interface ClassSummary {
   top_performers: { name: string; percentage: number }[];
 }
 
-const GRADE_COLORS: Record<string, string> = {
-  "A+": "bg-green-100 text-green-700 border-green-200 dark:bg-green-950/30 dark:text-green-400 dark:border-green-800",
-  A: "bg-green-50 text-green-600 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800",
-  "B+": "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800",
-  B: "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800",
-  C: "bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-950/30 dark:text-yellow-400 dark:border-yellow-800",
-  D: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-400 dark:border-orange-800",
-  F: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-800",
-};
 
 
 export default function AdminResultsPage() {
@@ -79,16 +73,22 @@ export default function AdminResultsPage() {
   const [loadingData, setLoadingData] = useState(false);
 
   // Fetch classes and exam types
-  useEffect(() => {
+const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
+    useEffect(() => {
     async function fetchInitial() {
       const supabase = createClient();
 
       // Current academic year
-      const { data: currentYear } = await supabase
-        .from("academic_years")
-        .select("id")
-        .eq("is_current", true)
-        .single();
+      // Classes and exam types are both year-scoped, so the results screen
+      // follows the session picker — that is what makes a previous year's
+      // marks reachable at all.
+      let yearQuery = supabase.from("academic_years").select("id");
+      yearQuery = sessionId
+        ? yearQuery.eq("id", sessionId)
+        : yearQuery.eq("is_current", true);
+      const { data: currentYear } = await yearQuery.maybeSingle();
 
       if (currentYear) {
         const { data: classesData } = await supabase
@@ -112,7 +112,7 @@ export default function AdminResultsPage() {
     }
 
     fetchInitial();
-  }, []);
+  }, [sessionId]);
 
   // Load the grade scale (override → default scholastic) for the selected
   // class so admin dashboards grade the same way report cards do.
@@ -329,6 +329,7 @@ export default function AdminResultsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <AcademicSessionPicker state={session} />
           <HistoricalResultsImportDialog />
           <Link
             href={
@@ -432,7 +433,7 @@ export default function AdminResultsPage() {
                   {summary.avg_percentage}%
                 </p>
                 <Badge
-                  className={`mt-2 text-xs ${GRADE_COLORS[getGradeFromPct(summary.avg_percentage)] ?? ""}`}
+                  className={`mt-2 text-xs ${gradeChip(getGradeFromPct(summary.avg_percentage))}`}
                 >
                   Grade {getGradeFromPct(summary.avg_percentage)}
                 </Badge>
@@ -474,7 +475,7 @@ export default function AdminResultsPage() {
                         {i + 1}. {tp.name}
                       </span>
                       <Badge
-                        className={`text-xs shrink-0 ${GRADE_COLORS[getGradeFromPct(tp.percentage)] ?? ""}`}
+                        className={`text-xs shrink-0 ${gradeChip(getGradeFromPct(tp.percentage))}`}
                       >
                         {tp.percentage}%
                       </Badge>
@@ -540,9 +541,9 @@ export default function AdminResultsPage() {
                             <span
                               className={
                                 sub.pass_percentage >= 80
-                                  ? "text-green-600"
+                                  ? "text-green-600 dark:text-green-400"
                                   : sub.pass_percentage >= 60
-                                    ? "text-yellow-600"
+                                    ? "text-amber-600"
                                     : "text-red-600"
                               }
                             >
@@ -551,7 +552,7 @@ export default function AdminResultsPage() {
                           </TableCell>
                           <TableCell className="text-center">
                             <Badge
-                              className={`text-xs ${GRADE_COLORS[getGradeFromPct(sub.avg_percentage)] ?? ""}`}
+                              className={`text-xs ${gradeChip(getGradeFromPct(sub.avg_percentage))}`}
                             >
                               {getGradeFromPct(sub.avg_percentage)}
                             </Badge>

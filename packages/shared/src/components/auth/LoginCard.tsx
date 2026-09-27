@@ -196,7 +196,7 @@ export function LoginCard({
       </div>
 
       {/* Right Panel — Login Form */}
-      <div className="flex w-full lg:w-1/2 items-center justify-center bg-cream-50 px-6 py-12">
+      <div className="flex w-full lg:w-1/2 items-center justify-center bg-cream-50 dark:bg-background px-6 py-12">
         <div className="w-full max-w-md">
           <div className="lg:hidden text-center mb-8">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-md ring-1 ring-navy-900/10 overflow-hidden">
@@ -209,22 +209,22 @@ export function LoginCard({
                 priority
               />
             </div>
-            <h1 className="font-heading text-2xl font-bold text-navy-900">
+            <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
               {brandHeadline}
             </h1>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+          <div className="bg-white dark:bg-card rounded-2xl shadow-xl border border-gray-100 dark:border-border p-8">
             <div className="mb-8">
-              <h2 className="font-heading text-2xl font-bold text-navy-900">
+              <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
                 {formTitle}
               </h2>
-              <p className="text-gray-500 mt-1 text-sm">{formSubtitle}</p>
+              <p className="text-gray-500 dark:text-gray-400 mt-1 text-sm">{formSubtitle}</p>
             </div>
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-navy-900 font-medium">
+                <Label htmlFor="email" className="text-navy-900 dark:text-white font-medium">
                   Email Address
                 </Label>
                 <Input
@@ -232,7 +232,7 @@ export function LoginCard({
                   type="email"
                   placeholder="you@nkps.edu.in"
                   {...register("email")}
-                  className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                  className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                 />
                 {errors.email && (
                   <p className="text-red-500 text-xs mt-1">
@@ -243,12 +243,12 @@ export function LoginCard({
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="password" className="text-navy-900 font-medium">
+                  <Label htmlFor="password" className="text-navy-900 dark:text-white font-medium">
                     Password
                   </Label>
                   <Link
                     href={forgotPasswordHref}
-                    className="text-xs text-gold-600 hover:text-gold-500 font-medium transition-colors"
+                    className="text-xs text-gold-600 dark:text-gold-400 hover:text-gold-500 font-medium transition-colors"
                   >
                     Forgot password?
                   </Link>
@@ -259,13 +259,13 @@ export function LoginCard({
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     {...register("password")}
-                    className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900 pr-10"
+                    className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500 pr-10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
                     aria-label={showPassword ? "Hide password" : "Show password"}
-                    className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 hover:text-navy-900 transition-colors"
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-400 dark:text-gray-500 hover:text-navy-900 transition-colors"
                   >
                     {showPassword ? (
                       <EyeOff className="h-4 w-4" />
@@ -284,7 +284,7 @@ export function LoginCard({
               <Button
                 type="submit"
                 disabled={loading}
-                className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white font-medium transition-colors"
+                className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 font-medium transition-colors"
               >
                 {loading ? (
                   <>
@@ -302,7 +302,7 @@ export function LoginCard({
             <div className="mt-4 text-center">
               <Link
                 href={registerHref}
-                className="text-sm text-gold-600 hover:text-gold-500 font-medium transition-colors"
+                className="text-sm text-gold-600 dark:text-gold-400 hover:text-gold-500 font-medium transition-colors"
               >
                 Don&apos;t have an account? Register here
               </Link>
@@ -312,7 +312,7 @@ export function LoginCard({
           <div className="mt-3 text-center">
             <Link
               href={getWebsiteUrl("/")}
-              className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-navy-900 transition-colors"
+              className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-navy-900 transition-colors"
             >
               <ArrowLeft className="h-4 w-4" />
               Back to website

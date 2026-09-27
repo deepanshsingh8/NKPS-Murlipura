@@ -3,18 +3,17 @@
 import { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Bot,
   X,
   Send,
   Maximize2,
   Minimize2,
   ArrowLeft,
-  Sparkles,
   Phone,
   ChevronRight,
 } from "lucide-react";
 import { SCHOOL } from "@nkps/shared/lib/constants";
 import { cn } from "@nkps/shared/lib/utils";
+import { AgentMark } from "@nkps/shared/components/icons/AgentMark";
 
 function formatMessage(text: string) {
   // Split into lines and process
@@ -172,7 +171,11 @@ export function NkpsAgent() {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50">
+    // The corner is shared with the scroll-to-top button, and on a phone it is
+    // also where the home indicator and the browser's own bar live — hence the
+    // safe-area insets rather than a flat bottom-4. ScrollToTop stacks itself
+    // above this launcher using the same numbers; move one and move the other.
+    <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom,0px))] right-[calc(1rem+env(safe-area-inset-right,0px))] sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:right-[calc(1.5rem+env(safe-area-inset-right,0px))] z-50">
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -181,10 +184,20 @@ export function NkpsAgent() {
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
             className={cn(
-              "absolute bottom-16 right-0 bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-navy-900/10 transition-all duration-300",
+              // Anchored to the viewport, not to the launcher: on a phone the
+              // panel gets an even gutter down both sides instead of hanging
+              // off the launcher's right inset, and it can't be pushed off the
+              // screen by its own width.
+              "fixed inset-x-3 sm:absolute sm:left-auto sm:right-0 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] sm:bottom-16 bg-white dark:bg-card rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-navy-900/10 transition-all duration-300",
+              // dvh, not vh: with vh the panel is sized against the viewport
+              // the phone browser has when its address bar is retracted, so
+              // the composer — and the send button — slide under the keyboard
+              // the moment someone starts typing. max-h keeps the whole panel
+              // on screen on a short window as well.
+              "max-h-[calc(100dvh-7rem-env(safe-area-inset-bottom,0px))]",
               isExpanded && view === "chat"
-                ? "w-[90vw] md:w-[600px] h-[80vh] md:h-[700px]"
-                : "w-[calc(100vw-2rem)] sm:w-80 md:w-96 h-[70vh] sm:h-[500px]"
+                ? "sm:w-[90vw] md:w-[600px] h-[80dvh] md:h-[700px]"
+                : "sm:w-80 md:w-96 h-[70dvh] sm:h-[500px]"
             )}
           >
             {/* Header */}
@@ -200,7 +213,7 @@ export function NkpsAgent() {
                   </button>
                 ) : (
                   <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gold-500/20">
-                    <Bot className="w-5 h-5 text-gold-400" />
+                    <AgentMark className="w-5 h-5 text-gold-400" />
                   </span>
                 )}
                 <div className="flex flex-col leading-tight">
@@ -255,11 +268,11 @@ export function NkpsAgent() {
                     className="w-full text-left group flex items-start gap-3 rounded-xl border border-navy-900/10 bg-cream-50/60 p-3 hover:border-gold-500/60 hover:bg-cream-50 transition-all"
                   >
                     <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-r from-gold-500 to-gold-400 text-navy-900">
-                      <Sparkles className="w-5 h-5" />
+                      <AgentMark className="w-5 h-5" />
                     </span>
                     <span className="flex-1">
                       <span className="flex items-center justify-between">
-                        <span className="font-heading font-semibold text-sm text-navy-900">
+                        <span className="font-heading font-semibold text-sm text-navy-900 dark:text-white">
                           Ask a question
                         </span>
                         <ChevronRight className="w-4 h-4 text-navy-900/30 group-hover:text-gold-500 transition-colors" />
@@ -284,7 +297,7 @@ export function NkpsAgent() {
                     </span>
                     <span className="flex-1">
                       <span className="flex items-center justify-between">
-                        <span className="font-heading font-semibold text-sm text-navy-900">
+                        <span className="font-heading font-semibold text-sm text-navy-900 dark:text-white">
                           Message on WhatsApp
                         </span>
                         <ChevronRight className="w-4 h-4 text-navy-900/30 group-hover:text-[#25D366] transition-colors" />
@@ -305,7 +318,7 @@ export function NkpsAgent() {
                     </span>
                     <span className="flex-1">
                       <span className="flex items-center justify-between">
-                        <span className="font-heading font-semibold text-sm text-navy-900">
+                        <span className="font-heading font-semibold text-sm text-navy-900 dark:text-white">
                           Talk to a person
                         </span>
                         <ChevronRight className="w-4 h-4 text-navy-900/30 group-hover:text-blue-600 transition-colors" />
@@ -326,7 +339,7 @@ export function NkpsAgent() {
                         <button
                           key={q}
                           onClick={() => openChatWith(q)}
-                          className="rounded-full border border-navy-900/15 bg-white px-3 py-1.5 text-xs text-navy-900/80 hover:border-gold-500 hover:text-navy-900 transition-colors"
+                          className="rounded-full border border-navy-900/15 bg-white dark:bg-card px-3 py-1.5 text-xs text-navy-900/80 hover:border-gold-500 hover:text-navy-900 transition-colors"
                         >
                           {q}
                         </button>
@@ -350,8 +363,8 @@ export function NkpsAgent() {
                           "px-3 py-2 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap",
                           isExpanded ? "max-w-[70%]" : "max-w-[80%]",
                           msg.role === "user"
-                            ? "bg-gold-500 text-navy-900 rounded-br-sm"
-                            : "bg-cream-50 text-navy-900 rounded-bl-sm"
+                            ? "bg-gold-500 text-navy-900 dark:text-white rounded-br-sm"
+                            : "bg-cream-50 dark:bg-background text-navy-900 rounded-bl-sm"
                         )}
                       >
                         {msg.role === "assistant" ? formatMessage(msg.content) : msg.content}
@@ -361,7 +374,7 @@ export function NkpsAgent() {
 
                   {isLoading && (
                     <div className="flex justify-start">
-                      <div className="bg-cream-50 text-navy-900 px-4 py-3 rounded-2xl rounded-bl-sm">
+                      <div className="bg-cream-50 dark:bg-background text-navy-900 dark:text-white px-4 py-3 rounded-2xl rounded-bl-sm">
                         <div className="flex gap-1">
                           <span className="w-2 h-2 bg-navy-900/40 rounded-full animate-bounce [animation-delay:0ms]" />
                           <span className="w-2 h-2 bg-navy-900/40 rounded-full animate-bounce [animation-delay:150ms]" />
@@ -375,9 +388,9 @@ export function NkpsAgent() {
                 </div>
 
                 {/* Input */}
-                <div className="p-3 border-t border-navy-900/10 shrink-0">
-                  <div className="flex gap-2">
-                    <input
+                <div className="p-3 pb-4 border-t border-navy-900/10 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <input /* mobile-layout-ok: borderless inside its own styled container; sized above */
                       ref={inputRef}
                       type="text"
                       value={input}
@@ -385,12 +398,16 @@ export function NkpsAgent() {
                       onKeyDown={handleKeyDown}
                       placeholder="Type your question..."
                       disabled={isLoading}
-                      className="flex-1 px-3 py-2 text-sm rounded-full border border-navy-900/20 focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500 disabled:opacity-50 text-navy-900 placeholder:text-navy-900/40"
+                      className="flex-1 min-w-0 h-11 px-4 text-base sm:text-sm rounded-full border border-navy-900/20 focus:outline-none focus:border-gold-500 focus:ring-1 focus:ring-gold-500 disabled:opacity-50 text-navy-900 dark:text-white placeholder:text-navy-900/40"
                     />
+                    {/* 44px, the smallest target a thumb reliably hits — it was
+                        36px sitting a couple of millimetres from the edge of
+                        the screen, which on a curved phone display is a miss
+                        as often as a tap. */}
                     <button
                       onClick={() => sendMessage()}
                       disabled={isLoading || !input.trim()}
-                      className="w-9 h-9 rounded-full bg-gradient-to-r from-gold-500 to-gold-400 text-navy-900 flex items-center justify-center hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                      className="w-11 h-11 rounded-full bg-gradient-to-r from-gold-500 to-gold-400 text-navy-900 flex items-center justify-center hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                       aria-label="Send message"
                     >
                       <Send className="w-4 h-4" />
@@ -413,7 +430,7 @@ export function NkpsAgent() {
           <span className="absolute inset-0 rounded-full bg-gold-500/40 animate-ping" />
         )}
         <span className="relative">
-          {isOpen ? <X className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
+          {isOpen ? <X className="w-6 h-6" /> : <AgentMark className="w-6 h-6" />}
         </span>
       </button>
     </div>

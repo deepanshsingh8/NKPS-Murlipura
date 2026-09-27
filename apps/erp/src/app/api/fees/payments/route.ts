@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
 import { feePaymentSchema } from "@nkps/shared/lib/validations";
 import { generateReceiptNumber } from "@nkps/shared/lib/password";
+import { todayISO } from "@nkps/shared/lib/date";
 
 export async function POST(request: Request) {
   try {
@@ -177,7 +178,7 @@ export async function POST(request: Request) {
           payment_method,
           month: month || null,
           receipt_number: generateReceiptNumber(),
-          payment_date: new Date().toISOString().split("T")[0],
+          payment_date: todayISO(),
           status,
           recorded_by: user.id,
           cheque_number: cheque_number ?? null,

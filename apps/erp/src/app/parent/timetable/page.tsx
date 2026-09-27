@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { buildElectiveFilter } from "@nkps/shared/lib/elective-timetable";
 import { Card, CardContent, CardHeader, CardTitle } from "@nkps/shared/components/ui/card";
 import { Badge } from "@nkps/shared/components/ui/badge";
 import { Loader2, Clock, Users, Sun } from "lucide-react";
@@ -13,6 +14,8 @@ import {
   nowMinutes,
   timeStringToMinutes,
 } from "@nkps/shared/lib/utils";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
+import { categoricalChip } from "@nkps/shared/lib/palette";
 
 interface ChildOption {
   student_id: string;
@@ -28,6 +31,10 @@ interface TimetableEntry {
   start_time: string;
   end_time: string;
   room: string | null;
+  group_no?: number;
+  group_label?: string | null;
+  /** Needed to match a group against this child's elective picks. */
+  subject_id: string | null;
   subject: { name: string } | null;
   teacher: { full_name: string } | null;
 }
@@ -36,18 +43,6 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_NUMBERS = [1, 2, 3, 4, 5, 6];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
 
-const SUBJECT_COLORS = [
-  "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300",
-  "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300",
-  "bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800 text-purple-800 dark:text-purple-300",
-  "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300",
-  "bg-pink-50 dark:bg-pink-950/30 border-pink-200 dark:border-pink-800 text-pink-800 dark:text-pink-300",
-  "bg-teal-50 dark:bg-teal-950/30 border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300",
-  "bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800 text-indigo-800 dark:text-indigo-300",
-  "bg-orange-50 dark:bg-orange-950/30 border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-300",
-  "bg-cyan-50 dark:bg-cyan-950/30 border-cyan-200 dark:border-cyan-800 text-cyan-800 dark:text-cyan-300",
-  "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300",
-];
 
 export default function ParentTimetablePage() {
   const searchParams = useSearchParams();
@@ -92,6 +87,34 @@ export default function ParentTimetablePage() {
         return;
       }
 
+      // One enrollment read for every child. PostgREST rejects an empty
+      // `.in()` list, so skip the query when no link row carries a student.
+      const studentIds = studentParents
+        .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+        .filter((id): id is string => Boolean(id));
+
+      // Unordered, as this selector has always been: the first row the server
+      // returns for a student is the class label shown against their name.
+      const classByStudent = new Map<
+        string,
+        { name: string; section: string } | null
+      >();
+      if (studentIds.length > 0) {
+        const { data: enrollments } = await supabase
+          .from("student_enrollments")
+          .select("student_id, classes(name, section)")
+          .in("student_id", studentIds);
+
+        for (const row of (enrollments ?? []) as unknown as {
+          student_id: string;
+          classes: { name: string; section: string } | null;
+        }[]) {
+          if (!classByStudent.has(row.student_id)) {
+            classByStudent.set(row.student_id, row.classes ?? null);
+          }
+        }
+      }
+
       const childOptions: ChildOption[] = [];
       for (const sp of studentParents) {
         const student = sp.students as unknown as {
@@ -100,17 +123,7 @@ export default function ParentTimetablePage() {
         };
         if (!student) continue;
 
-        const { data: enrollment } = await supabase
-          .from("student_enrollments")
-          .select("classes(name, section)")
-          .eq("student_id", student.id)
-          .limit(1)
-          .single();
-
-        const classInfo = enrollment?.classes as unknown as {
-          name: string;
-          section: string;
-        } | null;
+        const classInfo = classByStudent.get(student.id) ?? null;
 
         childOptions.push({
           student_id: student.id,
@@ -141,10 +154,23 @@ export default function ParentTimetablePage() {
       setLoadingTimetable(true);
       const supabase = createClient();
 
-      const { data: enrollment } = await supabase
+      // The class NAME as well as the id: an elective option is scoped to XI
+      // or XII by name. Year-scoped too — a child enrolled in more than one
+      // year would otherwise be filtered against the wrong class.
+      const { data: currentYear } = await supabase
+        .from("academic_years")
+        .select("id")
+        .eq("is_current", true)
+        .maybeSingle();
+
+      let enrollmentQuery = supabase
         .from("student_enrollments")
-        .select("class_id")
-        .eq("student_id", selectedChild)
+        .select("class_id, classes(name)")
+        .eq("student_id", selectedChild);
+      if (currentYear?.id) {
+        enrollmentQuery = enrollmentQuery.eq("academic_year_id", currentYear.id);
+      }
+      const { data: enrollment } = await enrollmentQuery
         .order("enrollment_date", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -159,20 +185,47 @@ export default function ParentTimetablePage() {
       const { data } = await supabase
         .from("timetable_periods")
         .select(
-          "id, day_of_week, period_number, start_time, end_time, room, subject:subjects(name), teacher:teachers(full_name)"
+          "id, day_of_week, period_number, start_time, end_time, room, group_no, group_label, subject_id, subject:subjects(name), teacher:teachers(full_name)"
         )
         .eq("class_id", enrollment.class_id)
         .order("period_number", { ascending: true });
 
-      const timetableData = (data ?? []) as unknown as TimetableEntry[];
+      const rows = (data ?? []) as unknown as TimetableEntry[];
+
+      // Show this child's own optional subject, not both sides of the slot.
+      // Filtered on the way into state so today's list, the period rows and
+      // the subject colours all describe the timetable they actually attend.
+      // This effect re-runs on selectedChild, so switching child re-filters.
+      const clsRel = enrollment.classes as unknown as
+        | { name: string }
+        | { name: string }[]
+        | null;
+      const className =
+        (Array.isArray(clsRel) ? clsRel[0] : clsRel)?.name ?? null;
+      const [{ data: options }, { data: picks }] = await Promise.all([
+        supabase
+          .from("elective_slot_options")
+          .select("slot, subject_id, applies_to_classes, is_active")
+          .eq("is_active", true),
+        supabase
+          .from("student_elective_picks")
+          .select("slot, subject_id")
+          .eq("student_id", selectedChild),
+      ]);
+      const showGroup = buildElectiveFilter({
+        options: options ?? [],
+        picks: picks ?? [],
+        className,
+      });
+      const timetableData = rows.filter((e) => showGroup(e.subject_id));
       setEntries(timetableData);
 
       const subjects = [
         ...new Set(timetableData.map((e) => e.subject?.name).filter(Boolean)),
       ];
       const colorMap: Record<string, string> = {};
-      subjects.forEach((subj, i) => {
-        if (subj) colorMap[subj] = SUBJECT_COLORS[i % SUBJECT_COLORS.length];
+      subjects.forEach((subj) => {
+        if (subj) colorMap[subj] = categoricalChip(subj);
       });
       setSubjectColorMap(colorMap);
 
@@ -201,8 +254,15 @@ export default function ParentTimetablePage() {
 
   const now = nowMinutes();
 
-  const getEntry = (day: number, period: number) =>
-    entries.find((e) => e.day_of_week === day && e.period_number === period);
+  // A cell can hold parallel groups — Games split into basketball/badminton/
+  // cricket, or an XI/XII period running IP alongside P.Ed (migration 119).
+  // `entries` has already had this child's non-electives filtered out, so a
+  // Games cell still shows all three sports (nobody picks between them) while
+  // an optional slot shows only the subject they take.
+  const getEntries = (day: number, period: number) =>
+    entries
+      .filter((e) => e.day_of_week === day && e.period_number === period)
+      .sort((a, b) => (a.group_no ?? 0) - (b.group_no ?? 0));
 
   if (loading) {
     return (
@@ -235,10 +295,9 @@ export default function ParentTimetablePage() {
         {children.length > 1 && (
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-gray-400" />
-            <select
+            <NativeSelect
               value={selectedChild}
               onChange={(e) => setSelectedChild(e.target.value)}
-              className="rounded-lg border border-gray-200 dark:border-border bg-white dark:bg-card px-3 py-2 text-sm text-navy-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
             >
               {children.map((child) => (
                 <option key={child.student_id} value={child.student_id}>
@@ -248,7 +307,7 @@ export default function ParentTimetablePage() {
                     : ""}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
       </div>
@@ -373,9 +432,9 @@ export default function ParentTimetablePage() {
                         {period === 0 ? "0" : period}
                       </td>
                       {DAY_NUMBERS.map((day) => {
-                        const entry = getEntry(day, period);
+                        const cellEntries = getEntries(day, period);
                         const isToday = day === todayDow;
-                        if (!entry) {
+                        if (cellEntries.length === 0) {
                           return (
                             <td
                               key={day}
@@ -388,29 +447,41 @@ export default function ParentTimetablePage() {
                             </td>
                           );
                         }
-                        const colorClass =
-                          subjectColorMap[entry.subject?.name ?? ""] ??
-                          "bg-gray-50 dark:bg-muted border-gray-200 dark:border-border text-gray-800 dark:text-gray-200";
                         return (
                           <td
                             key={day}
                             className={cn(
-                              "border border-gray-200 dark:border-border p-1",
+                              "border border-gray-200 dark:border-border p-1 align-top",
                               isToday && "ring-2 ring-gold-500/60 ring-inset"
                             )}
                           >
-                            <div
-                              className={`rounded-lg border p-2 text-xs ${colorClass}`}
-                            >
-                              <p className="font-semibold">
-                                {entry.subject?.name ?? "--"}
-                              </p>
-                              <p className="opacity-75">
-                                {entry.teacher?.full_name ?? "--"}
-                              </p>
-                              {entry.room && (
-                                <p className="opacity-60">Room: {entry.room}</p>
-                              )}
+                            <div className="space-y-1">
+                              {cellEntries.map((entry) => {
+                                const colorClass =
+                                  subjectColorMap[entry.subject?.name ?? ""] ??
+                                  "bg-gray-50 dark:bg-muted border-gray-200 dark:border-border text-gray-800 dark:text-gray-200";
+                                return (
+                                  <div
+                                    key={entry.id}
+                                    className={`rounded-lg border p-2 text-xs ${colorClass}`}
+                                  >
+                                    <p className="font-semibold">
+                                      {entry.subject?.name ?? "--"}
+                                      {entry.group_label
+                                        ? ` · ${entry.group_label}`
+                                        : ""}
+                                    </p>
+                                    <p className="opacity-75">
+                                      {entry.teacher?.full_name ?? "--"}
+                                    </p>
+                                    {entry.room && (
+                                      <p className="opacity-60">
+                                        Room: {entry.room}
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </td>
                         );

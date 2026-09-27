@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, Suspense, Fragment } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { todayISO } from "@nkps/shared/lib/date";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
+import { Checkbox } from "@nkps/shared/components/ui/checkbox";
+import { fetchAllRows } from "@nkps/shared/lib/fetch-all-rows";
+import {
+  useTablePagination,
+  TablePaginationBar,
+} from "@nkps/shared/components/ui/data-table";
 import { Badge } from "@nkps/shared/components/ui/badge";
 import {
   Dialog,
@@ -29,6 +36,9 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import {
   Tabs,
   TabsContent,
@@ -38,19 +48,24 @@ import {
 import { Card, CardContent } from "@nkps/shared/components/ui/card";
 import { toast } from "sonner";
 import Link from "next/link";
-import { Plus, Pencil, Trash2, Loader2, Search, CreditCard, Banknote, Download, FileSpreadsheet, ArrowLeft, ArrowRight } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search, CreditCard, Banknote, Download, ArrowLeft, ArrowRight, ChevronDown, ChevronRight } from "lucide-react";
 import { adminApi, adminFetch } from "@nkps/shared/lib/admin-api";
-import { downloadCSV } from "@/lib/csv-export";
 import { cn, formatClassName } from "@nkps/shared/lib/utils";
+import { classSortIndex, CLASS_ORDER } from "@nkps/shared/lib/constants";
+import { FeeScheduleImportDialog } from "@/components/FeeScheduleImportDialog";
+import { StudentConcessionImportDialog } from "@/components/StudentConcessionImportDialog";
+import { useIsAdmin } from "@nkps/shared/hooks/useIsAdmin";
 import {
   resolveEffectiveFeeStructures,
   resolveEffectiveFeeLines,
   resolveStudentType,
   computeDuesBreakdown,
+  resolveBillingCutoff,
   computeLateFee,
   annualizedAmount,
   settledAmount,
   feeLineLabel,
+  type BillableEnrollment,
   type DuesBreakdown,
   type StopFeeLookup,
 } from "@/lib/fees";
@@ -66,25 +81,15 @@ import type {
   FeeStudentType,
 } from "@nkps/shared/types";
 import { HistoricalFeesImportDialog } from "@/components/HistoricalFeesImportDialog";
+import { DayBookImportDialog } from "@/components/DayBookImportDialog";
+import { ImportHistoryPanel } from "@/components/ImportHistoryPanel";
 import { FeeScheduleGrid } from "./FeeScheduleGrid";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
-const CLASS_NAMES = [
-  "Nursery",
-  "LKG",
-  "UKG",
-  "I",
-  "II",
-  "III",
-  "IV",
-  "V",
-  "VI",
-  "VII",
-  "VIII",
-  "IX",
-  "X",
-  "XI",
-  "XII",
-];
+// The class list is CLASS_ORDER from shared constants. It used to be
+// retyped in this file (and two others), which is three places for the
+// school's class list to disagree with itself.
+const CLASS_NAMES: readonly string[] = CLASS_ORDER;
 
 const STREAM_CLASSES = ["XI", "XII"];
 
@@ -172,10 +177,12 @@ interface DuesRow {
   class_label: string;
   has_transport: boolean;
   // Whole-year obligation — what the class's schedule totals for this student.
+  // For a leaver it is the obligation up to `billing_cutoff` instead: their
+  // year ended when they did.
   expected: number;
-  // The slice of `expected` that has actually fallen due as of today. Dues are
-  // measured against this, not the annual figure: an instalment due in January
-  // is not an arrear in August.
+  // The slice of `expected` that has actually fallen due as of today (or as of
+  // `billing_cutoff`, for a leaver). Dues are measured against this, not the
+  // annual figure: an instalment due in January is not an arrear in August.
   billed_to_date: number;
   paid: number;
   // Late-fee surcharge auto-applied when at least one applicable fee
@@ -185,6 +192,14 @@ interface DuesRow {
   // then summed.
   late_fee: number;
   dues: number;
+  // The enrollment's status. Always 'active' unless "Include students who
+  // left" is on — in which case the register must say which rows are leavers,
+  // or the office cannot tell an arrear it should chase from one it should not.
+  enrollment_status: string;
+  // The leaving date this row was priced to, for leavers. Shown on the badge:
+  // an operator looking at a frozen figure should be able to see the date it
+  // froze on without opening the student.
+  billing_cutoff: string | null;
 }
 
 export type FeesSection = "academic" | "payments" | "dues";
@@ -293,11 +308,21 @@ function DuesTable({
   rows,
   emptyMessage,
   showClass,
+  showLeftOn,
+  exportName,
+  exportTitle,
 }: {
   rows: DuesRow[];
   emptyMessage: string;
   /** Off when a single class is selected — the column would repeat one value. */
   showClass: boolean;
+  /**
+   * On only when "Include students who left" is on. Off it would be a column
+   * of dashes, since every row is then a student still on the roll.
+   */
+  showLeftOn: boolean;
+  exportName: string;
+  exportTitle: string;
 }) {
   const columns = useMemo<TableColumns<DuesRow>>(
     () => ({
@@ -321,33 +346,75 @@ function DuesTable({
         label: "Transport",
         value: (r) => (r.has_transport ? "Yes" : "No"),
       },
+      // A leaver's money columns are frozen on this date. Without it a
+      // downloaded register reads as if every figure were priced to today,
+      // which is exactly the wrong impression for a student who left in June.
+      ...(showLeftOn
+        ? {
+            billing_cutoff: {
+              label: "Left On",
+              value: (r: DuesRow) => r.billing_cutoff,
+              sortValue: (r: DuesRow) => r.billing_cutoff ?? "",
+              emptyLabel: "On roll",
+            },
+          }
+        : {}),
+      // `sortValue` already holds the raw rupee amount for each of these, so
+      // `exportFormat` is all it takes for the exported column to be a number
+      // Excel can total — rather than the "₹1,23,456" text it shows on screen.
       expected: {
         label: "Annual Fee",
         value: (r) => inr(r.expected),
         sortValue: (r) => r.expected,
+        exportFormat: "currency",
       },
       billed_to_date: {
         label: "Due Till Date",
         value: (r) => inr(r.billed_to_date),
         sortValue: (r) => r.billed_to_date,
+        exportFormat: "currency",
       },
-      paid: { label: "Paid", value: (r) => inr(r.paid), sortValue: (r) => r.paid },
+      paid: {
+        label: "Paid",
+        value: (r) => inr(r.paid),
+        sortValue: (r) => r.paid,
+        exportFormat: "currency",
+      },
       late_fee: {
         label: "Late Fee",
         value: (r) => (r.late_fee > 0 ? inr(r.late_fee) : null),
         sortValue: (r) => r.late_fee,
         emptyLabel: "None",
+        exportFormat: "currency",
       },
       dues: {
         label: "Dues",
         value: (r) => (r.dues > 0 ? inr(r.dues) : "Nil"),
         sortValue: (r) => r.dues,
+        exportFormat: "currency",
+      },
+      // Replaces the three separate "export all / with dues / cleared"
+      // buttons: as a column it filters the table on screen as well, and it
+      // cannot disagree with what gets downloaded — the old buttons each used
+      // a different row set, so two of them exported something other than what
+      // the reader was looking at.
+      dues_bucket: {
+        label: "Dues Status",
+        value: (r) => (r.dues > 0 ? "Has dues" : "Cleared"),
       },
     }),
-    []
+    [showLeftOn]
   );
 
   const table = useTableControls({ rows, columns });
+  // Keyed on the filter summary so applying a column filter lands on page 1
+  // rather than on whatever page number was left over from the wider set.
+  const pagination = useTablePagination(table.rows, {
+    defaultPageSize: 50,
+    resetKey: `${exportName}:${table.filterSummary
+      .map((f) => `${f.label}=${f.value}`)
+      .join("|")}`,
+  });
 
   if (rows.length === 0) {
     return (
@@ -359,11 +426,20 @@ function DuesTable({
 
   return (
     <>
-      <TableFilterSummary
-        ctl={table}
-        total={rows.length}
-        shown={table.rows.length}
-      />
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <TableFilterSummary
+          ctl={table}
+          total={rows.length}
+          shown={table.rows.length}
+          className="mb-0 mr-auto"
+        />
+        <TableExportButton
+          ctl={table}
+          filename={exportName}
+          title={exportTitle}
+          featureKey="fees"
+        />
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
@@ -377,20 +453,21 @@ function DuesTable({
             <SortFilterHead ctl={table} col="paid" align="right" />
             <SortFilterHead ctl={table} col="late_fee" align="right" />
             <SortFilterHead ctl={table} col="dues" align="right" />
+            <SortFilterHead ctl={table} col="dues_bucket" />
           </TableRow>
         </TableHeader>
         <TableBody>
-          {table.rows.length === 0 && (
+          {pagination.total === 0 && (
             <TableRow>
               <TableCell
-                colSpan={showClass ? 10 : 9}
+                colSpan={showClass ? 11 : 10}
                 className="py-10 text-center text-gray-500 dark:text-gray-400"
               >
                 No students match the column filters.
               </TableCell>
             </TableRow>
           )}
-          {table.rows.map((r) => (
+          {pagination.pageRows.map((r) => (
             <TableRow key={r.student_id}>
               <TableCell className="font-medium">{r.admission_no}</TableCell>
               <TableCell>
@@ -401,6 +478,21 @@ function DuesTable({
                 >
                   {r.full_name}
                 </Link>
+                {/* Only ever set when "Include students who left" is on. A
+                    leaver's arrears are historical, not something to chase. */}
+                {r.enrollment_status !== "active" && (
+                  <Badge
+                    className="ml-2 bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-300"
+                    title={
+                      r.billing_cutoff
+                        ? `Billing stopped on ${r.billing_cutoff}. Nothing due after this date is charged.`
+                        : "No leaving date on record, so this student is still being billed to today. Set one on People \u2192 Students."
+                    }
+                  >
+                    {r.enrollment_status === "terminated" ? "Terminated" : "Left"}
+                    {r.billing_cutoff ? ` \u00b7 ${r.billing_cutoff}` : ""}
+                  </Badge>
+                )}
               </TableCell>
               {showClass && (
                 <TableCell className="text-gray-600 dark:text-gray-300">
@@ -412,7 +504,7 @@ function DuesTable({
               </TableCell>
               <TableCell>
                 {r.has_transport ? (
-                  <Badge className="bg-blue-100 text-blue-700 border-blue-200">
+                  <Badge className="bg-blue-100 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border-blue-200">
                     Yes
                   </Badge>
                 ) : (
@@ -431,15 +523,30 @@ function DuesTable({
               </TableCell>
               <TableCell className="text-right font-medium">
                 {r.dues > 0 ? (
-                  <span className="text-red-600">{inr(r.dues)}</span>
+                  <span className="text-red-600 dark:text-red-400">{inr(r.dues)}</span>
                 ) : (
-                  <span className="text-green-600">Nil</span>
+                  <span className="text-green-600 dark:text-green-400">Nil</span>
                 )}
+              </TableCell>
+              <TableCell>
+                <span
+                  className={
+                    r.dues > 0
+                      ? "text-red-600 dark:text-red-400"
+                      : "text-green-700 dark:text-green-400"
+                  }
+                >
+                  {r.dues > 0 ? "Has dues" : "Cleared"}
+                </span>
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+      {/* Export stays bound to the controller's full row list, not this page:
+          exporting only what is on screen would hand someone a partial
+          arrears report that looks complete. */}
+      <TablePaginationBar ctl={pagination} noun="students" />
     </>
   );
 }
@@ -464,7 +571,7 @@ function LateFeeNote({
   if (pct === 0 && perDay === 0) return null;
 
   const anchor = line.late_fee_start_date ?? line.due_date;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO();
   // Only "accruing" when the line itself is still owed. A line paid on time
   // incurs nothing however overdue its neighbours are.
   const outstanding = settled < annualizedAmount(line);
@@ -598,6 +705,8 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
   // register even when the student was reached by name search rather than by
   // picking a class first.
   const [selectedStudentClassId, setSelectedStudentClassId] = useState<string | null>(null);
+  // Last date the selected student may be billed for — see resolveBillingCutoff().
+  const [selectedBillingCutoff, setSelectedBillingCutoff] = useState<string | null>(null);
   // Transport state for the selected student. Stop/fee/bus assignment now
   // lives in the standalone /transport section (migration 074); Payments only
   // reads the assigned stop so the office can bill a transport payment.
@@ -624,6 +733,9 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
       bus_stop?: { name: string } | null;
     })[]
   >([]);
+  const isAdmin = useIsAdmin();
+  // Bumped after an import so the history panel refetches.
+  const [importHistoryKey, setImportHistoryKey] = useState(0);
   const [paymentsLoading, setPaymentsLoading] = useState(false);
 
   // Payments tab: class-driven roster picker. Pick a class → see students →
@@ -637,6 +749,12 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
   // Dues tab state
   const [classesList, setClassesList] = useState<ClassEntry[]>([]);
   const [duesClassId, setDuesClassId] = useUrlState("dues_class_id");
+  // Mid-session leavers are excluded from the register by default: chasing
+  // someone who has left for an instalment they will never owe is noise.
+  // But their receipts are part of the session's collection, and after the
+  // day-book backfill a chunk of the money belongs to students no longer on
+  // the roster — so the office needs to be able to see them on demand.
+  const [includeLeavers, setIncludeLeavers] = useState(false);
   // Which side of the register is open, in the URL so the dashboard's
   // "Paid" / "Remaining" tiles can land on the matching list.
   const [duesTab, setDuesTab] = useUrlState("dues_tab", "dues-list");
@@ -682,31 +800,41 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
   // Academic year. The date range is needed as well as the id: a student
   // counts as "new" (and so owes the admission fee) when their admission date
   // falls inside the year being billed.
+  const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
   const [academicYearId, setAcademicYearId] = useState("");
   const [academicYearRange, setAcademicYearRange] = useState<{
     start_date: string | null;
     end_date: string | null;
   } | null>(null);
 
+  // Every fee query on this page keys off `academicYearId` — structures,
+  // payments, stop fees, the dues calculation and its late-fee window — so
+  // pointing this one lookup at the session picker makes the whole register
+  // session-aware, rather than permanently pinned to whichever year carries
+  // the is_current flag.
   const fetchAcademicYear = useCallback(async () => {
-    const { data } = await supabase
-      .from("academic_years")
-      .select("id, start_date, end_date")
-      .eq("is_current", true)
-      .single();
+    let query = supabase.from("academic_years").select("id, start_date, end_date");
+    query = sessionId ? query.eq("id", sessionId) : query.eq("is_current", true);
+    const { data } = await query.maybeSingle();
     if (data) {
-      setAcademicYearId(data.id);
+      setAcademicYearId(data.id as string);
       setAcademicYearRange({
         start_date: (data.start_date as string | null) ?? null,
         end_date: (data.end_date as string | null) ?? null,
       });
     }
-  }, [supabase]);
+  }, [supabase, sessionId]);
 
   const fetchStreams = useCallback(async () => {
+    // kind='stream' only: this list is both the fee-structure stream picker
+    // and the label map for a stored fee_structures.stream_id, and a wing can
+    // never legitimately be either. (migration 118)
     const { data } = await supabase
       .from("streams")
       .select("*")
+      .eq("kind", "stream")
       .eq("is_active", true)
       .order("sort_order");
     setStreams((data as Stream[]) ?? []);
@@ -761,7 +889,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     const { data: enrollment } = await supabase
       .from("student_enrollments")
       .select(
-        "id, class_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, classes(name, section)"
+        "id, class_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, exit_date, status_changed_at, classes(name, section)"
       )
       .eq("student_id", student.id)
       .order("enrollment_date", { ascending: false })
@@ -781,6 +909,9 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
         : null;
     setSelectedStudentStreamId(streamId);
     setSelectedEnrollmentId(enrollment?.id ?? null);
+    // Null while the student is on the roll; their leaving date once they are
+    // not, which is what stops the schedule charging them past their exit.
+    setSelectedBillingCutoff(resolveBillingCutoff(enrollment));
     setSelectedStudentClassId((enrollment?.class_id as string | null) ?? null);
     setStudentHasTransport(hasTransport);
     setStudentBusStopId(busStopId);
@@ -794,13 +925,20 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     // offer a transport line. Only meaningful when the student is opted in
     // and actually assigned to a stop.
     if (hasTransport && busStopId && academicYearId) {
-      const { data: stopFee } = await supabase
+      const { data: stopFee, error: stopFeeError } = await supabase
         .from("bus_stop_fees")
         .select("amount, frequency, is_active, bus_stops(name)")
         .eq("bus_stop_id", busStopId)
         .eq("academic_year_id", academicYearId)
         .eq("is_active", true)
         .maybeSingle();
+      // Distinguish "this stop has no fee configured" from "the read failed":
+      // the else branch below clears the transport line, and an operator who
+      // sees it missing would reasonably conclude the student owes nothing for
+      // the bus and take a payment short of what is due.
+      if (stopFeeError) {
+        toast.error("Couldn't load the transport fee for this stop");
+      }
       if (stopFee) {
         const stopMeta =
           (stopFee.bus_stops as unknown as { name: string } | null) ?? null;
@@ -947,12 +1085,15 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
           "students(id, full_name, admission_no, father_name, is_active), classes(name, section, streams(name))"
         )
         .eq("academic_year_id", academicYearId)
-        .eq("status", "active")
-        // Past PostgREST's 1000-row default cap: a whole-school roster
-        // silently truncated at 1000 would hide students with no warning.
-        .range(0, 9999);
+        .eq("status", "active");
       if (paymentsClassId) query = query.eq("class_id", paymentsClassId);
-      const { data } = await query;
+      // Paged. A .range() cannot lift PostgREST's db-max-rows cap, and the
+      // school is at 942 active students against a cap of 1000 — a truncated
+      // roster here means a student the office cannot find to take money from,
+      // with nothing on screen to say why.
+      const { data } = await fetchAllRows<Record<string, unknown>>((from, to) =>
+        query.range(from, to)
+      );
       if (cancelled) return;
       type Row = {
         students: {
@@ -1063,6 +1204,57 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     columns: structureColumns,
   });
 
+  // ── "All Structures": grouped by class ──
+  // Flat, this table runs to 60-100+ rows (15 classes x 3-6 instalments, plus
+  // a set per stream for XI) with no visual break, so finding one class means
+  // scanning the lot. Collapsed groups make the common task -- "what does
+  // Class V pay?" -- one click.
+  //
+  // Ordered by CURRICULUM order, not the text sort the query returns: sorting
+  // class names as strings puts "I" before "Nursery" and "X" before "XI",
+  // which looks plausible enough to go unnoticed.
+  const groupedStructures = useMemo(() => {
+    const byClass = new Map<string, FeeStructure[]>();
+    for (const fs of structureTable.rows) {
+      const key = fs.class_name ?? "—";
+      const list = byClass.get(key) ?? [];
+      list.push(fs);
+      byClass.set(key, list);
+    }
+    return Array.from(byClass.entries())
+      .map(([className, rows]) => ({
+        className,
+        rows,
+        total: rows.reduce((sum, r) => sum + Number(r.amount ?? 0), 0),
+      }))
+      .sort(
+        (a, b) =>
+          classSortIndex(a.className) - classSortIndex(b.className) ||
+          a.className.localeCompare(b.className)
+      );
+  }, [structureTable.rows]);
+
+  // Collapsed by default — the point is to shorten the page.
+  const [expandedFeeClasses, setExpandedFeeClasses] = useState<Set<string>>(
+    new Set()
+  );
+  const toggleFeeClass = useCallback((className: string) => {
+    setExpandedFeeClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(className)) next.delete(className);
+      else next.add(className);
+      return next;
+    });
+  }, []);
+
+  // A column filter or search that narrows to one class should not leave the
+  // reader clicking it open: when only one group survives, expand it.
+  useEffect(() => {
+    if (groupedStructures.length === 1) {
+      setExpandedFeeClasses(new Set([groupedStructures[0].className]));
+    }
+  }, [groupedStructures]);
+
   const classStudentColumns = useMemo<TableColumns<RosterStudent>>(
     () => ({
       admission_no: {
@@ -1152,48 +1344,95 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     }
     setDuesLoading(true);
     try {
-      // Every query below carries an explicit .range(): PostgREST caps at
-      // 1000 rows by default, and a whole-school pass silently truncated at
-      // 1000 would under-report arrears with no error to notice.
-      let enrollmentQuery = supabase
-        .from("student_enrollments")
-        .select(
-          "id, student_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, students(id, full_name, admission_no, father_name, is_active, admission_date), classes(name, section, streams(name))"
-        )
-        .eq("academic_year_id", academicYearId)
-        .eq("status", "active")
-        .range(0, 9999);
-      if (duesClassId) enrollmentQuery = enrollmentQuery.eq("class_id", duesClassId);
-      const { data: enrollments } = await enrollmentQuery;
+      // Every read below is paged: PostgREST caps a response at db-max-rows
+      // (1000 on Supabase) and a Range header cannot lift that cap, only ask
+      // for less than it — a whole-school pass truncated there would
+      // under-report arrears with no error to notice.
+      //
+      // Each carries an .order("id") too. LIMIT/OFFSET with no total order
+      // has no stable row order between pages, so a page boundary can hand
+      // back one row twice and skip another — on fee_payments that
+      // double-counts one receipt while losing a real one.
+      const enrollmentPage = (from: number, to: number) => {
+        let q = supabase
+          .from("student_enrollments")
+          .select(
+            "id, student_id, stream_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, exit_date, status_changed_at, students(id, full_name, admission_no, father_name, is_active, admission_date), classes(name, section, streams(name))"
+          )
+          .eq("academic_year_id", academicYearId)
+          .in(
+            "status",
+            includeLeavers ? ["active", "exited", "terminated"] : ["active"]
+          );
+        if (duesClassId) q = q.eq("class_id", duesClassId);
+        return q.order("id", { ascending: true }).range(from, to);
+      };
+      const {
+        data: enrollments,
+        error: enrollmentError,
+        truncated: enrollmentTruncated,
+      } = await fetchAllRows<Record<string, unknown>>(enrollmentPage);
+      if (enrollmentError || enrollmentTruncated) {
+        throw new Error(
+          `student_enrollments: ${enrollmentError ?? "read stopped at the paging guard"}`
+        );
+      }
       // Structures for every class in the year, grouped by class name below.
       // Fetched whole even for a single class: the row count is small, and it
       // keeps one code path for both scopes.
-      const { data: structures } = await supabase
-        .from("fee_structures")
-        .select("*")
-        .eq("academic_year_id", academicYearId)
-        .eq("is_active", true)
-        .range(0, 9999);
+      const {
+        data: structures,
+        error: structuresError,
+        truncated: structuresTruncated,
+      } = await fetchAllRows<FeeStructure>((from, to) =>
+        supabase
+          .from("fee_structures")
+          .select("*")
+          .eq("academic_year_id", academicYearId)
+          .eq("is_active", true)
+          .order("id", { ascending: true })
+          .range(from, to)
+      );
       // Per-stop fees for the current year (stop-based model, migration 074).
       // Keyed by bus_stop_id so each transport-using enrollment can price its
       // assigned stop.
-      const { data: stopFeeRows } = await supabase
-        .from("bus_stop_fees")
-        .select("bus_stop_id, amount, frequency, is_active")
-        .eq("academic_year_id", academicYearId)
-        .eq("is_active", true)
-        .range(0, 9999);
       type StopFeeRow = {
         bus_stop_id: string;
         amount: number;
         frequency: string;
         is_active: boolean;
       };
+      const {
+        data: stopFeeRows,
+        error: stopFeeError,
+        truncated: stopFeeTruncated,
+      } = await fetchAllRows<StopFeeRow>((from, to) =>
+        supabase
+          .from("bus_stop_fees")
+          .select("bus_stop_id, amount, frequency, is_active")
+          .eq("academic_year_id", academicYearId)
+          .eq("is_active", true)
+          .order("id", { ascending: true })
+          .range(from, to)
+      );
+      // Same reasoning as the enrollment read: a read that fails or stops
+      // short leaves the arrears under-reported with nothing on screen to say
+      // so. A dropped bus_stop_fees read would quietly clear the transport
+      // charge from every transport-using student in the register. Throw to
+      // the catch below, which surfaces it, rather than publishing a short
+      // total as fact.
+      if (structuresError || structuresTruncated) {
+        throw new Error(
+          `fee_structures: ${structuresError ?? "read stopped at the paging guard"}`
+        );
+      }
+      if (stopFeeError || stopFeeTruncated) {
+        throw new Error(
+          `bus_stop_fees: ${stopFeeError ?? "read stopped at the paging guard"}`
+        );
+      }
       const stopFeesById = new Map(
-        ((stopFeeRows as StopFeeRow[] | null) ?? []).map((f) => [
-          f.bus_stop_id,
-          f,
-        ])
+        stopFeeRows.map((f) => [f.bus_stop_id, f])
       );
 
       const studentIds = (enrollments ?? []).map((e) => e.student_id as string);
@@ -1216,20 +1455,38 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
         // refund flips status to 'refunded' while amount_paid stays put, so
         // dropping them by status erased the whole receipt from paid totals
         // and overstated dues. Each refunded row's net cash is settled below.
-        let payQuery = supabase
-          .from("fee_payments")
-          .select(
-            "student_id, fee_structure_id, amount_paid, waiver_amount, refund_amount, status"
-          )
-          .in("status", ["paid", "partial", "refunded"])
-          .eq("academic_year_id", academicYearId)
-          .range(0, 99999);
-        // Scope by student only for a single class. Across the whole school
-        // the id list would be thousands of UUIDs in a query string, and the
-        // year filter already bounds the result to the same rows.
-        if (duesClassId) payQuery = payQuery.in("student_id", studentIds);
-        const { data: pays } = await payQuery;
-        payments = (pays as unknown as PayRow[]) ?? [];
+        // Paged, not .range(0, 99999). A Range header cannot lift PostgREST's
+        // db-max-rows cap, only ask for less than it — so the old call read
+        // the first 1000 payments and returned 200 OK. After the 2026-27 day
+        // book put 1,994 rows in this table it reported 432 students as having
+        // paid nothing, against Rs 1.02 crore that was in the table all along.
+        const paymentPage = (from: number, to: number) => {
+          let q = supabase
+            .from("fee_payments")
+            .select(
+              "student_id, fee_structure_id, amount_paid, waiver_amount, refund_amount, status"
+            )
+            .in("status", ["paid", "partial", "refunded"])
+            .eq("academic_year_id", academicYearId);
+          // Scope by student only for a single class. Across the whole school
+          // the id list would be thousands of UUIDs in a query string, and the
+          // year filter already bounds the result to the same rows.
+          if (duesClassId) q = q.in("student_id", studentIds);
+          return q.order("id", { ascending: true }).range(from, to);
+        };
+        const {
+          data: pays,
+          error: payError,
+          truncated: payTruncated,
+        } = await fetchAllRows<PayRow>(paymentPage);
+        // A short read here understates what a family has paid and invents
+        // arrears. Surface it instead of publishing the number.
+        if (payError || payTruncated) {
+          throw new Error(
+            `fee_payments: ${payError ?? "read stopped at the paging guard"}`
+          );
+        }
+        payments = pays;
       }
 
       const allStructures = (structures as FeeStructure[] | null) ?? [];
@@ -1245,7 +1502,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
       // Use a single "today" reference for the whole compute pass so a row
       // crossing midnight mid-computation doesn't get a different verdict
       // than its neighbour.
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayISO();
       // Fallback anchor for recurring fees that carry no due date of their own
       // (legacy monthly/quarterly rows, transport stop fees): they run with the
       // academic year, so periods elapse from its start.
@@ -1291,11 +1548,16 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
               ]
             : [],
         });
+        // With "include leavers" on, the register prices students who are no
+        // longer on the roll. Their schedule stops on the day they left — the
+        // whole reason the arrears column stayed honest after migration 123.
+        const billingCutoff = resolveBillingCutoff(e as BillableEnrollment);
         const breakdown = computeDuesBreakdown({
           lines,
           payments: payments.filter((pay) => pay.student_id === e.student_id),
           today,
           yearStartDate,
+          billingCutoff,
         });
         return {
           student_id: e.student_id as string,
@@ -1304,6 +1566,8 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
           father_name: stu?.father_name ?? null,
           class_label: embeddedClassLabel(e.classes as EmbeddedClass),
           has_transport: Boolean(e.has_transport),
+          enrollment_status: (e.status as string) ?? "active",
+          billing_cutoff: billingCutoff,
           expected: breakdown.expected,
           billed_to_date: breakdown.billedToDate,
           paid: breakdown.paid,
@@ -1319,7 +1583,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     } finally {
       setDuesLoading(false);
     }
-  }, [supabase, duesClassId, academicYearId, academicYearRange]);
+  }, [supabase, duesClassId, academicYearId, academicYearRange, includeLeavers]);
 
   useEffect(() => {
     computeDues();
@@ -1350,34 +1614,6 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     return { withDues, clear, totalDues };
   }, [filteredDuesRows]);
 
-  const exportDues = (subset: "all" | "dues" | "clear") => {
-    const src =
-      subset === "dues"
-        ? duesSummary.withDues
-        : subset === "clear"
-          ? duesSummary.clear
-          : duesRows;
-    if (src.length === 0) {
-      toast.error("Nothing to export");
-      return;
-    }
-    downloadCSV(
-      src,
-      [
-        { key: "admission_no", header: "Admission No" },
-        { key: "full_name", header: "Name" },
-        { key: "father_name", header: "Father" },
-        { key: "class_label", header: "Class" },
-        { key: "has_transport", header: "Transport" },
-        { key: "expected", header: "Annual Fee (INR)" },
-        { key: "billed_to_date", header: "Due Till Date (INR)" },
-        { key: "paid", header: "Paid (INR)" },
-        { key: "late_fee", header: "Late Fee (INR)" },
-        { key: "dues", header: "Dues (INR)" },
-      ],
-      `${subset === "clear" ? "no-dues" : subset === "dues" ? "dues" : "fees-report"}-${new Date().toISOString().split("T")[0]}`
-    );
-  };
 
   // New vs returning student, for schedule rows restricted by audience —
   // the admission/registration fee bills only this year's intake.
@@ -1465,8 +1701,12 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     return computeDuesBreakdown({
       lines: applicableFeeLines,
       payments: yearPayments,
-      today: new Date().toISOString().slice(0, 10),
+      today: todayISO(),
       yearStartDate: academicYearRange?.start_date ?? null,
+      // A student who has left is priced as of their leaving date, so opening
+      // their record a quarter later shows the balance they actually walked
+      // out with rather than one the calendar has grown since.
+      billingCutoff: selectedBillingCutoff,
     });
   }, [
     selectedStudent,
@@ -1474,6 +1714,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     academicYearRange,
     applicableFeeLines,
     yearPayments,
+    selectedBillingCutoff,
   ]);
 
   // Net settled per fee line, so a late-fee note can say whether the
@@ -1696,7 +1937,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
       // The proposed_changes describe a refund — admin's approve endpoint
       // stamps refunded_at/refunded_by from the approver, not the requester.
       if (isEditor) {
-        const res = await fetch("/api/fees/change-requests", {
+        const res = await adminFetch("/api/fees/change-requests", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1724,7 +1965,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
       }
 
       // Admin branch: direct refund.
-      const res = await fetch(
+      const res = await adminFetch(
         `/api/fees/payments/${refundPaymentId}/refund`,
         {
           method: "POST",
@@ -1768,7 +2009,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     }
     setWaiverSubmitting(true);
     try {
-      const res = await fetch("/api/fees/waivers", {
+      const res = await adminFetch("/api/fees/waivers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1827,7 +2068,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
 
     setPaymentSubmitting(true);
     const m = newPayment.payment_method;
-    const res = await fetch("/api/fees/payments", {
+    const res = await adminFetch("/api/fees/payments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1881,6 +2122,19 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
     setPaymentSubmitting(false);
   };
 
+  // Payment status. This was the one place in the app where status colour
+  // disagreed with itself:
+  //
+  //   - `pending` was painted `destructive`, i.e. red, the same as `failed`.
+  //     A payment nobody has made yet is not a failure, and the fee change
+  //     requests screen already paints pending amber. It is amber here now.
+  //   - `partial` was yellow while the Late Fee column in the same row is
+  //     amber, so once yellow folds into amber — which it does, everywhere
+  //     else — "partly paid" and "late fee owing" would have become one
+  //     colour in one row. Partial is a payment in progress, so it takes the
+  //     blue that `applied` and `passed` already mean elsewhere.
+  //   - `refunded` was purple, a hue the app uses for nothing else. It is a
+  //     settled, non-failure end state: neutral.
   const statusBadge = (status: string) => {
     switch (status) {
       case "paid":
@@ -1891,13 +2145,13 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
         );
       case "partial":
         return (
-          <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200 dark:bg-yellow-950/30 dark:text-yellow-400 dark:border-yellow-800">
+          <Badge className="bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800">
             Partial
           </Badge>
         );
       case "refunded":
         return (
-          <Badge className="bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-400 dark:border-purple-800">
+          <Badge className="bg-gray-100 text-gray-700 border-gray-200 dark:bg-muted dark:text-gray-300 dark:border-border">
             Refunded
           </Badge>
         );
@@ -1905,7 +2159,9 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
         return <Badge variant="destructive">Failed</Badge>;
       case "pending":
         return (
-          <Badge variant="destructive">Pending</Badge>
+          <Badge className="bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800">
+            Pending
+          </Badge>
         );
       default:
         return <Badge variant="secondary">{status}</Badge>;
@@ -1927,13 +2183,16 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
-          {sectionTitle}
-        </h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          {sectionSubtitle}
-        </p>
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
+            {sectionTitle}
+          </h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            {sectionSubtitle}
+          </p>
+        </div>
+        <AcademicSessionPicker state={session} />
       </div>
 
       {section === "academic" && (
@@ -1948,6 +2207,14 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
               below stays for cross-class review and for legacy recurring
               rows the grid intentionally doesn't model. */}
           <TabsContent value="schedule">
+            {/* Setting fifteen classes one grid at a time is a day's work at
+                the start of every session; this takes one sheet. It sat
+                beside the tab bar, which kept it on screen while All
+                Structures was open — where it does nothing, since it
+                imports a schedule. */}
+            <div className="mt-3 flex justify-end">
+              <FeeScheduleImportDialog onImported={fetchFeeStructures} />
+            </div>
             <FeeScheduleGrid />
           </TabsContent>
 
@@ -1958,10 +2225,9 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                 <CardContent>
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
-                      <select
+                      <NativeSelect
                         value={classFilter}
                         onChange={(e) => setClassFilter(e.target.value)}
-                        className="rounded-md border border-gray-300 dark:border-border px-3 py-2 text-sm dark:bg-muted"
                       >
                         <option value="">All Classes</option>
                         {CLASS_NAMES.map((cn) => (
@@ -1969,10 +2235,10 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                             {cn}
                           </option>
                         ))}
-                      </select>
+                      </NativeSelect>
                     </div>
                     <Button
-                      className="bg-navy-900 hover:bg-navy-800 text-white"
+                      className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
                       onClick={openAddStructure}
                     >
                       <Plus className="h-4 w-4 mr-2" />
@@ -1990,11 +2256,20 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     </p>
                   ) : (
                     <>
-                    <TableFilterSummary
-                      ctl={structureTable}
-                      total={feeStructures.length}
-                      shown={structureTable.rows.length}
-                    />
+                    <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                      <TableFilterSummary
+                        ctl={structureTable}
+                        total={feeStructures.length}
+                        shown={structureTable.rows.length}
+                        className="mb-0 mr-auto"
+            />
+                      <TableExportButton
+                        ctl={structureTable}
+                        filename="fee-structures"
+                        title="Fee Structures"
+                        featureKey="fees"
+                      />
+                    </div>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -2017,71 +2292,106 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                             </TableCell>
                           </TableRow>
                         )}
-                        {structureTable.rows.map((fs) => (
-                          <TableRow key={fs.id}>
-                            <TableCell className="font-medium">
-                              {fs.class_name}
-                            </TableCell>
-                            <TableCell className="text-gray-600 dark:text-gray-300">
-                              {fs.stream_id ? streamById[fs.stream_id] ?? "—" : "All streams"}
-                            </TableCell>
-                            <TableCell>{fs.fee_type}</TableCell>
-                            <TableCell className="text-gray-600 dark:text-gray-300">
-                              {fs.instalment_name ?? "--"}
-                              {fs.month_label ? (
-                                <span className="block text-xs text-gray-400 dark:text-gray-500">
-                                  {fs.month_label}
-                                </span>
-                              ) : null}
-                            </TableCell>
-                            <TableCell>
-                              {new Intl.NumberFormat("en-IN", {
-                                style: "currency",
-                                currency: "INR",
-                                maximumFractionDigits: 0,
-                              }).format(fs.amount)}
-                            </TableCell>
-                            <TableCell className="capitalize">
-                              {fs.frequency.replace("_", " ")}
-                            </TableCell>
-                            <TableCell>
-                              {fs.due_date ?? "--"}
-                              {/* The grace date the late fee actually runs
-                                  from, when it differs from the due date. */}
-                              {fs.late_fee_start_date &&
-                              fs.late_fee_start_date !== fs.due_date ? (
-                                <span className="block text-xs text-gray-400 dark:text-gray-500">
-                                  late fee from {fs.late_fee_start_date}
-                                </span>
-                              ) : null}
-                            </TableCell>
-                            <TableCell className="text-gray-600 dark:text-gray-300">
-                              {fs.student_type === "new"
-                                ? "New Student"
-                                : fs.student_type === "existing"
-                                  ? "Old Student"
-                                  : "Both"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                <button
-                                  onClick={() => openEditStructure(fs)}
-                                  className="text-blue-500 hover:text-blue-700 p-1"
-                                  aria-label="Edit fee structure"
-                                >
-                                  <Pencil className="h-4 w-4" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteStructure(fs.id)}
-                                  className="text-red-500 hover:text-red-700 p-1"
-                                  aria-label="Delete fee structure"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {groupedStructures.map((group) => {
+                          const collapsed = !expandedFeeClasses.has(group.className);
+                          return (
+                            <Fragment key={group.className}>
+                              {/* Group header rendered as a row INSIDE the same
+                                  table, rather than wrapping each class in its
+                                  own Accordion + Table: one table keeps the
+                                  columns aligned across classes and keeps the
+                                  single set of sort/filter heads above working
+                                  for all of them. */}
+                              <TableRow
+                                className="cursor-pointer bg-gray-50/80 dark:bg-muted/40 hover:bg-gray-100 dark:hover:bg-muted/60"
+                                onClick={() => toggleFeeClass(group.className)}
+                              >
+                                <TableCell colSpan={8} className="font-medium">
+                                  <span className="inline-flex items-center gap-2">
+                                    {collapsed ? (
+                                      <ChevronRight className="h-4 w-4 text-gray-400" />
+                                    ) : (
+                                      <ChevronDown className="h-4 w-4 text-gray-400" />
+                                    )}
+                                    Class {group.className}
+                                    <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
+                                      {group.rows.length} row
+                                      {group.rows.length === 1 ? "" : "s"} ·{" "}
+                                      {inr(group.total)}
+                                    </span>
+                                  </span>
+                                </TableCell>
+                                <TableCell />
+                              </TableRow>
+                              {!collapsed &&
+                                group.rows.map((fs) => (
+                            <TableRow key={fs.id}>
+                              <TableCell className="font-medium pl-8">
+                                {fs.class_name}
+                              </TableCell>
+                              <TableCell className="text-gray-600 dark:text-gray-300">
+                                {fs.stream_id ? streamById[fs.stream_id] ?? "—" : "All streams"}
+                              </TableCell>
+                              <TableCell>{fs.fee_type}</TableCell>
+                              <TableCell className="text-gray-600 dark:text-gray-300">
+                                {fs.instalment_name ?? "--"}
+                                {fs.month_label ? (
+                                  <span className="block text-xs text-gray-400 dark:text-gray-500">
+                                    {fs.month_label}
+                                  </span>
+                                ) : null}
+                              </TableCell>
+                              <TableCell>
+                                {new Intl.NumberFormat("en-IN", {
+                                  style: "currency",
+                                  currency: "INR",
+                                  maximumFractionDigits: 0,
+                                }).format(fs.amount)}
+                              </TableCell>
+                              <TableCell className="capitalize">
+                                {fs.frequency.replace("_", " ")}
+                              </TableCell>
+                              <TableCell>
+                                {fs.due_date ?? "--"}
+                                {/* The grace date the late fee actually runs
+                                    from, when it differs from the due date. */}
+                                {fs.late_fee_start_date &&
+                                fs.late_fee_start_date !== fs.due_date ? (
+                                  <span className="block text-xs text-gray-400 dark:text-gray-500">
+                                    late fee from {fs.late_fee_start_date}
+                                  </span>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="text-gray-600 dark:text-gray-300">
+                                {fs.student_type === "new"
+                                  ? "New Student"
+                                  : fs.student_type === "existing"
+                                    ? "Old Student"
+                                    : "Both"}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => openEditStructure(fs)}
+                                    className="text-blue-500 hover:text-blue-700 p-1"
+                                    aria-label="Edit fee structure"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteStructure(fs.id)}
+                                    className="text-red-500 hover:text-red-700 p-1"
+                                    aria-label="Delete fee structure"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                                ))}
+                            </Fragment>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                     </>
@@ -2101,8 +2411,35 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
       {section === "payments" && (
         <div>
           <div className="flex items-center justify-end gap-2 flex-wrap">
+            {/* Admin-only: a bulk concession path for editors would bypass the
+                change-request approval their single-student waivers go through. */}
+            {isAdmin && (
+              <StudentConcessionImportDialog
+                onImported={() => {
+                  // Concessions span many students, so there is no global list
+                  // to refresh — but if one student is open, their balance has
+                  // just changed and should not go on showing the old figure.
+                  if (selectedStudent) selectStudent(selectedStudent);
+                }}
+              />
+            )}
+            <DayBookImportDialog
+              onImported={() => {
+                // A day-book batch moves a whole session's collections, so the
+                // open student's balance and the import history are both stale.
+                if (selectedStudent) selectStudent(selectedStudent);
+                setImportHistoryKey((k) => k + 1);
+              }}
+            />
             <HistoricalFeesImportDialog />
           </div>
+
+          {/* Admin-only, matching the revert endpoint it drives. */}
+          {isAdmin && (
+            <div className="mt-4">
+              <ImportHistoryPanel refreshKey={importHistoryKey} />
+            </div>
+          )}
 
           <Card className="bg-white dark:bg-card rounded-2xl shadow-sm mt-4">
             <CardContent>
@@ -2112,14 +2449,14 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                   <Label className="mb-2 block text-xs font-medium">
                     Class
                   </Label>
-                  <select
+                  <NativeSelect
                     value={paymentsClassId}
                     onChange={(e) => {
                       setPaymentsClassId(e.target.value);
                       clearSelectedStudent();
                       setClassStudentSearch("");
                     }}
-                    className="block rounded-md border border-gray-300 dark:border-border px-3 py-2 text-sm dark:bg-muted min-w-[220px]"
+                    className="block min-w-[220px]"
                   >
                     <option value="">All classes</option>
                     {classesList.map((c) => (
@@ -2127,7 +2464,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                         {formatClassName(c)}
                       </option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 </div>
                 <div className="flex-1">
                   <Label className="mb-2 block text-xs font-medium">
@@ -2278,11 +2615,20 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     </p>
                   ) : (
                     <>
-                    <TableFilterSummary
-                      ctl={paymentTable}
-                      total={studentPayments.length}
-                      shown={paymentTable.rows.length}
-                    />
+                    <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                      <TableFilterSummary
+                        ctl={paymentTable}
+                        total={studentPayments.length}
+                        shown={paymentTable.rows.length}
+                        className="mb-0 mr-auto"
+            />
+                      <TableExportButton
+                        ctl={paymentTable}
+                        filename="fee-payments"
+                        title="Fee Payments"
+                        featureKey="fees"
+                      />
+                    </div>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -2333,7 +2679,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                                   variant="ghost"
                                   size="icon-sm"
                                   onClick={() => downloadReceipt(p.id)}
-                                  className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                                  className="text-green-600 dark:text-green-400 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
                                   title="Download fee receipt (school + parent copy)"
                                 >
                                   <Download className="h-4 w-4" />
@@ -2354,7 +2700,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                                       setRefundOpen(true);
                                     }}
                                     title="Refund this payment"
-                                    className="text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950/30 h-8 px-2 text-xs"
+                                    className="text-amber-700 dark:text-amber-400 hover:text-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/30 h-8 px-2 text-xs"
                                   >
                                     Refund
                                   </Button>
@@ -2411,11 +2757,20 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                   </div>
                 ) : (
                   <>
-                  <TableFilterSummary
-                    ctl={classStudentTable}
-                    total={filteredClassStudents.length}
-                    shown={classStudentTable.rows.length}
-                  />
+                  <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                    <TableFilterSummary
+                      ctl={classStudentTable}
+                      total={filteredClassStudents.length}
+                      shown={classStudentTable.rows.length}
+                      className="mb-0 mr-auto"
+            />
+                    <TableExportButton
+                      ctl={classStudentTable}
+                      filename="class-fee-status"
+                      title="Class Fee Status"
+                      featureKey="fees"
+                    />
+                  </div>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -2502,10 +2857,10 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4">
                 <div>
                   <Label className="text-xs font-medium">Class</Label>
-                  <select
+                  <NativeSelect
                     value={duesClassId}
                     onChange={(e) => setDuesClassId(e.target.value)}
-                    className="block mt-1 rounded-md border border-gray-300 dark:border-border px-3 py-2 text-sm dark:bg-muted min-w-[220px]"
+                    className="block mt-1 min-w-[220px]"
                   >
                     <option value="">All classes</option>
                     {classesList.map((c) => (
@@ -2513,8 +2868,15 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                         {formatClassName(c)}
                       </option>
                     ))}
-                  </select>
+                  </NativeSelect>
                 </div>
+                <label className="flex items-center gap-2 text-sm mt-1 sm:mt-5">
+                  <Checkbox
+                    checked={includeLeavers}
+                    onCheckedChange={(v) => setIncludeLeavers(Boolean(v))}
+                  />
+                  Include students who left
+                </label>
                 {!duesLoading && duesRows.length > 0 && (
                   <div className="flex-1 min-w-[220px]">
                     <Label className="text-xs font-medium">Search</Label>
@@ -2531,7 +2893,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                 )}
                 {!duesLoading && duesRows.length > 0 && (
                   <div className="ml-auto flex items-center gap-2 flex-wrap">
-                    <Badge className="bg-red-100 text-red-700 border-red-200">
+                    <Badge className="bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200">
                       Pending:{" "}
                       {new Intl.NumberFormat("en-IN", {
                         style: "currency",
@@ -2539,27 +2901,9 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                         maximumFractionDigits: 0,
                       }).format(duesSummary.totalDues)}
                     </Badge>
-                    <Badge className="bg-green-100 text-green-700 border-green-200">
+                    <Badge className="bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200">
                       Clear: {duesSummary.clear.length}
                     </Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => exportDues("dues")}
-                      disabled={duesSummary.withDues.length === 0}
-                    >
-                      <FileSpreadsheet className="h-4 w-4 mr-1" />
-                      Export Dues
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => exportDues("clear")}
-                      disabled={duesSummary.clear.length === 0}
-                    >
-                      <FileSpreadsheet className="h-4 w-4 mr-1" />
-                      Export No-Dues
-                    </Button>
                   </div>
                 )}
               </div>
@@ -2571,8 +2915,8 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
               ) : duesRows.length === 0 ? (
                 <p className="text-center py-12 text-gray-400 dark:text-gray-500 text-sm">
                   {duesClassId
-                    ? "No active enrolments for this class in the current academic year."
-                    : "No active enrolments in the current academic year."}
+                    ? `No ${includeLeavers ? "" : "active "}enrolments for this class in the current academic year.`
+                    : `No ${includeLeavers ? "" : "active "}enrolments in the current academic year.`}
                 </p>
               ) : (
                 <Tabs
@@ -2597,7 +2941,16 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                               ? duesSummary.withDues
                               : duesSummary.clear
                           }
+                          exportName={
+                            key === "dues-list" ? "fee-dues" : "fee-no-dues"
+                          }
+                          exportTitle={
+                            key === "dues-list"
+                              ? "Outstanding Fees"
+                              : "Students With No Dues"
+                          }
                           showClass={!duesClassId}
+                          showLeftOn={includeLeavers}
                           emptyMessage={
                             duesSearch.trim()
                               ? "No students match your search."
@@ -2622,7 +2975,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
-                <CreditCard className="h-5 w-5 text-emerald-600" />
+                <CreditCard className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
               </div>
               <div>
                 <DialogTitle>
@@ -2639,10 +2992,10 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
             </div>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Class</Label>
-                <select
+                <NativeSelect
                   value={structureForm.class_name}
                   onChange={(e) =>
                     setStructureForm({
@@ -2653,41 +3006,41 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                         : "",
                     })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   {CLASS_NAMES.map((cn) => (
                     <option key={cn} value={cn}>
                       {cn}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Fee Type</Label>
-                <select
+                <NativeSelect
                   value={structureForm.fee_type}
                   onChange={(e) =>
                     setStructureForm({ ...structureForm, fee_type: e.target.value })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   {FEE_TYPES.map((ft) => (
                     <option key={ft} value={ft}>
                       {ft}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             </div>
             {supportsStream && (
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Stream (optional)</Label>
-                <select
+                <NativeSelect
                   value={structureForm.stream_id}
                   onChange={(e) =>
                     setStructureForm({ ...structureForm, stream_id: e.target.value })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   <option value="">All streams (applies to everyone)</option>
                   {streams.map((s) => (
@@ -2696,13 +3049,13 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                       {s.code ? ` (${s.code})` : ""}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Leave blank to apply the same fee to every stream in this class.
                 </p>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Amount</Label>
                 <Input
@@ -2717,7 +3070,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Frequency</Label>
-                <select
+                <NativeSelect
                   value={structureForm.frequency}
                   onChange={(e) =>
                     setStructureForm({
@@ -2725,17 +3078,17 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                       frequency: e.target.value as (typeof FREQUENCIES)[number],
                     })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   {FREQUENCIES.map((f) => (
                     <option key={f} value={f}>
                       {f.charAt(0).toUpperCase() + f.slice(1).replace("_", " ")}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Due Date (optional)</Label>
                 <Input
@@ -2768,7 +3121,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">
                   Instalment Name (optional)
@@ -2804,7 +3157,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
             </div>
             <div className="space-y-1">
               <Label className="text-xs font-medium">Student Type</Label>
-              <select
+              <NativeSelect
                 value={structureForm.student_type}
                 onChange={(e) =>
                   setStructureForm({
@@ -2812,19 +3165,19 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     student_type: e.target.value as FeeStudentType,
                   })
                 }
-                className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                className="w-full"
               >
                 {STUDENT_TYPE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Admission and registration fees usually bill new students only.
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">
                   Late Fee % (optional)
@@ -2891,7 +3244,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
             <Button
               onClick={handleSaveStructure}
               disabled={structureSubmitting}
-              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white"
+              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {structureSubmitting ? (
                 <>
@@ -2914,7 +3267,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10">
-                <Banknote className="h-5 w-5 text-green-600" />
+                <Banknote className="h-5 w-5 text-green-600 dark:text-green-400" />
               </div>
               <div>
                 <DialogTitle>Record Payment</DialogTitle>
@@ -2925,7 +3278,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
           <div className="space-y-3">
             <div className="space-y-1">
               <Label className="text-xs font-medium">Fee</Label>
-              <select
+              <NativeSelect
                 value={newPayment.fee_target}
                 onChange={(e) => {
                   // A scheduled instalment already says which period it
@@ -2942,7 +3295,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     month: picked?.month_label ?? newPayment.month,
                   });
                 }}
-                className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                className="w-full"
               >
                 <option value="">Select fee</option>
                 {applicableFeeLines.map((line) => {
@@ -2969,9 +3322,9 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     </option>
                   );
                 })}
-              </select>
+              </NativeSelect>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Amount</Label>
                 <Input
@@ -2986,7 +3339,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Payment Method</Label>
-                <select
+                <NativeSelect
                   value={newPayment.payment_method}
                   onChange={(e) =>
                     setNewPayment({
@@ -2994,14 +3347,14 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                       payment_method: e.target.value as (typeof PAYMENT_METHODS)[number],
                     })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   {PAYMENT_METHODS.map((m) => (
                     <option key={m} value={m}>
                       {m.charAt(0).toUpperCase() + m.slice(1).replace("_", " ")}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             </div>
             <div className="space-y-1">
@@ -3024,7 +3377,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                 <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                   Cheque details
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs">Cheque No.</Label>
                     <Input
@@ -3048,7 +3401,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs">Drawee Bank</Label>
                     <Input
@@ -3080,7 +3433,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                 <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                   Bank transfer details
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs">Originating Bank</Label>
                     <Input
@@ -3123,7 +3476,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                 <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                   Online payment details
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs">Provider</Label>
                     <Input
@@ -3162,7 +3515,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
             <Button
               onClick={handleRecordPayment}
               disabled={paymentSubmitting}
-              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white"
+              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {paymentSubmitting ? (
                 <>
@@ -3228,7 +3581,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
             <Button
               onClick={handleRefund}
               disabled={refundSubmitting || userRole === null}
-              className="bg-purple-600 hover:bg-purple-700 text-white"
+              className="bg-amber-500 hover:bg-amber-600 text-white"
             >
               {refundSubmitting ? (
                 <>
@@ -3254,7 +3607,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
           <div className="space-y-4 py-4">
             <div>
               <Label className="text-sm font-medium">Fee structure</Label>
-              <select
+              <NativeSelect
                 value={waiverForm.fee_structure_id}
                 onChange={(e) =>
                   setWaiverForm((p) => ({
@@ -3262,7 +3615,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     fee_structure_id: e.target.value,
                   }))
                 }
-                className="mt-1 block w-full rounded-md border border-gray-200 dark:border-border px-3 py-2 text-sm dark:bg-muted"
+                className="mt-1 block w-full"
               >
                 <option value="">Select…</option>
                 {applicableFeeStructures.map((fs) => (
@@ -3272,7 +3625,7 @@ function AdminFeesContentInner({ section }: AdminFeesContentInnerProps) {
                     {fs.due_date ? ` · due ${fs.due_date}` : ""}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
             <div>
               <Label className="text-sm font-medium">Waiver amount</Label>

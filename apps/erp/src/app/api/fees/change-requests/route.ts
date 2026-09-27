@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
 import { feeChangeRequestSchema } from "@nkps/shared/lib/validations";
+import { resolveEntityLabels } from "@/lib/change-request-display";
 
 // GET /api/fees/change-requests
 //   List change requests. Query params:
@@ -66,7 +67,17 @@ export async function GET(request: NextRequest) {
     reviewed_by_name: r.reviewed_by ? nameById.get(r.reviewed_by) ?? null : null,
   }));
 
-  return NextResponse.json({ requests: enriched });
+  // Resolve every foreign key inside the snapshots so the cards can name the
+  // student and the fee head instead of rendering their UUIDs.
+  const entity_labels = await resolveEntityLabels(
+    admin,
+    (requests ?? []).flatMap((r) => [
+      r.proposed_changes as Record<string, unknown> | null,
+      r.current_snapshot as Record<string, unknown> | null,
+    ])
+  );
+
+  return NextResponse.json({ requests: enriched, entity_labels });
 }
 
 // POST /api/fees/change-requests

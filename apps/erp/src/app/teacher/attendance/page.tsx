@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { todayISO } from "@nkps/shared/lib/date";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Button } from "@nkps/shared/components/ui/button";
 import { Badge } from "@nkps/shared/components/ui/badge";
@@ -33,6 +34,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import {
   ClipboardCheck,
@@ -60,14 +62,14 @@ interface StudentRow {
 const STATUS_OPTIONS: { value: AttendanceStatus; label: string; color: string }[] = [
   { value: "present", label: "Present", color: "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/40" },
   { value: "absent", label: "Absent", color: "bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/40" },
-  { value: "late", label: "Late", color: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 hover:bg-yellow-200 dark:hover:bg-yellow-900/40" },
+  { value: "late", label: "Late", color: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/40" },
 ];
 
 export default function TeacherAttendancePage() {
   const [classes, setClasses] = useState<ClassOption[]>([]);
   // Filter state lives in the URL so back-navigation restores it (UX-1).
   const [selectedClassId, setSelectedClassId] = useUrlState("class_id");
-  const todayDate = new Date().toISOString().split("T")[0];
+  const todayDate = todayISO();
   const [date, setDate] = useUrlState("date", todayDate);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -315,7 +317,7 @@ export default function TeacherAttendancePage() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                max={new Date().toISOString().split("T")[0]}
+                max={todayISO()}
               />
             </div>
           </div>
@@ -357,18 +359,27 @@ export default function TeacherAttendancePage() {
               <Badge className="bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400">
                 Absent: {absentCount}
               </Badge>
-              <Badge className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+              <Badge className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
                 Late: {lateCount}
               </Badge>
             </div>
 
             {/* Header sorting/filtering only changes what's on screen — the
                 submit handler still posts every student in `students`. */}
-            <TableFilterSummary
-              ctl={table}
-              total={students.length}
-              shown={table.rows.length}
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+              <TableFilterSummary
+                ctl={table}
+                total={students.length}
+                shown={table.rows.length}
+                className="mb-0 mr-auto"
             />
+              <TableExportButton
+                ctl={table}
+                filename="class-attendance"
+                title="Class Attendance"
+                featureKey="attendance"
+              />
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -423,7 +434,7 @@ export default function TeacherAttendancePage() {
               <Button
                 onClick={handleSubmit}
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white px-8"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 px-8"
               >
                 {submitting && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

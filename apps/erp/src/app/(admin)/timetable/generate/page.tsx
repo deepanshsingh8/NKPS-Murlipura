@@ -239,7 +239,7 @@ export default function GenerateTimetablePage() {
         <Button
           onClick={handleGenerate}
           disabled={running}
-          className="bg-navy-900 hover:bg-navy-800 text-white"
+          className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
         >
           {running && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
           <Wand2 className="h-4 w-4 mr-1.5" />
@@ -251,17 +251,17 @@ export default function GenerateTimetablePage() {
         <div className="erp-table-container p-4 space-y-2">
           <h3 className="font-semibold">Result</h3>
           <p className="text-sm">
-            <strong className="text-green-700">{result.generated}</strong> periods written ·{" "}
-            <strong className={result.skipped > 0 ? "text-amber-700" : "text-gray-500"}>{result.skipped}</strong> skipped
+            <strong className="text-green-700 dark:text-green-400">{result.generated}</strong> periods written ·{" "}
+            <strong className={result.skipped > 0 ? "text-amber-700 dark:text-amber-400" : "text-gray-500"}>{result.skipped}</strong> skipped
           </p>
           {result.conflicts.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium text-amber-800 mt-3 flex items-center gap-1.5">
+              <h4 className="text-sm font-medium text-amber-800 dark:text-amber-300 mt-3 flex items-center gap-1.5">
                 <AlertTriangle className="h-4 w-4" /> Skipped slots
               </h4>
               <ul className="text-xs space-y-1 mt-1.5">
                 {result.conflicts.map((c, i) => (
-                  <li key={i} className="rounded bg-amber-50 px-2 py-1.5 text-amber-900">
+                  <li key={i} className="rounded bg-amber-50 dark:bg-amber-950/30 px-2 py-1.5 text-amber-900 dark:text-amber-300">
                     {classNameById.get(c.class_id) ?? c.class_id} · Day {c.day} ·
                     Period {c.period} → {c.reason}
                   </li>

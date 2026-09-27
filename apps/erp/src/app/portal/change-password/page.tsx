@@ -34,21 +34,14 @@ export default function ChangePasswordPage() {
     try {
       const supabase = createClient();
 
-      // Update the password via Supabase Auth
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-
-      if (updateError) {
-        toast.error(updateError.message);
-        return;
-      }
-
-      // Clear the must_change_password flag server-side. This column is locked
-      // against direct writes from the browser client (migration 061), so it
-      // must go through an API route backed by the service-role client. If this
-      // fails the flag stays set and the user gets bounced back here on their
-      // next login — so we surface the error instead of silently continuing.
+      // The server sets the password AND clears must_change_password, in that
+      // order. Both belong to one route on purpose: when the browser changed
+      // the password itself and then asked the server to clear the flag, the
+      // two could be separated, and anyone holding the temporary password
+      // mailed to them could clear the flag while keeping that password.
+      //
+      // The flag column is also locked against browser writes (migration 061),
+      // so it has to go through a service-role route regardless.
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -60,11 +53,19 @@ export default function ChangePasswordPage() {
 
       const res = await fetch("/api/portal/complete-password-change", {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ newPassword }),
       });
 
       if (!res.ok) {
-        toast.error("Couldn't finalize your password change. Please try again.");
+        const body = await res.json().catch(() => null);
+        toast.error(
+          body?.error ??
+            "Couldn't finalize your password change. Please try again."
+        );
         return;
       }
 
@@ -84,18 +85,18 @@ export default function ChangePasswordPage() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-cream-50 px-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-cream-50 dark:bg-background px-6">
       <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+        <div className="bg-white dark:bg-card rounded-2xl shadow-xl border border-gray-100 dark:border-border p-8">
           {success ? (
             <div className="text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-                <CheckCircle className="h-8 w-8 text-green-600" />
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-950/30">
+                <CheckCircle className="h-8 w-8 text-green-600 dark:text-green-400" />
               </div>
-              <h2 className="font-heading text-2xl font-bold text-navy-900">
+              <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
                 Password Set!
               </h2>
-              <p className="text-gray-500 mt-2 text-sm">
+              <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">
                 Your password has been set successfully. Redirecting to login...
               </p>
             </div>
@@ -103,12 +104,12 @@ export default function ChangePasswordPage() {
             <>
               <div className="text-center mb-8">
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gold-500/10">
-                  <ShieldCheck className="h-8 w-8 text-gold-600" />
+                  <ShieldCheck className="h-8 w-8 text-gold-600 dark:text-gold-400" />
                 </div>
-                <h2 className="font-heading text-2xl font-bold text-navy-900">
+                <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
                   Set Your Password
                 </h2>
-                <p className="text-gray-500 mt-2 text-sm">
+                <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">
                   You&apos;re using a temporary password. Please create a new one to
                   continue.
                 </p>
@@ -116,7 +117,7 @@ export default function ChangePasswordPage() {
 
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="new-password" className="text-navy-900 font-medium">
+                  <Label htmlFor="new-password" className="text-navy-900 dark:text-white font-medium">
                     New Password
                   </Label>
                   <Input
@@ -125,7 +126,7 @@ export default function ChangePasswordPage() {
                     placeholder="At least 6 characters"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                    className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                     required
                     minLength={6}
                   />
@@ -134,7 +135,7 @@ export default function ChangePasswordPage() {
                 <div className="space-y-2">
                   <Label
                     htmlFor="confirm-password"
-                    className="text-navy-900 font-medium"
+                    className="text-navy-900 dark:text-white font-medium"
                   >
                     Confirm Password
                   </Label>
@@ -144,7 +145,7 @@ export default function ChangePasswordPage() {
                     placeholder="Re-enter your password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                    className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                     required
                     minLength={6}
                   />
@@ -153,7 +154,7 @@ export default function ChangePasswordPage() {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white font-medium"
+                  className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 font-medium"
                 >
                   {loading ? (
                     <>

@@ -65,41 +65,42 @@ const FEATURE_META: Record<
 > = {
   gallery: {
     icon: ImageIcon,
-    tone: "bg-amber-100 text-amber-600 dark:bg-amber-900/30",
+    tone: "bg-amber-100 text-amber-600 dark:bg-amber-900/30", // color-ok: feature identity
     href: "/gallery",
     label: "Gallery",
   },
   articles: {
     icon: Newspaper,
-    tone: "bg-sky-100 text-sky-600 dark:bg-sky-900/30",
+    tone: "bg-sky-100 text-sky-600 dark:bg-sky-900/30", // color-ok: feature identity
     href: "/articles",
     label: "Article",
   },
   site_media: {
     icon: Layers,
-    tone: "bg-violet-100 text-violet-600 dark:bg-violet-900/30",
+    tone: "bg-violet-100 text-violet-600 dark:bg-violet-900/30", // color-ok: feature identity
     href: "/site-media",
     label: "Site media",
   },
   disclosure: {
     icon: ScrollText,
-    tone: "bg-teal-100 text-teal-600 dark:bg-teal-900/30",
+    tone: "bg-teal-100 text-teal-600 dark:bg-teal-900/30", // color-ok: feature identity
     href: "/disclosure",
     label: "Disclosure",
   },
   transfer_certificates: {
     icon: FileText,
-    tone: "bg-gold-300/30 text-gold-600 dark:bg-gold-500/20",
+    tone: "bg-gold-300/30 text-gold-600 dark:bg-gold-500/20", // color-ok: feature identity
     href: "/transfer-certificates",
     label: "Transfer certificate",
   },
   contact: {
     icon: MessageSquare,
-    tone: "bg-rose-100 text-rose-600 dark:bg-rose-900/30",
+    tone: "bg-rose-100 text-rose-600 dark:bg-rose-900/30", // color-ok: feature identity
     href: "/contact",
     label: "Contact message",
   },
 } as Record<FeatureKey, { icon: LucideIcon; tone: string; href: string; label: string } | undefined>;
+// color-ok: six feature identities, not statuses — collapsing merges two CMS sections
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -116,12 +117,13 @@ function relativeTime(iso: string): string {
   return `${Math.round(diffDay / 365)}y ago`;
 }
 
+// color-ok: gallery categories are five identities; a collapse merges two of them
 const GALLERY_CATEGORY_TONES: Record<string, string> = {
-  academics: "bg-blue-500",
-  sports: "bg-emerald-500",
-  cultural: "bg-pink-500",
-  campus: "bg-amber-500",
-  events: "bg-violet-500",
+  academics: "bg-blue-500", // color-ok: category identity
+  sports: "bg-emerald-500", // color-ok: category identity
+  cultural: "bg-pink-500", // color-ok: category identity
+  campus: "bg-amber-500", // color-ok: category identity
+  events: "bg-violet-500", // color-ok: category identity
 };
 
 function ContentCard({
@@ -188,7 +190,7 @@ function GalleryBreakdown({
         </span>
         <span className="text-[11px] text-gray-400">images</span>
         {data.addedThisMonth > 0 && (
-          <span className="ml-auto text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">
+          <span className="ml-auto text-[10px] font-semibold text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">
             +{data.addedThisMonth} this month
           </span>
         )}
@@ -247,7 +249,7 @@ function ArticlesBreakdown({
         </span>
         <span className="text-[11px] text-gray-400">total</span>
         {data.addedThisMonth > 0 && (
-          <span className="ml-auto text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">
+          <span className="ml-auto text-[10px] font-semibold text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">
             +{data.addedThisMonth} this month
           </span>
         )}
@@ -258,7 +260,7 @@ function ArticlesBreakdown({
         <>
           <div className="h-2 rounded-full bg-gray-100 dark:bg-muted overflow-hidden mb-2 flex">
             <div
-              className="h-full bg-sky-500 dash-grow-w"
+              className="h-full bg-blue-500 dash-grow-w"
               style={{ width: `${pubPct}%` }}
             />
             <div
@@ -268,7 +270,7 @@ function ArticlesBreakdown({
           </div>
           <div className="flex items-center gap-4 text-[11px]">
             <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
-              <span className="h-2 w-2 rounded-sm bg-sky-500" />
+              <span className="h-2 w-2 rounded-sm bg-blue-500" />
               Published
               <span className="font-semibold text-navy-900 dark:text-white tabular-nums">
                 {data.published}
@@ -340,7 +342,7 @@ function DisclosureBreakdown({
           className={cn(
             "ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded",
             pct === 100
-              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+              ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300"
               : "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
           )}
         >
@@ -352,8 +354,8 @@ function DisclosureBreakdown({
           className={cn(
             "h-full rounded-full dash-grow-w",
             pct === 100
-              ? "bg-emerald-500"
-              : "bg-gradient-to-r from-teal-500 to-teal-400"
+              ? "bg-green-500"
+              : "bg-gradient-to-r from-blue-500 to-blue-400"
           )}
           style={{ width: `${pct}%` }}
         />
@@ -387,7 +389,7 @@ function TcBreakdown({
         </span>
         <span className="text-[11px] text-gray-400">on file</span>
         {data.addedThisMonth > 0 && (
-          <span className="ml-auto text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">
+          <span className="ml-auto text-[10px] font-semibold text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">
             +{data.addedThisMonth} this month
           </span>
         )}
@@ -420,21 +422,21 @@ function ContactBreakdown({
         </span>
         <span className="text-[11px] text-gray-400">total received</span>
         {data.addedThisMonth > 0 && (
-          <span className="ml-auto text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">
+          <span className="ml-auto text-[10px] font-semibold text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-1.5 py-0.5 rounded">
             +{data.addedThisMonth} this month
           </span>
         )}
       </div>
       <div className="flex items-center gap-4 text-[11px]">
         <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
-          <CircleDashed className="h-3.5 w-3.5 text-rose-500" />
+          <CircleDashed className="h-3.5 w-3.5 text-red-500" />
           Unread
-          <span className="font-semibold text-rose-600 dark:text-rose-400 tabular-nums">
+          <span className="font-semibold text-red-600 dark:text-red-400 tabular-nums">
             {data.unread}
           </span>
         </span>
         <span className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+          <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
           Read
           <span className="font-semibold text-navy-900 dark:text-white tabular-nums">
             {read}
@@ -535,7 +537,7 @@ function MessagesPreview({ items }: { items: RecentMessage[] }) {
                   "h-9 w-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5",
                   m.is_read
                     ? "bg-gray-100 text-gray-400 dark:bg-muted"
-                    : "bg-rose-100 text-rose-600 dark:bg-rose-900/30"
+                    : "bg-red-100 text-red-600 dark:text-red-400 dark:bg-red-900/30"
                 )}
               >
                 <Mail className="h-4 w-4" />
@@ -553,7 +555,7 @@ function MessagesPreview({ items }: { items: RecentMessage[] }) {
                     {m.full_name}
                   </p>
                   {!m.is_read && (
-                    <span className="h-1.5 w-1.5 rounded-full bg-rose-500 shrink-0" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 shrink-0" />
                   )}
                   <span className="ml-auto text-[11px] text-gray-400 tabular-nums shrink-0">
                     {relativeTime(m.created_at)}
@@ -674,7 +676,7 @@ export function CmsContentInsights({
               </div>
               <Link
                 href="/contact"
-                className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors group"
+                className="flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 transition-colors group"
               >
                 View all
                 <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />

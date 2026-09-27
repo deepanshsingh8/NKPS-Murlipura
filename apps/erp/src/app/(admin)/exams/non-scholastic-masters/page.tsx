@@ -434,7 +434,7 @@ export default function NonScholasticMastersPage() {
                       variant="outline"
                       size="sm"
                       onClick={() => setDeleteSubjectTarget(s)}
-                      className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
+                      className="text-red-600 dark:text-red-400 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950/30"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -525,7 +525,7 @@ export default function NonScholasticMastersPage() {
                               size="icon"
                               onClick={() => openEditSubSubject(ss)}
                               aria-label="Edit sub-subject"
-                              className="h-7 w-7 text-blue-600"
+                              className="h-7 w-7 text-blue-600 dark:text-blue-400"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -534,7 +534,7 @@ export default function NonScholasticMastersPage() {
                               size="icon"
                               onClick={() => setDeleteSubSubjectTarget(ss)}
                               aria-label="Delete sub-subject"
-                              className="h-7 w-7 text-red-600"
+                              className="h-7 w-7 text-red-600 dark:text-red-400"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -747,7 +747,7 @@ export default function NonScholasticMastersPage() {
                 Tick specific classes to limit it (e.g. &quot;Robotics&quot; only
                 for senior classes).
               </p>
-              <div className="max-h-44 overflow-y-auto rounded-md border border-gray-200 dark:border-border p-2 grid grid-cols-2 gap-1">
+              <div className="max-h-44 overflow-y-auto rounded-md border border-gray-200 dark:border-border p-2 grid grid-cols-2 gap-1"> {/* mobile-layout-ok: class checkboxes, one short label each */}
                 {classOptions.length === 0 ? (
                   <p className="text-xs text-gray-400 col-span-2">
                     No classes in the current academic year.

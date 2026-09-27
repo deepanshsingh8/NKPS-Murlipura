@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Settings2, ChevronRight } from "lucide-react";
-import { createClient } from "@nkps/shared/lib/supabase/client";
+import { useSession } from "@nkps/shared/components/providers/SessionProvider";
 import {
   FEATURE_CATALOG,
   type FeatureKey,
@@ -102,46 +102,21 @@ export function AppSwitcher({
   scope: AppScope;
   collapsed: boolean;
 }) {
-  const [role, setRole] = useState<string | null>(null);
-  const [grantGroups, setGrantGroups] = useState<Set<FeatureGroup> | null>(
-    null
-  );
+  // Role + grants come from the shell-wide session (see SessionProvider) —
+  // the sidebar this sits inside needs exactly the same two rows.
+  const { profile, editorPermissions } = useSession();
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) {
-        setRole(null);
-        setGrantGroups(new Set());
-        return;
-      }
-      supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single()
-        .then(({ data }) => {
-          setRole((data?.role as string | null) ?? null);
-        });
-      supabase
-        .from("editor_permissions")
-        .select("feature_key")
-        .eq("editor_id", user.id)
-        .then(({ data: rows }) => {
-          const groups = new Set<FeatureGroup>();
-          for (const r of rows ?? []) {
-            const key = r.feature_key as FeatureKey | undefined;
-            if (key && FEATURE_GROUP_BY_KEY[key]) {
-              groups.add(FEATURE_GROUP_BY_KEY[key]);
-            }
-          }
-          setGrantGroups(groups);
-        });
-    });
-  }, []);
+  // editorPermissions is null while the session is still resolving, so this
+  // also covers the loading state: render nothing rather than guess.
+  const role = profile?.role ?? null;
+  if (role === null || editorPermissions === null) return null;
 
-  if (role === null || grantGroups === null) return null;
+  const grantGroups = new Set<FeatureGroup>();
+  for (const key of editorPermissions) {
+    const group = FEATURE_GROUP_BY_KEY[key];
+    if (group) grantGroups.add(group);
+  }
 
   const destinations = buildDestinations(scope, role, grantGroups);
   if (destinations.length === 0) return null;

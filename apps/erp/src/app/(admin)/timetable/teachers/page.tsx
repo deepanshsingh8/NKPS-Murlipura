@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { adminFetch } from "@nkps/shared/lib/admin-api";
+import { Button } from "@nkps/shared/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -10,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@nkps/shared/components/ui/select";
-import { Loader2, UserCog } from "lucide-react";
+import { Loader2, UserCog, Printer } from "lucide-react";
 import { toast } from "sonner";
 import type { Teacher } from "@nkps/shared/types";
 import {
@@ -35,6 +36,9 @@ export default function AdminTeacherTimetablePage() {
 
   useEffect(() => {
     async function load() {
+      // Active only. This picker starts a fresh look-up rather than editing a
+      // stored value, so there is no selected id to preserve — and a retired
+      // teacher's week is not something anyone needs to schedule against.
       const { data, error } = await supabase
         .from("teachers")
         .select("*")
@@ -84,12 +88,36 @@ export default function AdminTeacherTimetablePage() {
     );
   }
 
+  const handlePrint = async () => {
+    if (!selectedTeacherId) return;
+    const res = await adminFetch(
+      `/api/timetable/sheet?teacher_id=${selectedTeacherId}`
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      toast.error(body.error ?? "Failed to generate the timetable");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="erp-page-bar mb-6">
         <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           Teacher Timetable
         </h1>
+        <Button
+          variant="outline"
+          onClick={handlePrint}
+          disabled={!selectedTeacherId}
+        >
+          <Printer className="h-4 w-4 mr-1" />
+          Print
+        </Button>
       </div>
 
       <div className="mb-6 w-full sm:w-80">
@@ -124,7 +152,7 @@ export default function AdminTeacherTimetablePage() {
       </div>
 
       {!selectedTeacherId ? (
-        <div className="erp-table-container p-6">
+        <div className="erp-table-container p-4 sm:p-6">
           <div className="mx-auto max-w-md text-center py-12">
             <div className="h-14 w-14 rounded-2xl bg-navy-900/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-4">
               <UserCog className="h-7 w-7 text-navy-900/70 dark:text-white/70" />
@@ -145,7 +173,7 @@ export default function AdminTeacherTimetablePage() {
           <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
         </div>
       ) : periods.length === 0 ? (
-        <div className="erp-table-container p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+        <div className="erp-table-container p-4 sm:p-6 text-center text-sm text-gray-500 dark:text-gray-400">
           {selectedTeacher?.full_name ?? "This teacher"} has no periods
           assigned in the current timetable.
         </div>

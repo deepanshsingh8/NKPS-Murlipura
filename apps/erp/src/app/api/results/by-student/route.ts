@@ -43,12 +43,20 @@ export async function GET(request: NextRequest) {
     .select("id")
     .eq("is_current", true)
     .maybeSingle();
-  const { data: enrollments } = await admin
+  const { data: enrollments, error: enrollmentsError } = await admin
     .from("student_enrollments")
     .select(
       "class_id, status, academic_year_id, created_at, classes(id, name, section, academic_year_id, streams:stream_id(name))"
     )
     .eq("student_id", studentId);
+  // `created_at` only exists as of migration 086; before it this select failed
+  // with PostgREST 42703 and the discarded error left `enrollments` null.
+  if (enrollmentsError) {
+    console.error(
+      `[results/by-student] enrollment lookup failed for student ${studentId}:`,
+      enrollmentsError
+    );
+  }
   type Enrollment = NonNullable<typeof enrollments>[number];
   const sorted = (enrollments ?? []).slice().sort((a: Enrollment, b: Enrollment) => {
     const aYear = currentYear && a.academic_year_id === currentYear.id ? 0 : 1;
@@ -162,10 +170,58 @@ export async function GET(request: NextRequest) {
     resultsByExam.set(exam.id, list);
   }
 
-  const exams = Array.from(examMap.values()).sort((a, b) => {
-    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-    return a.exam_name.localeCompare(b.exam_name);
-  });
+  // This endpoint returns EVERY year's results (there is no year filter on
+  // the results query above, deliberately). Sorting by sort_order alone
+  // interleaves them, so ten years of "Half Yearly" appear as ten
+  // indistinguishable rows. Order by session first — newest session first,
+  // exam order within it — and label each exam with its session so the client
+  // can group without a second lookup.
+  const yearIds = Array.from(
+    new Set(
+      Array.from(examMap.values())
+        .map((e) => e.academic_year_id)
+        .filter((id): id is string => Boolean(id))
+    )
+  );
+  const yearMetaById = new Map<
+    string,
+    { name: string; start_date: string | null; is_current: boolean }
+  >();
+  if (yearIds.length > 0) {
+    const { data: yearRows } = await admin
+      .from("academic_years")
+      .select("id, name, start_date, is_current")
+      .in("id", yearIds);
+    for (const y of yearRows ?? []) {
+      yearMetaById.set(y.id as string, {
+        name: y.name as string,
+        start_date: (y.start_date as string) ?? null,
+        is_current: Boolean(y.is_current),
+      });
+    }
+  }
+
+  const exams = Array.from(examMap.values())
+    .map((e) => ({
+      ...e,
+      academic_year_name: e.academic_year_id
+        ? (yearMetaById.get(e.academic_year_id)?.name ?? null)
+        : null,
+      academic_year_is_current: e.academic_year_id
+        ? (yearMetaById.get(e.academic_year_id)?.is_current ?? false)
+        : false,
+    }))
+    .sort((a, b) => {
+      const aStart = a.academic_year_id
+        ? (yearMetaById.get(a.academic_year_id)?.start_date ?? "")
+        : "";
+      const bStart = b.academic_year_id
+        ? (yearMetaById.get(b.academic_year_id)?.start_date ?? "")
+        : "";
+      if (aStart !== bStart) return bStart.localeCompare(aStart);
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return a.exam_name.localeCompare(b.exam_name);
+    });
 
   // For each exam, expose the full subject roster of that exam's class so
   // the editor can show "missing" subjects with an "+ add" button.

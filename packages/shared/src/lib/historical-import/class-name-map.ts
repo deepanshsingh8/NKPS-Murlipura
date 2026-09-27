@@ -34,12 +34,26 @@ const WORD_TO_ROMAN: Record<string, string> = {
   UKG: "UKG",
 };
 
-// Stream markers seen in the source data. Match a parenthesized suffix.
+// Stream markers seen in the source data.
+//
+// Two shapes, because the old software's two reports disagree. The Day Book
+// (Account Wise) export parenthesizes and abbreviates — "TWELFTH (COMM.)" —
+// while the Day Book (Head wise) export hyphenates and spells the stream out:
+// "XII-Commerce", "XI-Science". Both are matched here so neither report needs
+// the operator to hand-map six class names on every upload.
+//
+// The suffix forms are anchored to the end of the string and require a
+// separator, so they cannot bite a class name that merely contains the
+// letters: no entry in WORD_TO_ROMAN ends in ARTS, SCIENCE or COMMERCE.
 const STREAM_PATTERNS: Array<{ pattern: RegExp; stream: StreamName }> = [
   { pattern: /\(\s*SCI\.?\s*\)/i, stream: "Science" },
   { pattern: /\(\s*COMM\.?\s*\)/i, stream: "Commerce" },
   { pattern: /\(\s*ARTS?\.?\s*\)/i, stream: "Arts" },
   { pattern: /\(\s*HUM(?:ANITIES)?\.?\s*\)/i, stream: "Arts" },
+  { pattern: /[\s\-–—]+SCI(?:ENCE)?\.?\s*$/i, stream: "Science" },
+  { pattern: /[\s\-–—]+COMM(?:ERCE)?\.?\s*$/i, stream: "Commerce" },
+  { pattern: /[\s\-–—]+ARTS?\.?\s*$/i, stream: "Arts" },
+  { pattern: /[\s\-–—]+HUM(?:ANITIES)?\.?\s*$/i, stream: "Arts" },
 ];
 
 /**
@@ -52,6 +66,8 @@ const STREAM_PATTERNS: Array<{ pattern: RegExp; stream: StreamName }> = [
  *   "SIXTH"               → { class_name: "VI",      stream_name: null }
  *   "TWELFTH (COMM.)"     → { class_name: "XII",     stream_name: "Commerce" }
  *   "ELEVENTH(SCI.)"      → { class_name: "XI",      stream_name: "Science" }
+ *   "XII-Commerce"        → { class_name: "XII",     stream_name: "Commerce" }
+ *   "XI-Science"          → { class_name: "XI",      stream_name: "Science" }
  *   "PLAY GROUP"          → { class_name: "Nursery", stream_name: null }
  *   "LKG"                 → { class_name: "LKG",     stream_name: null }
  *   "I" (already Roman)   → { class_name: "I",       stream_name: null }

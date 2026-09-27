@@ -26,6 +26,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { Card, CardContent } from "@nkps/shared/components/ui/card";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, CalendarDays } from "lucide-react";
@@ -33,6 +34,7 @@ import { adminApi } from "@nkps/shared/lib/admin-api";
 import { formatClassName } from "@nkps/shared/lib/utils";
 import { EVENT_TYPE_LABELS, EVENT_TYPE_COLORS } from "@nkps/shared/lib/constants/calendar";
 import type { CalendarEvent, CalendarEventType } from "@nkps/shared/types";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 const EVENT_TYPES: CalendarEventType[] = [
   "exam",
@@ -271,11 +273,15 @@ export default function AdminCalendarPage() {
         label: "Start Date",
         value: (e) => formatDate(e.start_date),
         sortValue: (e) => e.start_date,
+        // `sortValue` is already the raw ISO date, so this is all it takes for
+        // the exported column to be a real date Excel can sort and filter.
+        exportFormat: "date",
       },
       end_date: {
         label: "End Date",
         value: (e) => (e.end_date ? formatDate(e.end_date) : null),
         sortValue: (e) => e.end_date,
+        exportFormat: "date",
       },
       website: {
         label: "Website",
@@ -295,17 +301,38 @@ export default function AdminCalendarPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="erp-page-bar mb-6">
         <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           Calendar Management
         </h1>
-        <Button
-          className="bg-navy-900 hover:bg-navy-800 text-white"
-          onClick={() => setAddEventOpen(true)}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Event
-        </Button>
+        <div className="erp-page-actions">
+          <TableExportButton
+            ctl={table}
+            filename="calendar"
+            title="School Calendar"
+            featureKey="calendar"
+            // The event-type chips filter the query itself, so the table never
+            // sees them — without this the file would claim it holds every
+            // event when it holds one type.
+            context={
+              activeFilter === "all"
+                ? []
+                : [
+                    {
+                      label: "Type",
+                      value: EVENT_TYPE_LABELS[activeFilter] ?? activeFilter,
+                    },
+                  ]
+            }
+          />
+          <Button
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
+            onClick={() => setAddEventOpen(true)}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Event
+          </Button>
+        </div>
       </div>
 
       {/* Filter buttons */}
@@ -339,7 +366,7 @@ export default function AdminCalendarPage() {
         <CardContent>
           {loading ? (
             <div className="flex justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-navy-900" />
+              <Loader2 className="h-6 w-6 animate-spin text-navy-900 dark:text-white" />
             </div>
           ) : events.length === 0 ? (
             <div className="text-center py-12 text-gray-400 dark:text-gray-500">
@@ -439,7 +466,7 @@ export default function AdminCalendarPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/10">
-                <CalendarDays className="h-5 w-5 text-rose-600" />
+                <CalendarDays className="h-5 w-5 text-rose-600 dark:text-rose-400" />
               </div>
               <div>
                 <DialogTitle>Add Calendar Event</DialogTitle>
@@ -470,10 +497,10 @@ export default function AdminCalendarPage() {
                 }
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Event Type</Label>
-                <select
+                <NativeSelect
                   value={newEvent.event_type}
                   onChange={(e) =>
                     setNewEvent({
@@ -481,23 +508,23 @@ export default function AdminCalendarPage() {
                       event_type: e.target.value as CalendarEventType,
                     })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   {EVENT_TYPES.map((type) => (
                     <option key={type} value={type}>
                       {EVENT_TYPE_LABELS[type]}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Class (optional)</Label>
-                <select
+                <NativeSelect
                   value={newEvent.class_id}
                   onChange={(e) =>
                     setNewEvent({ ...newEvent, class_id: e.target.value })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   <option value="">All Classes</option>
                   {classes.map((c) => (
@@ -505,10 +532,10 @@ export default function AdminCalendarPage() {
                       {formatClassName(c)}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Start Date</Label>
                 <Input
@@ -535,7 +562,7 @@ export default function AdminCalendarPage() {
             <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 dark:border-border p-3 cursor-pointer">
               <input
                 type="checkbox"
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-900 focus:ring-navy-900"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-900 dark:text-white focus:ring-navy-900"
                 checked={newEvent.is_public}
                 onChange={(e) =>
                   setNewEvent({ ...newEvent, is_public: e.target.checked })
@@ -552,7 +579,7 @@ export default function AdminCalendarPage() {
             <Button
               onClick={handleAddEvent}
               disabled={submitting}
-              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white"
+              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {submitting ? (
                 <>
@@ -573,7 +600,7 @@ export default function AdminCalendarPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-                <Pencil className="h-5 w-5 text-blue-600" />
+                <Pencil className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
                 <DialogTitle>Edit Calendar Event</DialogTitle>
@@ -604,10 +631,10 @@ export default function AdminCalendarPage() {
                 }
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Event Type</Label>
-                <select
+                <NativeSelect
                   value={editData.event_type}
                   onChange={(e) =>
                     setEditData({
@@ -615,23 +642,23 @@ export default function AdminCalendarPage() {
                       event_type: e.target.value as CalendarEventType,
                     })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   {EVENT_TYPES.map((type) => (
                     <option key={type} value={type}>
                       {EVENT_TYPE_LABELS[type]}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Class (optional)</Label>
-                <select
+                <NativeSelect
                   value={editData.class_id}
                   onChange={(e) =>
                     setEditData({ ...editData, class_id: e.target.value })
                   }
-                  className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+                  className="w-full"
                 >
                   <option value="">All Classes</option>
                   {classes.map((c) => (
@@ -639,10 +666,10 @@ export default function AdminCalendarPage() {
                       {formatClassName(c)}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Start Date</Label>
                 <Input
@@ -669,7 +696,7 @@ export default function AdminCalendarPage() {
             <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 dark:border-border p-3 cursor-pointer">
               <input
                 type="checkbox"
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-900 focus:ring-navy-900"
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-navy-900 dark:text-white focus:ring-navy-900"
                 checked={editData.is_public}
                 onChange={(e) =>
                   setEditData({ ...editData, is_public: e.target.checked })
@@ -686,7 +713,7 @@ export default function AdminCalendarPage() {
             <Button
               onClick={handleEditEvent}
               disabled={submitting}
-              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white"
+              className="w-full h-10 rounded-xl font-medium bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {submitting ? (
                 <>

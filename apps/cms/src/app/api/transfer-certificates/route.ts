@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { extractStoragePath } from "@nkps/shared/lib/storage-paths";
+import { todayISO } from "@nkps/shared/lib/date";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
         class_last_attended: classLastAttended,
         file_url: url,
         academic_year: academicYear,
-        upload_date: new Date().toISOString().split("T")[0],
+        upload_date: todayISO(),
       });
 
     if (insertError) {

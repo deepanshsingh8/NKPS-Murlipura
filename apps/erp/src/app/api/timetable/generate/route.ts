@@ -45,6 +45,7 @@ interface ExistingPeriod {
   subject_id: string | null;
   start_time: string;
   end_time: string;
+  is_shared?: boolean | null;
 }
 
 // Classes run on STAGGERED schedules — "period 3" in one class is a different
@@ -126,7 +127,7 @@ export async function POST(request: Request) {
   // since teachers can clash with classes outside the selected set.
   const { data: existingRaw } = await admin
     .from("timetable_periods")
-    .select("class_id, day_of_week, period_number, teacher_id, subject_id, start_time, end_time")
+    .select("class_id, day_of_week, period_number, teacher_id, subject_id, start_time, end_time, is_shared")
     .in("day_of_week", days);
   const existing = (existingRaw as ExistingPeriod[]) ?? [];
 
@@ -150,6 +151,12 @@ export async function POST(request: Request) {
     );
   for (const ex of existing) {
     if (!ex.teacher_id) continue;
+    // A shared activity does not make its teacher busy: the games coach really
+    // is on the field for VI-A, VI-B and VII-A at once, and the DB constraint
+    // exempts exactly these rows too (migration 119). Without this the
+    // generator would refuse to place them anywhere else and quietly
+    // contradict the feature.
+    if (ex.is_shared) continue;
     markBusy(ex.day_of_week, ex.teacher_id, ex.start_time, ex.end_time);
   }
 
@@ -249,7 +256,10 @@ export async function POST(request: Request) {
     const chunk = rowsToInsert.slice(i, i + CHUNK);
     const { error: insertErr } = await admin
       .from("timetable_periods")
-      .upsert(chunk, { onConflict: "class_id,day_of_week,period_number", ignoreDuplicates: !replace });
+      // group_no is part of the key since migration 119. Generated rows are all
+      // primary groups (group_no defaults to 0), so replace semantics are
+      // unchanged — but the conflict target has to name the real constraint.
+      .upsert(chunk, { onConflict: "class_id,day_of_week,period_number,group_no", ignoreDuplicates: !replace });
     if (insertErr) {
       return NextResponse.json(
         { error: insertErr.message, generated, skipped, conflicts, partial: true },

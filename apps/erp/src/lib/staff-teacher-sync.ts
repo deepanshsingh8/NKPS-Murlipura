@@ -11,6 +11,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * `staff_members.category`        is staff-only (taxonomy for the staff page).
  *
  * The rest of the contact / personal fields mirror 1:1.
+ *
+ * `is_active` mirrors too, and that is load-bearing rather than cosmetic: it
+ * used to be staff-only, so deactivating someone on People → Staff hid them
+ * from the staff page while leaving their teacher row active in every teacher
+ * dropdown in the ERP. (migration 116)
  */
 
 const FIELDS_FROM_STAFF: Array<[staff: string, teacher: string]> = [
@@ -21,6 +26,7 @@ const FIELDS_FROM_STAFF: Array<[staff: string, teacher: string]> = [
   ["address", "address"],
   ["qualifications", "qualifications"],
   ["photo_url", "photo_url"],
+  ["is_active", "is_active"],
 ];
 
 const FIELDS_FROM_TEACHER: Array<[teacher: string, staff: string]> = [
@@ -31,6 +37,7 @@ const FIELDS_FROM_TEACHER: Array<[teacher: string, staff: string]> = [
   ["address", "address"],
   ["qualifications", "qualifications"],
   ["photo_url", "photo_url"],
+  ["is_active", "is_active"],
 ];
 
 /**
@@ -46,7 +53,7 @@ export async function mirrorStaffToTeacher(
   const { data: staff, error } = await admin
     .from("staff_members")
     .select(
-      "id, name, email, phone, date_of_birth, address, qualifications, photo_url"
+      "id, name, email, phone, date_of_birth, address, qualifications, photo_url, is_active"
     )
     .eq("id", staffId)
     .maybeSingle();
@@ -60,7 +67,7 @@ export async function mirrorStaffToTeacher(
   // mirror to all of them.
   const { data: teachers } = await admin
     .from("teachers")
-    .select("id")
+    .select("id, is_active, date_of_leaving")
     .eq("staff_member_id", staffId);
   if (!teachers || teachers.length === 0) return;
 
@@ -71,12 +78,71 @@ export async function mirrorStaffToTeacher(
   patch.updated_at = new Date().toISOString();
 
   for (const t of teachers) {
+    // Stamp the leaving date on the transition into inactive, and only then:
+    // re-mirroring an already-retired teacher must not keep moving the date,
+    // and reactivating must not silently erase when they previously left.
+    const perTeacher = { ...patch };
+    if (staff.is_active === false && t.is_active !== false && !t.date_of_leaving) {
+      perTeacher.date_of_leaving = new Date().toISOString().slice(0, 10);
+    }
     const { error: updateErr } = await admin
       .from("teachers")
-      .update(patch)
+      .update(perTeacher)
       .eq("id", t.id);
     if (updateErr) {
       console.error("[staff-teacher-sync] mirror staff→teacher:", updateErr);
+    }
+  }
+}
+
+/**
+ * Retire the teacher(s) linked to a staff member that is about to be deleted.
+ *
+ * Must run BEFORE the staff_members row goes, while the link still exists —
+ * `teachers.staff_member_id` is ON DELETE SET NULL, so after the delete there
+ * is nothing left to find the teacher by. Skipping this is exactly how the
+ * ghost teachers arose: staff deleted, teacher row left active and unreachable
+ * from any ERP screen, still populating every teacher dropdown. (migration 116)
+ *
+ * Retiring rather than deleting is deliberate. `timetable_periods.teacher_id`
+ * and `class_subjects.teacher_id` have no ON DELETE rule, so a delete would
+ * fail with 23503 for any teacher who has ever been timetabled — and if it did
+ * succeed it would erase who taught what.
+ *
+ * Errors are logged, never thrown: a sync lapse must not block the staff
+ * deletion the admin asked for.
+ */
+export async function retireTeacherForStaff(
+  admin: SupabaseClient,
+  staffIds: string | string[],
+  reason = "Staff record deleted"
+): Promise<void> {
+  const ids = Array.isArray(staffIds) ? staffIds : [staffIds];
+  if (ids.length === 0) return;
+
+  const { data: teachers, error } = await admin
+    .from("teachers")
+    .select("id, is_active, date_of_leaving")
+    .in("staff_member_id", ids);
+  if (error) {
+    console.error("[staff-teacher-sync] load teachers to retire:", error);
+    return;
+  }
+  if (!teachers || teachers.length === 0) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  for (const t of teachers) {
+    const { error: updateErr } = await admin
+      .from("teachers")
+      .update({
+        is_active: false,
+        date_of_leaving: t.date_of_leaving ?? today,
+        leaving_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", t.id);
+    if (updateErr) {
+      console.error("[staff-teacher-sync] retire teacher:", updateErr);
     }
   }
 }
@@ -92,7 +158,7 @@ export async function mirrorTeacherToStaff(
   const { data: teacher, error } = await admin
     .from("teachers")
     .select(
-      "id, full_name, email, phone, date_of_birth, address, qualifications, photo_url, staff_member_id"
+      "id, full_name, email, phone, date_of_birth, address, qualifications, photo_url, is_active, staff_member_id"
     )
     .eq("id", teacherId)
     .maybeSingle();
@@ -129,7 +195,7 @@ export async function promoteStaffToTeacher(
   const { data: staff } = await admin
     .from("staff_members")
     .select(
-      "id, name, email, phone, date_of_birth, address, qualifications, photo_url"
+      "id, name, email, phone, date_of_birth, address, qualifications, photo_url, is_active"
     )
     .eq("id", staffId)
     .maybeSingle();
@@ -160,6 +226,10 @@ export async function promoteStaffToTeacher(
       address: staff.address,
       qualifications: staff.qualifications,
       photo_url: staff.photo_url,
+      // Carry the staff row's active state rather than defaulting to true —
+      // promoting an already-deactivated staff member must not resurrect them
+      // into every teacher dropdown. (migration 116)
+      is_active: staff.is_active ?? true,
       staff_member_id: staff.id,
     })
     .select("id")

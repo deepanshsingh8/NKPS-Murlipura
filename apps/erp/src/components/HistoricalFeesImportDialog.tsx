@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 interface AcademicYear {
   id: string;
@@ -192,7 +193,7 @@ export function HistoricalFeesImportDialog({
       setUnmapped(data.unmapped_classes ?? []);
       if (!dryRun && typeof data.summary?.committed === "number" && data.summary.committed > 0) {
         toast.success(
-          `Imported ${data.summary.committed} payment${data.summary.committed === 1 ? "" : "s"}. Batch: ${data.summary.batch_id?.slice(0, 8)}…`
+          `Imported ${data.summary.committed} payment${data.summary.committed === 1 ? "" : "s"}.`
         );
         onImported?.();
       }
@@ -225,7 +226,7 @@ export function HistoricalFeesImportDialog({
         <History className="h-4 w-4 mr-2" />
         {triggerLabel}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-4xl max-h-[88vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-4xl max-h-[88dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Import historical fee payments</DialogTitle>
           <DialogDescription>
@@ -242,11 +243,11 @@ export function HistoricalFeesImportDialog({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <Label htmlFor="hf-year" className="text-xs">Academic year</Label>
-              <select
+              <NativeSelect
                 id="hf-year"
                 value={academicYearId}
                 onChange={(e) => setAcademicYearId(e.target.value)}
-                className="mt-1 block w-full rounded-md border border-gray-200 dark:border-border bg-white dark:bg-background px-3 py-1.5 text-sm"
+                className="mt-1 block w-full"
               >
                 <option value="">— select —</option>
                 {years.map((y) => (
@@ -254,10 +255,20 @@ export function HistoricalFeesImportDialog({
                     {y.name}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
             <div>
-              <Label htmlFor="hf-file" className="text-xs">XLSX file</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="hf-file" className="text-xs">XLSX file</Label>
+                {/* The layout this parser expects is a foreign one from the
+                    old software, so a sample beats any amount of prose. */}
+                <a
+                  href="/api/fees/historical-import/template"
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Download template
+                </a>
+              </div>
               <input
                 id="hf-file"
                 ref={fileRef}
@@ -317,7 +328,7 @@ export function HistoricalFeesImportDialog({
                     className="flex items-center gap-2 rounded-md border border-amber-200 dark:border-amber-900/40 bg-white dark:bg-background p-2"
                   >
                     <code className="text-xs flex-1 truncate">{rawName}</code>
-                    <select
+                    <NativeSelect
                       value={mappings[rawName]?.class_name ?? ""}
                       onChange={(e) =>
                         setMappings((m) => ({
@@ -328,7 +339,6 @@ export function HistoricalFeesImportDialog({
                           },
                         }))
                       }
-                      className="text-xs rounded border border-gray-200 dark:border-border bg-white dark:bg-background px-1.5 py-0.5"
                     >
                       <option value="">→ class</option>
                       {ROMAN_CLASSES.map((c) => (
@@ -336,8 +346,8 @@ export function HistoricalFeesImportDialog({
                           {c}
                         </option>
                       ))}
-                    </select>
-                    <select
+                    </NativeSelect>
+                    <NativeSelect
                       value={mappings[rawName]?.stream_name ?? ""}
                       onChange={(e) =>
                         setMappings((m) => ({
@@ -351,14 +361,13 @@ export function HistoricalFeesImportDialog({
                           },
                         }))
                       }
-                      className="text-xs rounded border border-gray-200 dark:border-border bg-white dark:bg-background px-1.5 py-0.5"
                     >
                       {STREAMS.map((s) => (
                         <option key={s} value={s}>
                           {s || "no stream"}
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                   </div>
                 ))}
               </div>
@@ -421,7 +430,8 @@ export function HistoricalFeesImportDialog({
               )}
               {summary.batch_id && (
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Batch ID: <code>{summary.batch_id}</code>
+                  Saved as one batch — find it under Import history below to
+                  review or revert it.
                 </p>
               )}
               {summary.error_rows > 0 && (

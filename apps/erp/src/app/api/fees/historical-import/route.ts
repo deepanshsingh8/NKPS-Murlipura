@@ -16,6 +16,7 @@
 // unique `receipt_number`.
 
 import { NextRequest, NextResponse } from "next/server";
+import { classSortOrder } from "@nkps/shared/lib/constants";
 import { randomUUID } from "node:crypto";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
 import {
@@ -151,7 +152,10 @@ export async function POST(req: NextRequest) {
   //   - Existing fee_payments receipts (for the unique check on commit — we'll
   //     also lean on ON CONFLICT, but pre-check enables clearer dry-run output).
   const [streamsRes, classesRes, studentsRes] = await Promise.all([
-    admin.from("streams").select("id, name"),
+    // Fetched unfiltered, with `kind`, then partitioned below: resolution
+    // must see only streams, but the "should I create this name?" check must
+    // see wings too. (migration 118)
+    admin.from("streams").select("id, name, kind"),
     admin
       .from("classes")
       .select("id, name, section, stream_id")
@@ -169,7 +173,13 @@ export async function POST(req: NextRequest) {
   }
 
   const streamByName = new Map<string, string>();
+  // Names owned by a stream OR a wing. Resolution below skips wings, so
+  // without this a wing's name would read as a missing stream and the commit
+  // path would insert a twin beside it. (migration 118)
+  const streamNameTaken = new Set<string>();
   for (const s of streamsRes.data ?? []) {
+    streamNameTaken.add(String(s.name).toLowerCase());
+    if (s.kind === "wing") continue;
     streamByName.set(s.name.toLowerCase(), s.id as string);
   }
 
@@ -306,7 +316,11 @@ export async function POST(req: NextRequest) {
   const willCreateStreams: string[] = [];
   for (const spec of classSpecByKey.values()) {
     if (!spec.stream_name) continue;
-    if (!streamByName.has(spec.stream_name.toLowerCase()) && !willCreateStreams.includes(spec.stream_name)) {
+    if (
+      !streamByName.has(spec.stream_name.toLowerCase()) &&
+      !streamNameTaken.has(spec.stream_name.toLowerCase()) &&
+      !willCreateStreams.includes(spec.stream_name)
+    ) {
       willCreateStreams.push(spec.stream_name);
     }
   }
@@ -355,7 +369,7 @@ export async function POST(req: NextRequest) {
   if (willCreateStreams.length > 0) {
     const { data: insertedStreams, error: streamInsErr } = await admin
       .from("streams")
-      .insert(willCreateStreams.map((name) => ({ name })))
+      .insert(willCreateStreams.map((name) => ({ name, kind: "stream" })))
       .select("id, name");
     if (streamInsErr) {
       return NextResponse.json(
@@ -386,7 +400,9 @@ export async function POST(req: NextRequest) {
       section: spec.section,
       academic_year_id: academicYearId,
       stream_id: sid,
-      sort_order: 0,
+      // Was a flat 0, which put every imported class at the very top of the
+      // 27 screens that order by this column, jumbled together.
+      sort_order: classSortOrder(spec.name, spec.section),
     });
   }
   if (classesToCreate.length > 0) {

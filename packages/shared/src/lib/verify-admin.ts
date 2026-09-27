@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
-import type { FeatureKey } from "@nkps/shared/lib/permissions";
+import type { FeatureKey, ProfileRole } from "@nkps/shared/lib/permissions";
 
 /**
  * Why we re-check `must_change_password` here even though middleware does it:
@@ -190,4 +190,35 @@ export async function verifyAdminOrEditorWithUser(featureKey?: FeatureKey) {
   }
   if (!perm) return null;
   return { admin, user, role: "editor" as const };
+}
+
+/**
+ * "A signed-in member of school staff" — the weakest admin-area predicate.
+ *
+ * For endpoints that DISCLOSE NOTHING: the generic table-PDF renderer only
+ * re-presents rows the caller already fetched through a gated endpoint and
+ * can already see on screen, so the meaningful authorization happened
+ * upstream and re-gating here would only duplicate it.
+ *
+ * Deliberately NOT `verifyAdminOrEditor()`: with no feature key that helper
+ * resolves to `"any"`, which requires at least one editor_permissions row.
+ * A plain teacher exporting their own class list legitimately has none and
+ * would be rejected.
+ *
+ * Still fails closed on `must_change_password`, and still excludes students
+ * and parents.
+ */
+export async function verifyStaffMember() {
+  const headersList = await headers();
+  const accessToken = readBearerToken(headersList.get("authorization"));
+  if (!accessToken) return null;
+
+  const { admin, user, profile } = await loadCaller(accessToken);
+  if (!user || !profile) return null;
+  if (profile.must_change_password) return null;
+
+  const role = profile.role as ProfileRole;
+  if (role !== "admin" && role !== "staff" && role !== "teacher") return null;
+
+  return { admin, user, role };
 }

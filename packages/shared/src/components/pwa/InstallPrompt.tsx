@@ -140,7 +140,9 @@ export function InstallPrompt({ appName }: InstallPromptProps) {
   if (!visible || onAuthRoute) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center p-4">
+    // The bottom inset is added to the padding rather than replacing it: on a
+    // phone with a home indicator the banner was sitting under it.
+    <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom,0px))]">
       <div className="flex w-full max-w-md items-start gap-3 rounded-xl border border-navy-900/10 bg-white p-4 shadow-lg dark:border-white/10 dark:bg-navy-900">
         <div className="mt-0.5 rounded-lg bg-navy-900 p-2 text-white">
           <Download className="h-5 w-5" />

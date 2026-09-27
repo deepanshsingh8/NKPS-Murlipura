@@ -46,6 +46,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@nkps/shared/components/ui/tabs";
 import { FileDropZone } from "@nkps/shared/components/FileDropZone";
 import { ImageCropper } from "@nkps/shared/components/ImageCropper";
@@ -335,7 +336,7 @@ export default function AdminArticlesPage() {
             Publish news, announcements, and long-form posts. Published articles appear on the homepage &ldquo;Latest Updates&rdquo; and at <code className="text-xs">/articles/[slug]</code>.
           </p>
         </div>
-        <Button onClick={openCreate} className="bg-navy-900 hover:bg-navy-800 text-white">
+        <Button onClick={openCreate} className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900">
           <Plus className="h-4 w-4 mr-2" />
           New Article
         </Button>
@@ -381,12 +382,20 @@ export default function AdminArticlesPage() {
         </div>
       ) : (
         <div className="bg-white dark:bg-card rounded-2xl border border-gray-200 dark:border-border overflow-hidden">
-          <TableFilterSummary
-            ctl={table}
-            total={filtered.length}
-            shown={table.rows.length}
-            className="px-4 pt-4"
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={filtered.length}
+              shown={table.rows.length}
+              className="px-4 pt-4 mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="articles"
+              title="Articles"
+              featureKey="articles"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -409,7 +418,7 @@ export default function AdminArticlesPage() {
                 <TableRow key={article.id}>
                   <TableCell>
                     {article.cover_image_url ? (
-                      <div className="w-14 h-14 rounded-lg overflow-hidden bg-gray-100 relative">
+                      <div className="w-14 h-14 rounded-lg overflow-hidden bg-gray-100 dark:bg-muted relative">
                         <Image
                           src={article.cover_image_url}
                           alt={article.title}
@@ -434,7 +443,7 @@ export default function AdminArticlesPage() {
                   </TableCell>
                   <TableCell>
                     {article.is_published ? (
-                      <Badge className="bg-green-100 text-green-700 hover:bg-green-100 border-transparent">
+                      <Badge className="bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 hover:bg-green-100 border-transparent">
                         Published
                       </Badge>
                     ) : (
@@ -443,7 +452,7 @@ export default function AdminArticlesPage() {
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm text-gray-600">
+                  <TableCell className="text-sm text-gray-600 dark:text-gray-300">
                     {formatDate(article.published_at)}
                   </TableCell>
                   <TableCell className="text-right">
@@ -499,7 +508,7 @@ export default function AdminArticlesPage() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) { setDialogOpen(false); resetForm(); } else { setDialogOpen(true); } }}>
-        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Article" : "New Article"}</DialogTitle>
           </DialogHeader>
@@ -520,11 +529,11 @@ export default function AdminArticlesPage() {
                 <>
                   {file && file.length > 0 ? (
                     <div className="flex items-center gap-3 mb-2">
-                      <div className="w-24 h-14 rounded-lg overflow-hidden bg-gray-100 relative border-2 border-green-400">
+                      <div className="w-24 h-14 rounded-lg overflow-hidden bg-gray-100 dark:bg-muted relative border-2 border-green-400">
                         <Image src={URL.createObjectURL(file[0])} alt="Cover preview" fill className="object-cover" sizes="96px" />
                       </div>
                       <div>
-                        <p className="text-xs text-green-600 font-medium">Cropped & ready</p>
+                        <p className="text-xs text-green-600 dark:text-green-400 font-medium">Cropped & ready</p>
                         <button type="button" onClick={() => setFile(null)} className="text-xs text-gray-500 hover:text-red-500 mt-0.5">
                           Remove
                         </button>
@@ -532,7 +541,7 @@ export default function AdminArticlesPage() {
                     </div>
                   ) : form.cover_image_url ? (
                     <div className="flex items-center gap-3 mb-2">
-                      <div className="w-24 h-14 rounded-lg overflow-hidden bg-gray-100 relative">
+                      <div className="w-24 h-14 rounded-lg overflow-hidden bg-gray-100 dark:bg-muted relative">
                         <Image src={form.cover_image_url} alt="Current cover" fill className="object-cover" sizes="96px" />
                       </div>
                       <span className="text-xs text-gray-500">Current (upload new to replace)</span>
@@ -668,7 +677,7 @@ export default function AdminArticlesPage() {
               <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={submitting} className="bg-navy-900 hover:bg-navy-800 text-white">
+              <Button type="submit" disabled={submitting} className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900">
                 {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {editing ? "Save Changes" : "Create Article"}
               </Button>

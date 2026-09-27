@@ -273,7 +273,7 @@ export default function AdminWhiteSheetPage() {
                         className={`px-2 py-2 text-center border-r border-gray-200 dark:border-gray-800 min-w-[60px] ${
                           s.role === "optional"
                             ? "bg-amber-50 dark:bg-amber-950/20"
-                            : "bg-sky-50 dark:bg-sky-950/20"
+                            : "bg-blue-50 dark:bg-blue-950/20"
                         }`}
                         title={s.name}
                       >

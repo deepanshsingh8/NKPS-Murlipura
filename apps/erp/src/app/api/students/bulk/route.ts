@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { studentBulkUploadSchema } from "@nkps/shared/lib/validations";
+import { buildStreamLookup } from "@nkps/shared/lib/stream-alias";
 import {
   buildStudentRecord,
   normalizeToken,
@@ -28,6 +29,29 @@ export async function POST(request: Request) {
 
     const { students } = result.data;
 
+    // ── Backfill mode ──
+    // Historic rosters (an old spreadsheet, an export from the previous
+    // software) are imported against a PAST academic year. When
+    // academic_year_id is absent this behaves exactly as before, against the
+    // current year.
+    const requestedYearId =
+      typeof body.academic_year_id === "string" && body.academic_year_id
+        ? body.academic_year_id
+        : null;
+    const requestedStatus =
+      typeof body.enrollment_status === "string" && body.enrollment_status
+        ? body.enrollment_status
+        : null;
+    const BACKFILL_STATUSES = ["passed", "failed", "exited", "terminated"];
+    if (requestedStatus && !BACKFILL_STATUSES.includes(requestedStatus)) {
+      return NextResponse.json(
+        {
+          error: `enrollment_status must be one of ${BACKFILL_STATUSES.join(", ")}`,
+        },
+        { status: 400 }
+      );
+    }
+
     // Column projection: only columns that were actually present in the
     // uploaded sheet get written. A blank cell in a present column clears the
     // value; a column absent from the sheet leaves existing data untouched,
@@ -51,46 +75,75 @@ export async function POST(request: Request) {
     // Fetch current academic year
     const { data: currentYear } = await admin
       .from("academic_years")
-      .select("id")
+      .select("id, end_date")
       .eq("is_current", true)
       .single();
 
-    if (!currentYear) {
+    if (!currentYear && !requestedYearId) {
       return NextResponse.json(
         { error: "No current academic year is set. Please set one first." },
         { status: 400 }
       );
     }
 
+    let targetYearId = currentYear?.id as string | undefined;
+    // Where a backfilled leaver's billing stops — see the enrollment insert.
+    let targetYearEndDate = (currentYear?.end_date as string | null) ?? null;
+    if (requestedYearId) {
+      const { data: reqYear } = await admin
+        .from("academic_years")
+        .select("id, end_date")
+        .eq("id", requestedYearId)
+        .maybeSingle();
+      if (!reqYear) {
+        return NextResponse.json(
+          { error: "Selected academic year not found" },
+          { status: 400 }
+        );
+      }
+      targetYearId = reqYear.id as string;
+      targetYearEndDate = (reqYear.end_date as string | null) ?? null;
+    }
+    if (!targetYearId) {
+      return NextResponse.json(
+        { error: "Could not resolve an academic year for this import" },
+        { status: 400 }
+      );
+    }
+
+    // True only when importing into a session other than the live one.
+    const isBackfill = targetYearId !== currentYear?.id;
+    const importBatchId = isBackfill ? crypto.randomUUID() : null;
+    // Never 'active' in backfill mode: a past-year row must not compete with
+    // the live roster, and the roll-number recompute triggers only ever touch
+    // active rows, so a non-active past row provably cannot disturb the
+    // current year's numbering.
+    const backfillStatus = requestedStatus ?? "passed";
+
     // Fetch streams for stream_id lookup (Science, Commerce, etc.)
+    // `kind` comes along so buildStreamLookup can skip wings (migration 118):
+    // the table also holds class bands, and one named "Science" must not answer
+    // a sheet that means the Science stream.
     const { data: allStreams } = await admin
       .from("streams")
-      .select("id, name");
+      .select("id, name, kind");
 
-    const streamMap = new Map<string, string>();
-    // Common aliases for stream names
-    const STREAM_ALIASES: Record<string, string[]> = {
-      humanities: ["arts", "humanities stream", "arts stream"],
-      science: ["sci", "science stream"],
-      commerce: ["comm", "commerce stream"],
-    };
-    for (const s of allStreams || []) {
-      const key = s.name.trim().toLowerCase();
-      streamMap.set(key, s.id);
-      // Also register common aliases
-      const aliases = STREAM_ALIASES[key];
-      if (aliases) {
-        for (const alias of aliases) {
-          streamMap.set(alias, s.id);
-        }
-      }
-    }
+    // The alias table used to live here. It is shared now — the fee day-book
+    // importer needed the same "Arts means Humanities" answer, and two copies
+    // would have drifted the moment one of them learned a new spelling.
+    const streamMap = buildStreamLookup(
+      (allStreams || []).map((s) => ({
+        id: s.id as string,
+        name: String(s.name),
+        kind: s.kind as string | null,
+      }))
+    );
 
     // Fetch all classes for the current academic year
     const { data: allClasses } = await admin
       .from("classes")
       .select("id, name, section, stream_id")
-      .eq("academic_year_id", currentYear.id);
+      .eq("academic_year_id", targetYearId);
 
     // Key format: "name|section|streamId" — streamId is empty string for non-senior classes
     const SENIOR_CLASSES = ["XI", "XII"];
@@ -141,7 +194,7 @@ export async function POST(request: Request) {
       const insertData: Record<string, unknown> = {
         name,
         section,
-        academic_year_id: currentYear.id,
+        academic_year_id: targetYearId,
         stream_id: sId || null,
         sort_order: getSortOrder(name, section),
       };
@@ -158,7 +211,7 @@ export async function POST(request: Request) {
           .select("id")
           .eq("name", name)
           .eq("section", section)
-          .eq("academic_year_id", currentYear.id);
+          .eq("academic_year_id", targetYearId);
         if (sId) {
           query = query.eq("stream_id", sId);
         } else {
@@ -284,15 +337,28 @@ export async function POST(request: Request) {
       // (upsert alone can't tell us which rows already existed).
       const { data: existingRows } = await admin
         .from("students")
-        .select("admission_no")
+        .select("id, admission_no")
         .in("admission_no", batch.map((p) => p.admissionNo));
       const existingAdmNos = new Set(
         (existingRows || []).map((r) => String(r.admission_no).trim())
       );
+      // ids are needed as well as names: with ignoreDuplicates the upsert
+      // below returns ONLY newly-inserted rows, so already-known students
+      // must get their id from here or they'd silently receive no enrollment.
+      const existingIdByAdmNo = new Map<string, string>(
+        (existingRows || []).map((r) => [String(r.admission_no).trim(), r.id as string])
+      );
 
+      // Backfill imports must never rewrite a live profile: a 2019 sheet's
+      // address, phone or guardian is older than what the school holds now.
+      // ignoreDuplicates leaves existing students untouched and only adds the
+      // ones the ERP has never seen.
       const { data: upsertedRows, error: batchError } = await admin
         .from("students")
-        .upsert(records, { onConflict: "admission_no" })
+        .upsert(records, {
+          onConflict: "admission_no",
+          ignoreDuplicates: isBackfill,
+        })
         .select("id, admission_no");
 
       if (batchError) {
@@ -313,7 +379,9 @@ export async function POST(request: Request) {
         continue;
       }
 
-      if (!upsertedRows || upsertedRows.length === 0) {
+      // In backfill mode an empty result just means every student in the
+      // batch already existed — their enrollments still need creating.
+      if ((!upsertedRows || upsertedRows.length === 0) && !isBackfill) {
         for (const p of batch) {
           errors.push({
             admission_no: p.admissionNo,
@@ -326,11 +394,15 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // Map admission_no -> student id for enrollment
-      const admToId = new Map<string, string>();
-      for (const row of upsertedRows) {
+      // Map admission_no -> student id for enrollment. Seeded from the rows
+      // that already existed, then overlaid with whatever the upsert returned.
+      const admToId = new Map<string, string>(existingIdByAdmNo);
+      for (const row of upsertedRows ?? []) {
         admToId.set(String(row.admission_no).trim(), row.id);
-        if (existingAdmNos.has(String(row.admission_no).trim())) updated++;
+      }
+      for (const p of batch) {
+        if (!admToId.has(p.admissionNo)) continue;
+        if (existingAdmNos.has(p.admissionNo)) updated++;
         else created++;
       }
 
@@ -354,25 +426,52 @@ export async function POST(request: Request) {
         enrollmentRecords.push({
           student_id: studentId,
           class_id: p.classId,
-          academic_year_id: currentYear.id,
+          academic_year_id: targetYearId,
           stream_id: p.streamId || null,
           roll_number: p.rollNumber,
+          ...(isBackfill
+            ? {
+                status: backfillStatus,
+                source: "bulk_backfill",
+                import_batch_id: importBatchId,
+                // A backfilled leaver is billed to the end of the session they
+                // belonged to, not to today's date. Without this their
+                // schedule would keep raising instalments in the current year
+                // against a row that describes a past one (migration 123).
+                ...((backfillStatus === "exited" ||
+                  backfillStatus === "terminated") &&
+                targetYearEndDate
+                  ? { exit_date: targetYearEndDate }
+                  : {}),
+                // Pin any roll number the sheet supplied so it survives even
+                // if the row is ever flipped active later.
+                roll_number_manual: p.rollNumber != null,
+              }
+            : {}),
         });
         enrollmentStudents.push(p);
       }
 
-      // Bulk upsert enrollments
+      // Bulk upsert enrollments.
+      //
+      // Conflict target is (student_id, academic_year_id) — the constraint
+      // added in migration 086 — not (student_id, class_id). Re-importing a
+      // roster where a student has moved section must UPDATE their row for
+      // that year; keying on class_id would instead try to insert a second row
+      // for the same year and fail the new constraint with a raw 23505.
       if (enrollmentRecords.length > 0) {
         const { error: enrollError } = await admin
           .from("student_enrollments")
-          .upsert(enrollmentRecords, { onConflict: "student_id,class_id" });
+          .upsert(enrollmentRecords, { onConflict: "student_id,academic_year_id" });
 
         if (enrollError) {
           // Batch enrollment failed — fall back to one-at-a-time to identify which ones fail
           for (let j = 0; j < enrollmentRecords.length; j++) {
             const { error: singleError } = await admin
               .from("student_enrollments")
-              .upsert(enrollmentRecords[j], { onConflict: "student_id,class_id" });
+              .upsert(enrollmentRecords[j], {
+                onConflict: "student_id,academic_year_id",
+              });
 
             if (singleError) {
               console.error("[students.bulk.POST] enrollment upsert:", singleError);
@@ -396,9 +495,12 @@ export async function POST(request: Request) {
       // A non-blank Subjects cell is authoritative for that student: their
       // student_subjects set is replaced with the matched class subjects.
       // A blank or absent cell leaves existing subject links untouched.
-      const withSubjects = batch.filter(
-        (p) => p.subjectsRaw && admToId.has(p.admissionNo)
-      );
+      // Skipped when backfilling: class_subjects for a past session usually
+      // does not exist, so every row would emit an unmatched-subject warning
+      // for nothing.
+      const withSubjects = isBackfill
+        ? []
+        : batch.filter((p) => p.subjectsRaw && admToId.has(p.admissionNo));
       if (withSubjects.length > 0) {
         // Load class_subjects for classes we haven't seen yet.
         const neededClassIds = Array.from(
@@ -544,6 +646,18 @@ export async function POST(request: Request) {
         errors,
         warnings,
         total: students.length,
+        // Backfill telemetry: the batch id makes the whole import revertible,
+        // and matched_existing tells the admin how many live profiles were
+        // deliberately left untouched.
+        ...(isBackfill
+          ? {
+              backfill: true,
+              academic_year_id: targetYearId,
+              enrollment_status: backfillStatus,
+              import_batch_id: importBatchId,
+              students_matched_existing: updated,
+            }
+          : {}),
       },
       { status: allFailed ? 400 : 200 }
     );

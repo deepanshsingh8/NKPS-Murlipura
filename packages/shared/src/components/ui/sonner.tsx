@@ -2,11 +2,23 @@
 
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
+import { useTheme } from "@nkps/shared/components/providers/ThemeProvider"
 
+// Toasts are pinned to the top of the screen, so a light toast layer over a
+// dark app is the most visible way for the theme to be half-applied — and
+// `theme="light"` was hard-coded here, which is exactly what happened.
+//
+// The style block below already mapped the plain toast to --popover, so a
+// default toast looked right; but sonner's own `theme` drives the richColors
+// success/warning/error palettes and the close button, and those stayed light.
+//
+// useTheme() falls back to "light" without a provider, which is what
+// apps/website wants — it has no ThemeProvider and is light-only by design.
 const Toaster = ({ ...props }: ToasterProps) => {
+  const { resolvedTheme } = useTheme()
   return (
     <Sonner
-      theme="light"
+      theme={resolvedTheme}
       className="toaster group"
       icons={{
         success: (

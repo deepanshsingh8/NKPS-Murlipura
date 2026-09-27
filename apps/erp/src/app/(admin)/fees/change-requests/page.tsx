@@ -21,6 +21,14 @@ import {
 } from "@nkps/shared/components/ui/dialog";
 import { Loader2, Inbox, Check, X, RotateCcw, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
+import {
+  type EntityLabels,
+  describeSubject,
+  fieldLabel,
+  formatCurrency,
+  formatFieldValue,
+  visibleFields,
+} from "@/lib/change-request-display";
 
 type RequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
@@ -45,6 +53,8 @@ interface ChangeRequest {
 interface RequestDetail {
   request: ChangeRequest;
   live_row: Record<string, unknown> | null;
+  /** id → display name for every foreign key in the request. */
+  entity_labels: EntityLabels;
 }
 
 const STATUS_TABS: Array<{ value: RequestStatus; label: string }> = [
@@ -61,14 +71,6 @@ const STATUS_COLORS: Record<RequestStatus, string> = {
   cancelled: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
 };
 
-function formatValue(v: unknown): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "number") return v.toLocaleString("en-IN");
-  if (typeof v === "boolean") return v ? "yes" : "no";
-  if (typeof v === "string") return v;
-  return JSON.stringify(v);
-}
-
 function formatTimestamp(ts: string | null): string {
   if (!ts) return "—";
   try {
@@ -83,22 +85,33 @@ function formatTimestamp(ts: string | null): string {
 
 function summarizeProposedChanges(
   action: "insert" | "update" | "delete",
-  proposed: Record<string, unknown>
+  proposed: Record<string, unknown>,
+  labels: EntityLabels
 ): string {
-  if (action === "delete") return "Delete this payment row";
+  if (action === "delete") return "Delete this payment record";
   if (action === "insert") {
-    const amt = proposed.waiver_amount;
+    const amt = Number(proposed.waiver_amount);
     return proposed.payment_method === "waiver"
-      ? `New waiver: ${formatValue(amt)}`
-      : "Insert a new payment row";
+      ? `New waiver: ${Number.isNaN(amt) ? "—" : formatCurrency(amt)}`
+      : "Add a new payment record";
   }
-  const keys = Object.keys(proposed);
+  const keys = visibleFields(Object.keys(proposed));
   if (keys.length === 0) return "—";
-  if (keys.length === 1) {
-    const [k] = keys;
-    return `${k}: ${formatValue(proposed[k])}`;
-  }
-  return keys.map((k) => `${k}: ${formatValue(proposed[k])}`).join(" · ");
+  return keys
+    .map((k) => `${fieldLabel(k)}: ${formatFieldValue(k, proposed[k], labels)}`)
+    .join(" · ");
+}
+
+/** "Riya Sharma (NKPS/019) · Tuition Fee · 2026-27", skipping what is absent. */
+function subjectLine(
+  sources: Array<Record<string, unknown> | null | undefined>,
+  labels: EntityLabels
+): string | null {
+  const { student, feeHead, session } = describeSubject(sources, labels);
+  const parts = [student, feeHead, session].filter(
+    (p): p is string => typeof p === "string" && p.length > 0
+  );
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 export default function FeeChangeRequestsPage() {
@@ -106,6 +119,7 @@ export default function FeeChangeRequestsPage() {
   const [userRole, setUserRole] = useState<"admin" | "editor" | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
+  const [listLabels, setListLabels] = useState<EntityLabels>({});
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<RequestStatus>("pending");
   const [detail, setDetail] = useState<RequestDetail | null>(null);
@@ -147,9 +161,11 @@ export default function FeeChangeRequestsPage() {
         if (!res.ok) {
           toast.error(data.error ?? "Failed to load change requests");
           setRequests([]);
+          setListLabels({});
           return;
         }
         setRequests(data.requests ?? []);
+        setListLabels(data.entity_labels ?? {});
       } finally {
         setLoading(false);
       }
@@ -253,8 +269,13 @@ export default function FeeChangeRequestsPage() {
                     {r.target_table === "fee_payments" ? "Payment" : r.target_table}
                   </span>
                 </div>
+                {subjectLine([r.proposed_changes, r.current_snapshot], listLabels) && (
+                  <p className="text-sm font-medium text-navy-900 dark:text-white truncate">
+                    {subjectLine([r.proposed_changes, r.current_snapshot], listLabels)}
+                  </p>
+                )}
                 <p className="text-sm text-gray-900 dark:text-gray-100 truncate">
-                  {summarizeProposedChanges(r.action, r.proposed_changes)}
+                  {summarizeProposedChanges(r.action, r.proposed_changes, listLabels)}
                 </p>
                 <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 line-clamp-2">
                   <span className="font-medium">Reason:</span> {r.reason}
@@ -273,24 +294,29 @@ export default function FeeChangeRequestsPage() {
 
   const isAdmin = userRole === "admin";
   const detailReq = detail?.request;
+  const detailLabels = detail?.entity_labels ?? {};
+  const detailSubject = detailReq
+    ? subjectLine(
+        [detailReq.proposed_changes, detailReq.current_snapshot, detail?.live_row],
+        detailLabels
+      )
+    : null;
 
   // Drift detection — flag when the live row no longer matches what the
   // editor saw at request time. The admin should refresh and decide.
+  // Restricted to the columns the reviewer can actually see: `updated_at`
+  // moves on every write, so counting it reported drift on rows where
+  // nothing meaningful had changed.
   const driftKeys = useMemo(() => {
     if (!detail || !detail.live_row) return [] as string[];
-    const snap = detail.request.current_snapshot ?? {};
+    const snap = (detail.request.current_snapshot ?? {}) as Record<string, unknown>;
     const live = detail.live_row;
-    const keys = new Set<string>([
-      ...Object.keys(snap),
-      ...Object.keys(live),
-    ]);
-    const drifted: string[] = [];
-    for (const k of keys) {
-      if (JSON.stringify((snap as Record<string, unknown>)[k]) !== JSON.stringify(live[k])) {
-        drifted.push(k);
-      }
-    }
-    return drifted;
+    const keys = visibleFields(
+      new Set<string>([...Object.keys(snap), ...Object.keys(live)])
+    );
+    return keys.filter(
+      (k) => JSON.stringify(snap[k]) !== JSON.stringify(live[k])
+    );
   }, [detail]);
 
   return (
@@ -330,7 +356,7 @@ export default function FeeChangeRequestsPage() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Change Request</DialogTitle>
           </DialogHeader>
@@ -353,15 +379,27 @@ export default function FeeChangeRequestsPage() {
                 </span>
               </div>
 
+              {detailSubject && (
+                <div className="rounded-md border bg-gray-50 dark:bg-muted/40 px-3 py-2">
+                  <h3 className="text-xs uppercase tracking-wide text-gray-500">
+                    {detailReq.action === "insert" ? "Waiver for" : "Payment for"}
+                  </h3>
+                  <p className="text-sm font-medium text-navy-900 dark:text-white mt-0.5">
+                    {detailSubject}
+                  </p>
+                </div>
+              )}
+
               {driftKeys.length > 0 && (
                 <div className="rounded-md border border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-xs text-amber-900 dark:text-amber-200 flex gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                   <div>
                     <p className="font-medium">Row drifted since this request was filed.</p>
                     <p className="mt-1">
-                      {driftKeys.length} column{driftKeys.length === 1 ? "" : "s"}{" "}
-                      changed: {driftKeys.join(", ")}. Approving will overwrite the
-                      live values with the proposed ones. Refresh to re-check.
+                      {driftKeys.length} field{driftKeys.length === 1 ? "" : "s"}{" "}
+                      changed: {driftKeys.map(fieldLabel).join(", ")}. Approving will
+                      overwrite the live values with the proposed ones. Refresh to
+                      re-check.
                     </p>
                   </div>
                 </div>
@@ -382,7 +420,7 @@ export default function FeeChangeRequestsPage() {
                       <div className="px-3 py-2 font-medium border-b border-r">Field</div>
                       <div className="px-3 py-2 font-medium border-b">Current</div>
                       <div className="px-3 py-2 font-medium border-b border-l">Proposed</div>
-                      {Object.keys(detailReq.proposed_changes).map((k) => (
+                      {visibleFields(Object.keys(detailReq.proposed_changes)).map((k) => (
                         <DiffRow
                           key={k}
                           field={k}
@@ -390,6 +428,7 @@ export default function FeeChangeRequestsPage() {
                             (detailReq.current_snapshot as Record<string, unknown> | null)?.[k]
                           }
                           proposed={detailReq.proposed_changes[k]}
+                          labels={detailLabels}
                         />
                       ))}
                     </div>
@@ -401,13 +440,17 @@ export default function FeeChangeRequestsPage() {
                     New record to be created
                   </h3>
                   <div className="rounded-md border bg-gray-50 dark:bg-muted/40 text-xs">
-                    {Object.entries(detailReq.proposed_changes).map(([k, v]) => (
+                    {visibleFields(Object.keys(detailReq.proposed_changes)).map((k) => (
                       <div
                         key={k}
                         className="grid grid-cols-[1fr_1fr] border-b last:border-b-0"
                       >
-                        <div className="px-3 py-2 border-r text-gray-500">{k}</div>
-                        <div className="px-3 py-2">{formatValue(v)}</div>
+                        <div className="px-3 py-2 border-r text-gray-500">
+                          {fieldLabel(k)}
+                        </div>
+                        <div className="px-3 py-2">
+                          {formatFieldValue(k, detailReq.proposed_changes[k], detailLabels)}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -507,19 +550,21 @@ function DiffRow({
   field,
   current,
   proposed,
+  labels,
 }: {
   field: string;
   current: unknown;
   proposed: unknown;
+  labels: EntityLabels;
 }) {
   const changed = JSON.stringify(current) !== JSON.stringify(proposed);
   return (
     <>
       <div className="px-3 py-2 border-b border-r text-gray-700 dark:text-gray-300">
-        {field}
+        {fieldLabel(field)}
       </div>
       <div className="px-3 py-2 border-b text-gray-700 dark:text-gray-300">
-        {formatValue(current)}
+        {formatFieldValue(field, current, labels)}
       </div>
       <div
         className={`px-3 py-2 border-b border-l ${
@@ -528,7 +573,7 @@ function DiffRow({
             : "text-gray-700 dark:text-gray-300"
         }`}
       >
-        {formatValue(proposed)}
+        {formatFieldValue(field, proposed, labels)}
       </div>
     </>
   );

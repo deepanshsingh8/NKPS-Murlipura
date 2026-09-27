@@ -5,6 +5,7 @@
  */
 
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import type { DependencyReport } from "@nkps/shared/lib/row-dependencies";
 
 interface AdminApiOptions {
   action: "insert" | "update" | "delete";
@@ -47,6 +48,28 @@ export async function adminApi(options: AdminApiOptions): Promise<AdminApiResult
   }
 
   return { success: true, data: result.data };
+}
+
+/**
+ * Asks the server what a master row is still holding up, before offering to
+ * delete it. Returns null when the check itself fails — callers treat that as
+ * "unknown" and fall back to a generic confirmation; the proxy still refuses
+ * the delete server-side, so a failed pre-flight can only cost a nicer message,
+ * never safety.
+ */
+export async function fetchRowDependencies(
+  table: string,
+  id: string
+): Promise<DependencyReport | null> {
+  try {
+    const res = await adminFetch(
+      `/api/admin/dependencies?table=${encodeURIComponent(table)}&id=${encodeURIComponent(id)}`
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as DependencyReport;
+  } catch {
+    return null;
+  }
 }
 
 /**

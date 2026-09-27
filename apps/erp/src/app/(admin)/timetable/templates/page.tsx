@@ -224,7 +224,7 @@ export default function TimetableTemplatesPage() {
             Every template must include a 20-minute lunch slot.
           </p>
         </div>
-        <Button onClick={() => setCloneOpen(true)} className="bg-navy-900 hover:bg-navy-800 text-white">
+        <Button onClick={() => setCloneOpen(true)} className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900">
           <Copy className="h-4 w-4 mr-1.5" />
           Clone Template
         </Button>
@@ -238,7 +238,7 @@ export default function TimetableTemplatesPage() {
                 <h3 className="font-semibold text-navy-900 dark:text-white">
                   {t.name}
                   {t.is_system && (
-                    <span className="ml-2 text-[10px] uppercase tracking-wide rounded-full bg-blue-100 text-blue-700 px-2 py-0.5">
+                    <span className="ml-2 text-[10px] uppercase tracking-wide rounded-full bg-blue-100 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 px-2 py-0.5">
                       Built-in
                     </span>
                   )}
@@ -331,7 +331,7 @@ export default function TimetableTemplatesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCloneOpen(false)}>Cancel</Button>
-            <Button onClick={handleClone} className="bg-navy-900 hover:bg-navy-800 text-white">
+            <Button onClick={handleClone} className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900">
               <Copy className="h-4 w-4 mr-1" />
               Clone
             </Button>
@@ -341,7 +341,7 @@ export default function TimetableTemplatesPage() {
 
       {/* ─────────────── Edit dialog ─────────────── */}
       <Dialog open={!!editing} onOpenChange={(o) => { if (!o) cancelEdit(); }}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Template</DialogTitle>
           </DialogHeader>
@@ -436,7 +436,7 @@ export default function TimetableTemplatesPage() {
             <Button
               onClick={handleSave}
               disabled={saving}
-              className="bg-navy-900 hover:bg-navy-800 text-white"
+              className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {saving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               <Save className="h-4 w-4 mr-1" />

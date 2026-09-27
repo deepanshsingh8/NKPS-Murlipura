@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { adminFetch } from "@nkps/shared/lib/admin-api";
 import { Button } from "@nkps/shared/components/ui/button";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import { Label } from "@nkps/shared/components/ui/label";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
 import { Card, CardContent } from "@nkps/shared/components/ui/card";
@@ -99,13 +101,19 @@ export function AdmitCardGenerateTab({
     }
   }, [activeTemplates, selectedTemplateId]);
 
+  // Classes and exam types are both year-scoped, so admit-card generation
+  // follows the session picker — reprinting a previous year's card needs that
+  // year's classes, not this year's.
+  const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
   const fetchInitial = useCallback(async () => {
     const supabase = createClient();
-    const { data: current } = await supabase
-      .from("academic_years")
-      .select("id")
-      .eq("is_current", true)
-      .maybeSingle();
+    let yearQuery = supabase.from("academic_years").select("id");
+    yearQuery = sessionId
+      ? yearQuery.eq("id", sessionId)
+      : yearQuery.eq("is_current", true);
+    const { data: current } = await yearQuery.maybeSingle();
     if (!current) return;
 
     const [classesRes, examsRes] = await Promise.all([
@@ -122,7 +130,7 @@ export function AdmitCardGenerateTab({
     ]);
     setClasses((classesRes.data as Class[]) ?? []);
     setExamTypes((examsRes.data as ExamType[]) ?? []);
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => {
     fetchInitial().finally(() => setLoading(false));
@@ -282,6 +290,9 @@ export function AdmitCardGenerateTab({
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <AcademicSessionPicker state={session} />
+      </div>
       <Card className="bg-white dark:bg-card rounded-2xl">
         <CardContent className="pt-6 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

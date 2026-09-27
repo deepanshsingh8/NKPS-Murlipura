@@ -18,7 +18,7 @@ export function SectionHeading({ title, subtitle, label, light, className }: Sec
         <span
           className={cn(
             "inline-block text-xs font-semibold uppercase tracking-[0.2em] mb-3",
-            light ? "text-gold-400" : "text-gold-700"
+            light ? "text-gold-400" : "text-gold-700 dark:text-gold-400"
           )}
         >
           {label}
@@ -27,7 +27,7 @@ export function SectionHeading({ title, subtitle, label, light, className }: Sec
       <h2
         className={cn(
           "font-heading text-2xl sm:text-3xl md:text-4xl font-bold",
-          light ? "text-white" : "text-navy-900"
+          light ? "text-white" : "text-navy-900 dark:text-white"
         )}
       >
         {title}

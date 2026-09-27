@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@nkps/shared/lib/supabase/server";
 import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
+import {
+  assignSubjectsToClasses,
+  type ClassSubjectPair,
+} from "@/lib/class-subject-assign";
 
 interface SubjectInput {
   name: string;
@@ -153,23 +157,11 @@ export async function POST(request: Request) {
       classMap.set(key, c.id);
     }
 
-    // Fetch existing class_subjects to avoid duplicates
-    const classIds = (allClasses ?? []).map(
-      (c: { id: string }) => c.id
-    );
-    const { data: existingAssignments } = await admin
-      .from("class_subjects")
-      .select("class_id, subject_id")
-      .in("class_id", classIds.length > 0 ? classIds : ["__none__"]);
-
-    const existingAssignmentSet = new Set<string>();
-    for (const a of existingAssignments ?? []) {
-      existingAssignmentSet.add(`${a.class_id}|${a.subject_id}`);
-    }
-
-    let assignmentsCreated = 0;
+    // Resolve every row to ids first; the shared writer handles the rest
+    // (skipping what already exists, de-duplicating, chunked insert).
     let assignmentsSkipped = 0;
     const missingClasses: string[] = [];
+    const pairs: ClassSubjectPair[] = [];
 
     for (const a of assignments) {
       const streamKey = a.stream_name?.toLowerCase() ?? "";
@@ -195,27 +187,16 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // Check if already assigned
-      const assignKey = `${classId}|${subjectId}`;
-      if (existingAssignmentSet.has(assignKey)) {
-        assignmentsSkipped++;
-        continue;
-      }
-
-      const { error } = await admin.from("class_subjects").insert({
+      pairs.push({
         class_id: classId,
         subject_id: subjectId,
-        teacher_id: null,
+        label: `${a.class_name}-${a.section} / ${a.subject_name}`,
       });
-
-      if (error) {
-        // Duplicate constraint error — skip
-        assignmentsSkipped++;
-      } else {
-        existingAssignmentSet.add(assignKey);
-        assignmentsCreated++;
-      }
     }
+
+    const outcome = await assignSubjectsToClasses(admin, pairs);
+    const assignmentsCreated = outcome.created;
+    assignmentsSkipped += outcome.skipped + outcome.errors.length;
 
     // If nothing was created and the only outcome was unmatched classes, the
     // operation accomplished nothing — surface that as a non-2xx so callers

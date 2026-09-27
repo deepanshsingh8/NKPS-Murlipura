@@ -49,6 +49,17 @@ import { UpcomingEvents } from "@nkps/shared/components/UpcomingEvents";
 import { linkChildSchema, type LinkChildData } from "@nkps/shared/lib/validations";
 import type { Profile } from "@nkps/shared/types";
 
+interface WardEnrollment {
+  student_id: string;
+  class_id: string;
+  roll_number: number | null;
+  classes: {
+    name: string;
+    section: string;
+    streams?: { name: string } | null;
+  } | null;
+}
+
 interface ChildInfo {
   student_id: string;
   relationship: string;
@@ -147,7 +158,32 @@ export default function ParentDashboard() {
         return;
       }
 
-      // For each child, get enrollment info
+      // Enrollment info for every child in one read. A link row whose student
+      // has gone missing leaves nothing to ask about, and PostgREST rejects an
+      // empty `.in()` list, so only query when there is at least one id.
+      const studentIds = studentParents
+        .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+        .filter((id): id is string => Boolean(id));
+
+      // Newest enrollment per child, as before: read them all newest-first and
+      // keep the first row seen for each student.
+      const enrollmentByStudent = new Map<string, WardEnrollment>();
+      if (studentIds.length > 0) {
+        const { data: enrollments } = await supabase
+          .from("student_enrollments")
+          .select(
+            "student_id, class_id, roll_number, classes(name, section, streams:stream_id(name))"
+          )
+          .in("student_id", studentIds)
+          .order("enrollment_date", { ascending: false });
+
+        for (const row of (enrollments ?? []) as unknown as WardEnrollment[]) {
+          if (!enrollmentByStudent.has(row.student_id)) {
+            enrollmentByStudent.set(row.student_id, row);
+          }
+        }
+      }
+
       const childInfos: ChildInfo[] = [];
       for (const sp of studentParents) {
         const student = sp.students as unknown as {
@@ -158,19 +194,8 @@ export default function ParentDashboard() {
         };
         if (!student) continue;
 
-        const { data: enrollment } = await supabase
-          .from("student_enrollments")
-          .select("class_id, roll_number, classes(name, section, streams:stream_id(name))")
-          .eq("student_id", student.id)
-          .order("enrollment_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const classInfo = enrollment?.classes as unknown as {
-          name: string;
-          section: string;
-          streams?: { name: string } | null;
-        } | null;
+        const enrollment = enrollmentByStudent.get(student.id);
+        const classInfo = enrollment?.classes ?? null;
 
         childInfos.push({
           student_id: sp.student_id,
@@ -301,7 +326,11 @@ export default function ParentDashboard() {
                       val &&
                       setValue(
                         "relationship",
-                        val as "father" | "mother" | "guardian"
+                        val as "father" | "mother" | "guardian",
+                        // Clear "Please select your relationship" the moment
+                        // they do; without this the error sits there until the
+                        // next submit and looks like the form is still wrong.
+                        { shouldValidate: true }
                       )
                     }
                   >
@@ -393,28 +422,30 @@ export default function ParentDashboard() {
                       Admission No: {child.student.admission_no}
                     </span>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="erp-scroll-x -mx-1 px-1">
+                    <div className="flex gap-2">
                     <Link
                       href={`/parent/attendance?child=${child.student_id}`}
-                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 text-xs font-medium hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors"
+                      className="flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 text-xs font-medium hover:bg-blue-100 dark:hover:bg-blue-950/50 transition-colors"
                     >
                       <ClipboardCheck className="h-3.5 w-3.5" />
                       Attendance
                     </Link>
                     <Link
                       href={`/parent/results?child=${child.student_id}`}
-                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-400 text-xs font-medium hover:bg-violet-100 dark:hover:bg-violet-950/50 transition-colors"
+                      className="flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-400 text-xs font-medium hover:bg-violet-100 dark:hover:bg-violet-950/50 transition-colors" // color-ok: one hue per section in this row — Attendance blue, Results violet, Fees green
                     >
                       <BarChart3 className="h-3.5 w-3.5" />
                       Results
                     </Link>
                     <Link
                       href={`/parent/fees?child=${child.student_id}`}
-                      className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 text-xs font-medium hover:bg-green-100 dark:hover:bg-green-950/50 transition-colors"
+                      className="flex shrink-0 items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-400 text-xs font-medium hover:bg-green-100 dark:hover:bg-green-950/50 transition-colors"
                     >
                       <CreditCard className="h-3.5 w-3.5" />
                       Fees
                     </Link>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -426,7 +457,7 @@ export default function ParentDashboard() {
       {/* Quick Links */}
       <div>
         <h2 className="erp-section-title mb-4">Quick Links</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
             {
               href: "/parent/attendance",

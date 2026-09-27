@@ -6,8 +6,10 @@
    classes used only inside @nkps/shared components get tree-shaken away. */
 @source "../../../../packages/shared/src/**/*.{ts,tsx,js,jsx}";
 
-/* Override dark variant: use class-based (.dark) instead of media query (prefers-color-scheme).
-   Since no .dark class is applied anywhere, all dark: utilities become inert. */
+/* Override dark variant: use class-based (.dark) instead of media query
+   (prefers-color-scheme). The class is put on <html> by THEME_INIT_SCRIPT
+   before first paint and maintained by ThemeProvider thereafter, so the theme
+   follows the user's choice in Settings rather than only their OS setting. */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -17,23 +19,44 @@
   --font-heading: var(--font-playfair);
   --font-mono: var(--font-geist-mono);
 
-  /* Forest palette — primary dark surfaces (token name kept for backward compatibility) */
+  /* Forest palette — the "navy" token names are kept for backward
+     compatibility with the NKPS (Rajawas) codebase, but every rung is deep
+     forest green here. Upstream filled the ramp in from 50 to 950 so that
+     light-tint chips (`bg-navy-100 text-navy-800`) and their dark-mode
+     counterparts render; the lighter rungs below follow the same hue (~150)
+     with saturation easing off as they lighten. */
   --color-navy-950: #021A0F;
   --color-navy-900: #0A3D2A;
   --color-navy-800: #14532D;
   --color-navy-700: #1A5F35;
   --color-navy-600: #246B40;
+  --color-navy-500: #2F7A52;
+  --color-navy-400: #4A9A6D;
+  --color-navy-300: #7AB894;
+  --color-navy-200: #AFD3BD;
+  --color-navy-100: #D7EADF;
+  --color-navy-50: #EFF7F2;
 
   /* Emerald accent (token name kept for backward compatibility) */
   --color-blue-600: #15803D;
   --color-blue-500: #16A34A;
   --color-blue-400: #22C55E;
 
-  /* Gold accent */
+  /* Gold accent. Same story as navy: the tints and shades below 300 / above
+     600 were in use before they existed. gold-700 is the AA-contrast value
+     (>=4.5:1 on white and on cream) and was already defined in the website
+     app only — which is how `text-gold-700` came to render as inherited body
+     colour in the ERP and the CMS. */
+  --color-gold-900: #4A3A0D;
+  --color-gold-800: #715814;
+  --color-gold-700: #8A6D12;
   --color-gold-600: #B8941F;
   --color-gold-500: #D4A843;
   --color-gold-400: #E5C06E;
   --color-gold-300: #F0D99A;
+  --color-gold-200: #F6E9C6;
+  --color-gold-100: #FCF7E9;
+  --color-gold-50: #FDFAF1;
 
   /* Cream backgrounds */
   --color-cream-50: #FDFBF7;
@@ -54,6 +77,14 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
+  --color-cat-7: var(--cat-7);
+  --color-cat-8: var(--cat-8);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -105,6 +136,26 @@
   --chart-3: oklch(0.6 0.1 180);
   --chart-4: oklch(0.7 0.15 30);
   --chart-5: oklch(0.65 0.12 300);
+
+  /* Categorical ramp: for things that are merely DIFFERENT from each other —
+     one subject from the next, one teacher's avatar from another's — never
+     for status, which is what --destructive and the semantic greens/ambers
+     are for. Eight files each rolled their own rotation before this, sharing
+     no order, so a subject was teal in the parent timetable, its teacher
+     emerald in the staff list and its exam type sky on the exams hub. One
+     ramp, one order, and a hue that means the same thing in all of them.
+
+     Even lightness and chroma across all eight is the point: pick hues by
+     eye and some land far brighter than others, and the bright ones read as
+     emphasis when nothing is being emphasised. */
+  --cat-1: oklch(0.58 0.14 260);
+  --cat-2: oklch(0.58 0.14 305);
+  --cat-3: oklch(0.58 0.14 350);
+  --cat-4: oklch(0.58 0.14 30);
+  --cat-5: oklch(0.58 0.14 85);
+  --cat-6: oklch(0.58 0.14 130);
+  --cat-7: oklch(0.58 0.14 165);
+  --cat-8: oklch(0.58 0.14 205);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -114,6 +165,56 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.55 0.15 150);
+  color-scheme: light;
+}
+
+/* ── Dark theme ─────────────────────────────────────────────────────────────
+   Kept byte-identical to apps/erp/src/app/globals.css. The two files are a
+   deliberate duplicate (Tailwind v4 is CSS-first and each app compiles its
+   own), and the palette must not drift between them — a user moving from the
+   ERP to the CMS via the app switcher should not see the walls change colour.
+   See the ERP copy for why navy grounds it and why gold becomes --primary. */
+.dark {
+  --background: #021a0f;         /* navy-950 */
+  --foreground: #e8f2ec;
+  --card: #062a1b;               /* a step above the page, between 950 and 900 */
+  --card-foreground: #e8f2ec;
+  --popover: #14532d;            /* navy-800 — floats above cards */
+  --popover-foreground: #e8f2ec;
+  --primary: #d4a843;            /* gold-500 */
+  --primary-foreground: #0a3d2a;
+  --secondary: #1a5f35;          /* navy-700 */
+  --secondary-foreground: #e8f2ec;
+  --muted: #0c3322;
+  --muted-foreground: #94a3b8;
+  --accent: #d4a843;
+  --accent-foreground: #0a3d2a;
+  --destructive: #f87171;        /* lightened: the light-mode red fails on navy */
+  --border: #1f4a33;
+  --input: #1f4a33;
+  --ring: #22c55e;               /* blue-400 */
+  --chart-1: #22c55e;
+  --chart-2: #e5c06e;
+  --chart-3: #4ade80;
+  --chart-4: #fb923c;
+  --chart-5: #c084fc;
+  --cat-1: oklch(0.78 0.13 260);
+  --cat-2: oklch(0.78 0.13 305);
+  --cat-3: oklch(0.78 0.13 350);
+  --cat-4: oklch(0.78 0.13 30);
+  --cat-5: oklch(0.78 0.13 85);
+  --cat-6: oklch(0.78 0.13 130);
+  --cat-7: oklch(0.78 0.13 165);
+  --cat-8: oklch(0.78 0.13 205);
+  --sidebar: #0a3d2a;            /* navy-900 — unchanged from light, by design */
+  --sidebar-foreground: #e8f2ec;
+  --sidebar-primary: #d4a843;
+  --sidebar-primary-foreground: #0a3d2a;
+  --sidebar-accent: #1a5f35;
+  --sidebar-accent-foreground: #e8f2ec;
+  --sidebar-border: #1f4a33;
+  --sidebar-ring: #22c55e;
+  color-scheme: dark;
 }
 
 
@@ -123,12 +224,32 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Don't chain the app's scroll to the document underneath it. Without
+       this, scrolling past the end of a list on a phone drags the whole app
+       and (in a browser tab) fires pull-to-refresh mid-gesture. */
+    overscroll-behavior-y: contain;
   }
   html {
     @apply font-sans scroll-smooth;
+    /* The grey flash Android paints over every tapped element. Fine on a web
+       page, immediately reads as "website" inside an installed app. */
+    -webkit-tap-highlight-color: transparent;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-playfair);
+  }
+  /* Opts these elements out of double-tap-to-zoom, which is what the ~300ms
+     delay between touch and click is waiting for. Applied to controls only —
+     body text stays zoomable, which is an accessibility requirement, not a
+     preference. */
+  button,
+  a,
+  label,
+  select,
+  summary,
+  [role="button"],
+  [role="tab"] {
+    touch-action: manipulation;
   }
 }
 
@@ -226,6 +347,31 @@
     @apply bg-white dark:bg-card rounded-2xl border border-gray-200/80 dark:border-border shadow-sm overflow-hidden;
   }
 
+  /* Horizontal strip (tab bar, chip row, button group) that scrolls on a
+     narrow screen instead of wrapping into an overlapping second line or
+     dragging the whole page sideways. Children need `shrink-0`. */
+  .erp-scroll-x {
+    @apply max-w-full overflow-x-auto overscroll-x-contain;
+    scrollbar-width: none;
+  }
+  .erp-scroll-x::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Title-and-actions bar at the top of a page. Stacks on a phone: the action
+     cluster is several buttons wide and, kept on one line, it sets the page's
+     width and scrolls the whole layout sideways. */
+  .erp-page-bar {
+    @apply flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between;
+  }
+  .erp-page-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+  /* Square badge beside a page title — never let flex squash it to a sliver. */
+  .erp-page-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-navy-900;
+  }
+
   .erp-section-title {
     @apply font-heading text-lg font-semibold text-navy-900 dark:text-white tracking-tight;
   }
@@ -243,6 +389,60 @@
 
   .erp-empty-state p, .erp-empty-state span {
     @apply dark:text-gray-400;
+  }
+
+  /* ── Installed-app chrome ────────────────────────────────────────────────
+     These apps install to the home screen (display: standalone), which means
+     the OS hands us the entire screen — including the strip behind the status
+     bar and the one the home indicator floats over. env(safe-area-inset-*) is
+     how we get those back; they report 0 everywhere else, so the utilities are
+     safe to apply unconditionally.
+
+     They report 0 *everywhere* without `viewport-fit: cover`, which each app
+     sets in its layout.tsx viewport export. If these ever stop working, check
+     that first. */
+  .app-safe-t {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .app-safe-b {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* Landscape on a notched phone insets the sides, not the top. */
+  .app-safe-x {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  /* For a fixed element that already owns its padding and needs the inset as
+     clearance underneath it instead. */
+  .app-safe-mb {
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Bottom-sheet motion, used by the mobile dialog variant. The global
+     prefers-reduced-motion rule at the end of this file disables both. */
+  @keyframes sheet-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+  @keyframes sheet-down {
+    from { transform: translateY(0); }
+    to { transform: translateY(100%); }
+  }
+
+  @media (display-mode: standalone) {
+    body {
+      /* Stronger than `contain`: inside an installed app there is no browser
+         to chain to, so the bounce is pure noise. */
+      overscroll-behavior-y: none;
+    }
+    /* Navigation chrome is furniture, not content. Long-pressing it should not
+       start a text selection or raise the iOS copy/define callout. */
+    nav,
+    [data-app-chrome] {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
   }
 
   /* Dashboard mount animations — staggered fade-up */
@@ -373,6 +573,13 @@ html {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(10, 61, 42, 0.5);
+}
+/* A navy thumb on a navy page is an invisible scrollbar. */
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(232, 237, 245, 0.22);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(232, 237, 245, 0.38);
 }
 
 @keyframes marquee {

@@ -13,6 +13,7 @@ import {
   Clock,
 } from "lucide-react";
 import { cn } from "@nkps/shared/lib/utils";
+import { Meter, toneForPercent } from "@nkps/shared/components/charts/Meter";
 import { UpcomingEvents } from "@nkps/shared/components/UpcomingEvents";
 import { StudentLinkPrompt } from "@/components/StudentLinkPrompt";
 import type { Profile } from "@nkps/shared/types";
@@ -57,31 +58,54 @@ export default function StudentDashboard() {
         return;
       }
 
-      // Fetch enrollment using the linked student_id
-      const { data: enrollment } = await supabase
-        .from("student_enrollments")
-        .select("class_id")
-        .eq("student_id", studentId)
-        .limit(1)
-        .single();
+      // Enrollment, latest result and latest payment all hang off student_id
+      // alone, so they go out together. Only the attendance counts have to
+      // wait, since they are scoped to the class the enrollment names.
+      const [{ data: enrollment }, { data: resultData }, { data: feeData }] =
+        await Promise.all([
+          supabase
+            .from("student_enrollments")
+            .select("class_id")
+            .eq("student_id", studentId)
+            .limit(1)
+            .single(),
+          supabase
+            .from("results")
+            .select("marks_obtained, max_marks, grade")
+            .eq("student_id", studentId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single(),
+          supabase
+            .from("fee_payments")
+            .select("status")
+            .eq("student_id", studentId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single(),
+        ]);
 
       const classId = enrollment?.class_id;
 
-      // Attendance percentage
+      // Attendance percentage — the denominator and the numerator are two
+      // independent counts, so ask for both at once.
       let attendancePercent: number | null = null;
       if (classId) {
-        const { count: totalDays } = await supabase
-          .from("attendance")
-          .select("*", { count: "exact", head: true })
-          .eq("student_id", studentId)
-          .eq("class_id", classId);
-
-        const { count: presentDays } = await supabase
-          .from("attendance")
-          .select("*", { count: "exact", head: true })
-          .eq("student_id", studentId)
-          .eq("class_id", classId)
-          .in("status", ["present", "late"]);
+        const [{ count: totalDays }, { count: presentDays }] = await Promise.all(
+          [
+            supabase
+              .from("attendance")
+              .select("*", { count: "exact", head: true })
+              .eq("student_id", studentId)
+              .eq("class_id", classId),
+            supabase
+              .from("attendance")
+              .select("*", { count: "exact", head: true })
+              .eq("student_id", studentId)
+              .eq("class_id", classId)
+              .in("status", ["present", "late"]),
+          ]
+        );
 
         if (totalDays && totalDays > 0) {
           attendancePercent = Math.round(
@@ -92,14 +116,6 @@ export default function StudentDashboard() {
 
       // Latest result
       let latestResult: string | null = null;
-      const { data: resultData } = await supabase
-        .from("results")
-        .select("marks_obtained, max_marks, grade")
-        .eq("student_id", studentId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
-
       if (resultData) {
         latestResult = resultData.grade
           ? `Grade ${resultData.grade}`
@@ -108,14 +124,6 @@ export default function StudentDashboard() {
 
       // Fee status — check most recent payment
       let feeStatus: "paid" | "pending" | "unknown" = "unknown";
-      const { data: feeData } = await supabase
-        .from("fee_payments")
-        .select("status")
-        .eq("student_id", studentId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
-
       if (feeData) {
         feeStatus = feeData.status === "paid" ? "paid" : "pending";
       }
@@ -159,14 +167,14 @@ export default function StudentDashboard() {
       )}
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5">
         {/* Attendance */}
         <div className="erp-stat-card relative overflow-hidden group">
           <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-500/8 to-transparent rounded-bl-full" />
           <div className="relative">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                <ClipboardCheck className="h-5 w-5 text-blue-600" />
+                <ClipboardCheck className="h-5 w-5 text-blue-600 dark:text-blue-400" />
               </div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Attendance</span>
             </div>
@@ -175,17 +183,25 @@ export default function StudentDashboard() {
                 ? `${stats.attendancePercent}%`
                 : "--"}
             </p>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Overall attendance</p>
+            {stats.attendancePercent !== null && (
+              <Meter
+                percent={stats.attendancePercent}
+                tone={toneForPercent(stats.attendancePercent)}
+                className="mt-2"
+                ariaLabel={`Attendance ${stats.attendancePercent}%`}
+              />
+            )}
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1.5">Overall attendance</p>
           </div>
         </div>
 
         {/* Latest Result */}
         <div className="erp-stat-card relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-violet-500/8 to-transparent rounded-bl-full" />
+          <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-violet-500/8 to-transparent rounded-bl-full" /> {/* color-ok: the wash behind the Latest Result tile, in that tile's own violet */}
           <div className="relative">
             <div className="flex items-center gap-3 mb-3">
               <div className="h-10 w-10 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
-                <BarChart3 className="h-5 w-5 text-violet-600" />
+                <BarChart3 className="h-5 w-5 text-violet-600 dark:text-violet-400" />
               </div>
               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Latest Result</span>
             </div>
@@ -198,8 +214,8 @@ export default function StudentDashboard() {
 
         {/* Fee Status */}
         <div className={cn(
-          "erp-stat-card relative overflow-hidden group",
-          stats.feeStatus === "pending" && "ring-1 ring-amber-200"
+          "erp-stat-card relative overflow-hidden group col-span-2 md:col-span-1",
+          stats.feeStatus === "pending" && "ring-1 ring-amber-200 dark:ring-amber-500/30"
         )}>
           <div className={cn(
             "absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl rounded-bl-full",
@@ -217,7 +233,7 @@ export default function StudentDashboard() {
               )}>
                 <CreditCard className={cn(
                   "h-5 w-5",
-                  stats.feeStatus === "paid" ? "text-green-600"
+                  stats.feeStatus === "paid" ? "text-green-600 dark:text-green-400"
                     : stats.feeStatus === "pending" ? "text-amber-600"
                     : "text-gray-400"
                 )} />
@@ -251,7 +267,7 @@ export default function StudentDashboard() {
       {/* Quick Links */}
       <div>
         <h2 className="erp-section-title mb-4">Quick Links</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {[
             { href: "/student/attendance", icon: ClipboardCheck, label: "View Attendance", color: "bg-navy-900 text-white hover:bg-navy-800" },
             { href: "/student/results", icon: BarChart3, label: "View Results", color: "bg-gold-500 text-navy-900 hover:bg-gold-400" },
