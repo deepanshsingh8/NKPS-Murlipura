@@ -9,6 +9,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
+import { Field, FieldRow } from "@nkps/shared/components/ui/field";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
 import {
   Select,
@@ -40,6 +41,9 @@ export interface StudentFormState {
   stream_id: string;
   roll_number: string;
   roll_number_manual: boolean;
+  /** Enrollment-side, like class and roll: a student's house is per-session
+   *  (migration 090), so it is not a `students` column and not in `fields`. */
+  house_id: string;
   /** Registry student-column keys (+ indian_national), all as display strings:
    *  booleans "YES"/"NO"/"", enums as stored values, numbers as strings. */
   fields: Record<string, string>;
@@ -58,6 +62,7 @@ export function emptyStudentForm(classId = ""): StudentFormState {
     stream_id: "",
     roll_number: "",
     roll_number_manual: false,
+    house_id: "",
     fields,
   };
 }
@@ -68,6 +73,7 @@ export function studentToForm(
     stream_id?: string | null;
     roll_number?: number | null;
     roll_number_manual?: boolean;
+    house_id?: string | null;
   },
   fallbackClassId = ""
 ): StudentFormState {
@@ -91,6 +97,7 @@ export function studentToForm(
     stream_id: studentRow.stream_id || "",
     roll_number: studentRow.roll_number?.toString() ?? "",
     roll_number_manual: studentRow.roll_number_manual ?? false,
+    house_id: studentRow.house_id || "",
     fields,
   };
 }
@@ -139,7 +146,7 @@ const BOOLEAN_ITEMS = [
 
 function FieldError({ error }: { error?: string }) {
   if (!error) return null;
-  return <p className="text-[11px] text-red-600 mt-1">{error}</p>;
+  return <p className="text-[11px] text-red-600 dark:text-red-400 mt-1">{error}</p>;
 }
 
 const StudentTextField = memo(function StudentTextField({
@@ -164,13 +171,13 @@ const StudentTextField = memo(function StudentTextField({
   const required = field.required ?? false;
 
   return (
-    <div>
+    <Field>
       <Label htmlFor={fieldKey} className="text-xs font-medium">
         {field.label + (required ? " *" : "")}
       </Label>
       <Input
         id={fieldKey}
-        className={`h-9 mt-1 ${error ? ERROR_RING : ""}`}
+        className={error ? ERROR_RING : ""}
         type={
           field.kind === "date"
             ? "date"
@@ -186,7 +193,7 @@ const StudentTextField = memo(function StudentTextField({
         placeholder={disabled ? "—" : undefined}
       />
       <FieldError error={error} />
-    </div>
+    </Field>
   );
 });
 
@@ -231,12 +238,12 @@ const StudentSelectField = memo(function StudentSelectField({
   const required = field.required ?? false;
 
   return (
-    <div>
+    <Field>
       <Label className="text-xs font-medium">
         {field.label + (required ? " *" : "")}
       </Label>
       <Select value={value || "none"} items={items} onValueChange={onValueChange}>
-        <SelectTrigger className={`w-full mt-1 h-9 ${error ? ERROR_RING : ""}`}>
+        <SelectTrigger className={`w-full ${error ? ERROR_RING : ""}`}>
           <SelectValue placeholder="—" />
         </SelectTrigger>
         <SelectContent>
@@ -248,7 +255,7 @@ const StudentSelectField = memo(function StudentSelectField({
         </SelectContent>
       </Select>
       <FieldError error={error} />
-    </div>
+    </Field>
   );
 });
 
@@ -257,6 +264,9 @@ interface StudentFormFieldsProps {
   setFormData: React.Dispatch<React.SetStateAction<StudentFormState>>;
   classes: StudentFormClassOption[];
   streams: Stream[];
+  /** House master. Empty until migration 090 is applied, in which case the
+   *  control renders with only "No house" rather than breaking the form. */
+  houses?: { id: string; name: string }[];
   /** Server-side validation errors, keyed by field key (zod fieldErrors).
    *  Highlighted inline under the offending inputs. */
   errors?: Record<string, string[]>;
@@ -267,6 +277,7 @@ export function StudentFormFields({
   setFormData,
   classes,
   streams,
+  houses = [],
   errors,
 }: StudentFormFieldsProps) {
   const [openSections, setOpenSections] = useState<{ general: boolean; enrolment: boolean }>({
@@ -277,7 +288,18 @@ export function StudentFormFields({
   const updateMeta = (
     key: "class_id" | "stream_id" | "roll_number",
     value: string
-  ) => setFormData((prev) => ({ ...prev, [key]: value }));
+  ) =>
+    setFormData((prev) => {
+      // A roll number belongs to a class: it is unique per class and
+      // auto-assigned 1..N there. Carrying it into a different class would
+      // collide with whoever already holds it, so switching class drops the
+      // number and returns the student to auto-assignment. The server clears
+      // it too, and the recompute trigger issues a fresh one.
+      if (key === "class_id" && value !== prev.class_id) {
+        return { ...prev, class_id: value, roll_number: "", roll_number_manual: false };
+      }
+      return { ...prev, [key]: value };
+    });
 
   const selectedFormClass = classes.find((c) => c.id === formData.class_id);
   const isHigherClass = selectedFormClass
@@ -356,7 +378,7 @@ export function StudentFormFields({
       <p className="text-xs font-semibold text-gray-600 dark:text-gray-300 mb-2 uppercase tracking-wide">
         {title}
       </p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">{children}</div>
+      <FieldRow cols={3}>{children}</FieldRow>
     </div>
   );
 
@@ -370,14 +392,14 @@ export function StudentFormFields({
       )}
       {openSections.general && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <FieldRow cols={3}>
             {renderField("full_name")}
             {renderField("gender")}
             {renderField("date_of_birth")}
             {renderField("aadhar_number")}
             {renderField("name_as_per_aadhar")}
             {renderField("jan_aadhar_number")}
-          </div>
+          </FieldRow>
 
           {renderSubGroup("Mother's Details", (
             <>
@@ -420,7 +442,7 @@ export function StudentFormFields({
             </>
           ))}
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <FieldRow cols={3}>
             {renderField("blood_group")}
             {renderField("mother_tongue")}
             {renderField("category")}
@@ -435,7 +457,7 @@ export function StudentFormFields({
             {renderField("weight_kg")}
             {renderField("phone")}
             {renderField("email")}
-          </div>
+          </FieldRow>
         </div>
       )}
 
@@ -447,7 +469,7 @@ export function StudentFormFields({
       )}
       {openSections.enrolment && (
         <div className="space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <FieldRow cols={3}>
             {renderField("admission_no")}
             {renderField("admission_date")}
             <div>
@@ -553,10 +575,37 @@ export function StudentFormFields({
                 </div>
               </div>
             </div>
+            <div>
+              <Label htmlFor="house_id" className="text-xs font-medium">House</Label>
+              <Select
+                value={formData.house_id || "none"}
+                onValueChange={(v) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    house_id: !v || v === "none" ? "" : v,
+                  }))
+                }
+              >
+                <SelectTrigger id="house_id" className="h-9 mt-1">
+                  <SelectValue placeholder="No house" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none" label="No house">No house</SelectItem>
+                  {houses.map((h) => (
+                    <SelectItem key={h.id} value={h.id} label={h.name}>
+                      {h.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                Recorded per session, like class and roll number
+              </p>
+            </div>
             {renderField("is_rte")}
             {renderField("medium_of_instruction")}
             {renderField("is_staff_ward")}
-          </div>
+          </FieldRow>
 
           {renderSubGroup("Previous School", (
             <>
@@ -584,10 +633,10 @@ export function StudentFormFields({
             </>
           ))}
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <FieldRow cols={3}>
             {renderField("distance_band")}
             {renderField("parent_highest_education")}
-          </div>
+          </FieldRow>
 
           <p className="text-[11px] text-gray-400 dark:text-gray-500">
             Subjects are managed via class subjects and electives, or the Subjects column of the bulk upload.

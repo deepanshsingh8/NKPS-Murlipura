@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
+import { resolveEntityLabels } from "@/lib/change-request-display";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -56,6 +57,15 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         .maybeSingle()
     : { data: null };
 
+  // Every foreign key in the request — proposed, snapshotted, or live —
+  // resolved to a name, so the review dialog can show the student and fee
+  // head it is actually about rather than their UUIDs.
+  const entity_labels = await resolveEntityLabels(admin, [
+    req.proposed_changes as Record<string, unknown> | null,
+    req.current_snapshot as Record<string, unknown> | null,
+    liveRow as Record<string, unknown> | null,
+  ]);
+
   return NextResponse.json({
     request: {
       ...req,
@@ -63,5 +73,6 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       reviewed_by_name: req.reviewed_by ? nameById.get(req.reviewed_by) ?? null : null,
     },
     live_row: liveRow ?? null,
+    entity_labels,
   });
 }

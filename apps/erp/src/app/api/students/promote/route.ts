@@ -181,16 +181,21 @@ export async function POST(request: NextRequest) {
         }));
 
         if (newEnrollments.length > 0) {
-          // Pre-check: which of these students are already enrolled in the
-          // target class? Skip them — and surface their admission_nos so the
-          // admin sees what was *actually* moved vs. what was a no-op. Without
-          // this, ignoreDuplicates returns count=null and the response would
-          // claim every row was promoted.
+          // Pre-check: which of these students already have an enrollment in
+          // the target YEAR? Skip them — and surface the count so the admin
+          // sees what was *actually* moved vs. what was a no-op. Without this,
+          // ignoreDuplicates returns count=null and the response would claim
+          // every row was promoted.
+          //
+          // Probes the year, not the class: migration 086 allows one
+          // enrollment per student per year, so a student already placed in a
+          // DIFFERENT class of the target year would pass a class-only check
+          // and then fail the insert with a raw 23505.
           const studentIds = newEnrollments.map((n) => n.student_id);
           const { data: existing } = await admin
             .from("student_enrollments")
             .select("student_id")
-            .eq("class_id", targetClass.id)
+            .eq("academic_year_id", target_academic_year_id)
             .in("student_id", studentIds);
           const alreadyEnrolled = new Set(
             (existing ?? []).map((r) => r.student_id as string)
@@ -201,7 +206,7 @@ export async function POST(request: NextRequest) {
 
           if (alreadyEnrolled.size > 0) {
             summary.errors.push(
-              `${alreadyEnrolled.size} student(s) already enrolled in the target class — skipped`
+              `${alreadyEnrolled.size} student(s) already enrolled for the target session — skipped`
             );
           }
 
@@ -242,11 +247,12 @@ export async function POST(request: NextRequest) {
         }));
 
         if (retainEnrollments.length > 0) {
+          // Year-scoped for the same reason as the promote branch above.
           const studentIds = retainEnrollments.map((n) => n.student_id);
           const { data: existing } = await admin
             .from("student_enrollments")
             .select("student_id")
-            .eq("class_id", retainClass.id)
+            .eq("academic_year_id", target_academic_year_id)
             .in("student_id", studentIds);
           const alreadyEnrolled = new Set(
             (existing ?? []).map((r) => r.student_id as string)
@@ -257,7 +263,7 @@ export async function POST(request: NextRequest) {
 
           if (alreadyEnrolled.size > 0) {
             summary.errors.push(
-              `${alreadyEnrolled.size} student(s) already retained in this class — skipped`
+              `${alreadyEnrolled.size} student(s) already enrolled for the target session — skipped`
             );
           }
 

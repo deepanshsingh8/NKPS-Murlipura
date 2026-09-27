@@ -137,9 +137,24 @@ export function resolveStudentType(
 // deliberately replaced.
 export function resolveEffectiveFeeStructures(
   structures: FeeStructure[],
-  opts: { studentStreamId: string | null; studentType?: FeeStudentType | null }
+  opts: {
+    studentStreamId: string | null;
+    studentType?: FeeStudentType | null;
+    /**
+     * Skip the student-type rule, keeping only the stream override.
+     *
+     * For anything that decides what a student OWES this must stay false —
+     * that is the whole point of the rule. The historical day-book importer
+     * sets it when placing money that was ALREADY received: 209 students in
+     * the 2026-27 import paid an admission fee, some of them returning
+     * students the schedule would not have billed, and their receipts still
+     * have to land somewhere. It is used there as a per-head fallback, not as
+     * the primary resolution.
+     */
+    ignoreStudentType?: boolean;
+  }
 ): FeeStructure[] {
-  const { studentStreamId, studentType = null } = opts;
+  const { studentStreamId, studentType = null, ignoreStudentType = false } = opts;
 
   const visible = structures.filter((fs) => {
     if (fs.fee_type === "Transport") return false;
@@ -156,7 +171,7 @@ export function resolveEffectiveFeeStructures(
   return visible.filter(
     (fs) =>
       !(fs.stream_id == null && overriddenTypes.has(fs.fee_type)) &&
-      feeAppliesToStudentType(fs.student_type, studentType)
+      (ignoreStudentType || feeAppliesToStudentType(fs.student_type, studentType))
   );
 }
 
@@ -311,6 +326,65 @@ export function resolveEffectiveFeeLines(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// Billing cutoff — a student who has left stops being billed
+// ---------------------------------------------------------------------------
+
+// Enrollment statuses that end a student's liability. 'passed' and 'failed'
+// are year-end bookkeeping on a student who was on the roll all year, so they
+// are deliberately NOT here — the whole session is still owed.
+const EXIT_STATUSES = new Set(["exited", "terminated"]);
+
+/** An enrollment, reduced to the three fields the cutoff is derived from. */
+export type BillableEnrollment = {
+  status?: string | null;
+  exit_date?: string | null;
+  status_changed_at?: string | null;
+};
+
+/**
+ * The last date this enrollment may be billed for, or null for "still on the
+ * roll, bill to today".
+ *
+ * Dues are computed from the calendar, not the roster: amountBilledToDate()
+ * charges every instalment whose due date has passed. Left alone, a student
+ * who exited after the first quarter keeps acquiring the second quarter's
+ * instalment, then the third — arrears the school never meant to raise, which
+ * then distort the register, the No-Dues list and every total built on them.
+ *
+ * `exit_date` (migration 123) is the office's recorded last day on the roll
+ * and is the authority. `status_changed_at` is the fallback for the exits that
+ * predate the column and for the bulk importers that write `status` directly:
+ * it is when the exit was TYPED, so it is later than the truth whenever the
+ * paperwork lagged, but a late cutoff still beats no cutoff at all.
+ *
+ * Note this reads `status` first — a date left behind on an enrollment that
+ * was later re-activated is ignored, not applied.
+ */
+export function resolveBillingCutoff(
+  enrollment: BillableEnrollment | null | undefined
+): string | null {
+  if (!enrollment) return null;
+  if (!enrollment.status || !EXIT_STATUSES.has(enrollment.status)) return null;
+  const recorded = enrollment.exit_date ?? enrollment.status_changed_at;
+  return recorded ? recorded.slice(0, 10) : null;
+}
+
+/**
+ * The date a dues calculation should treat as "now" for one student: today,
+ * or their leaving date once they have left. Never later than `today`, so a
+ * leaving date typed into the future cannot bill a student ahead of the clock.
+ */
+export function effectiveBillingDate(
+  today: string,
+  billingCutoff: string | null | undefined
+): string {
+  const day = today.slice(0, 10);
+  if (!billingCutoff) return day;
+  const cutoff = billingCutoff.slice(0, 10);
+  return cutoff < day ? cutoff : day;
+}
+
+// ---------------------------------------------------------------------------
 // Dues
 // ---------------------------------------------------------------------------
 
@@ -334,7 +408,12 @@ export function settledAmount(p: DuesPaymentRow): number {
 }
 
 export interface DuesBreakdown {
-  /** Whole-year obligation across every applicable line. */
+  /**
+   * Whole-year obligation across every applicable line — or, for a student who
+   * has left, the obligation up to their leaving date. A leaver's year ended
+   * when they did, so their full-session figure is not a debt anyone will
+   * collect.
+   */
   expected: number;
   /** The slice of `expected` that has actually fallen due as of `today`. */
   billedToDate: number;
@@ -366,12 +445,39 @@ export function computeDuesBreakdown(opts: {
   today: string;
   /** Anchor for recurring lines that carry no due date of their own. */
   yearStartDate?: string | null;
+  /**
+   * Last date this student may be billed for — `resolveBillingCutoff()` of
+   * their enrollment. Null (the default) means they are still on the roll and
+   * billing runs to `today`.
+   *
+   * Every caller that prices a roster which can include leavers must pass
+   * this. Omitting it bills a student who left in June for the whole session,
+   * which is the bug migration 123 exists to fix.
+   */
+  billingCutoff?: string | null;
 }): DuesBreakdown {
-  const { lines, payments, today, yearStartDate = null } = opts;
+  const {
+    lines,
+    payments,
+    today,
+    yearStartDate = null,
+    billingCutoff = null,
+  } = opts;
 
-  const expected = lines.reduce((sum, l) => sum + annualizedAmount(l), 0);
+  // Everything below prices as of this date, not today's. For a student still
+  // on the roll the two are the same; for one who has left, the calendar stops
+  // on their last day and no later instalment is ever charged.
+  const asOf = effectiveBillingDate(today, billingCutoff);
+
+  // A leaver owes what had fallen due by the day they left, and nothing for
+  // the rest of the session — so their "expected" is that same figure rather
+  // than the annualised total, and the register stops reporting a year's fees
+  // against a child who attended one quarter of it.
+  const expected = billingCutoff
+    ? lines.reduce((sum, l) => sum + amountBilledToDate(l, asOf, yearStartDate), 0)
+    : lines.reduce((sum, l) => sum + annualizedAmount(l), 0);
   const billedToDate = lines.reduce(
-    (sum, l) => sum + amountBilledToDate(l, today, yearStartDate),
+    (sum, l) => sum + amountBilledToDate(l, asOf, yearStartDate),
     0
   );
   const paid = payments.reduce((sum, p) => sum + settledAmount(p), 0);
@@ -390,11 +496,19 @@ export function computeDuesBreakdown(opts: {
 
   // Transport lines carry no late-fee rule, so they are skipped outright
   // rather than relying on computeLateFee returning 0 for them.
+  //
+  // Both halves run on `asOf`, so a leaver's surcharge freezes on the day they
+  // left instead of compounding for the rest of the session. The per-line
+  // "still owed?" test uses the billed-to-cutoff amount for them too: judging a
+  // part-year liability against the annualised figure would mark a fully
+  // settled line unpaid and surcharge it.
   const lateFee = lines.reduce((sum, l) => {
     if (l.kind !== "fee_structure") return sum;
-    const lineExpected = annualizedAmount(l);
+    const lineExpected = billingCutoff
+      ? amountBilledToDate(l, asOf, yearStartDate)
+      : annualizedAmount(l);
     if ((paidByStructure.get(l.id) ?? 0) >= lineExpected) return sum;
-    return sum + computeLateFee(l, today);
+    return sum + computeLateFee(l, asOf);
   }, 0);
 
   // Money paid ahead against a future instalment still counts as settled, so a
@@ -409,5 +523,113 @@ export function computeDuesBreakdown(opts: {
     paid,
     lateFee: effectiveLateFee,
     dues: baseDues + effectiveLateFee,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Collection summary
+// ---------------------------------------------------------------------------
+
+/** One student's position, as the dashboard needs it. */
+export interface FeeCollectionEntry {
+  breakdown: DuesBreakdown;
+  /**
+   * The waived slice of `breakdown.paid`. Kept apart because a waiver settles
+   * a due without any money arriving, and a collection figure that counts it
+   * as cash reports money the school does not have.
+   */
+  waived: number;
+}
+
+export interface FeeCollectionSummary {
+  /** Cash banked from these students, net of refunds and of waivers. */
+  collected: number;
+  /** Fees written off. */
+  waived: number;
+  /** Cash received against instalments that have not fallen due yet. */
+  advance: number;
+  /** The settled slice of `dueToDate`: `settled + dues - lateFee === dueToDate`. */
+  settled: number;
+  /** Whole-session obligation. */
+  expected: number;
+  /** The slice of `expected` that has fallen due. */
+  dueToDate: number;
+  /** Outstanding today, late fee included. */
+  dues: number;
+  /** The late-fee part of `dues`. */
+  lateFee: number;
+  studentsClear: number;
+  studentsWithDues: number;
+  studentsTotal: number;
+  /** `settled` over `dueToDate`, 0-100. */
+  percentage: number;
+  /** The same measure over the whole session, 0-100. */
+  percentageOfYear: number;
+}
+
+// Paise are real (fee amounts are numeric(10,2)); anything below them is float
+// noise from summing hundreds of rows and would only make totals look odd.
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Roll a cohort's per-student positions into the figures one card shows.
+ *
+ * Everything is summed per student and nothing is netted across the cohort:
+ * a family paying the whole year in April must not cancel out a family in
+ * arrears. That is why `settled` caps each student's payments at what that
+ * student has been billed, and the excess is reported as `advance` instead —
+ * a school-wide `collected / dueToDate` counts money against an obligation
+ * that has not been raised yet, and reads as progress the school hasn't made.
+ *
+ * The cohort is the caller's choice, but it must be ONE cohort: every figure
+ * here has to come from the same students the obligation was computed for, or
+ * the ratio compares two different schools (receipts from students who have
+ * left the roll over a denominator that excludes them).
+ */
+export function summariseFeeCollection(
+  entries: FeeCollectionEntry[]
+): FeeCollectionSummary {
+  let collected = 0;
+  let waived = 0;
+  let advance = 0;
+  let settled = 0;
+  let settledOfYear = 0;
+  let expected = 0;
+  let dueToDate = 0;
+  let dues = 0;
+  let lateFee = 0;
+  let studentsClear = 0;
+  let studentsWithDues = 0;
+
+  for (const { breakdown, waived: w } of entries) {
+    expected += breakdown.expected;
+    dueToDate += breakdown.billedToDate;
+    dues += breakdown.dues;
+    lateFee += breakdown.lateFee;
+    settled += Math.min(breakdown.paid, breakdown.billedToDate);
+    settledOfYear += Math.min(breakdown.paid, breakdown.expected);
+    advance += Math.max(0, breakdown.paid - breakdown.billedToDate);
+    // breakdown.paid is cash + waivers, both already net of refunds.
+    collected += breakdown.paid - w;
+    waived += w;
+    if (breakdown.dues > 0) studentsWithDues++;
+    else studentsClear++;
+  }
+
+  return {
+    collected: round2(collected),
+    waived: round2(waived),
+    advance: round2(advance),
+    settled: round2(settled),
+    expected: round2(expected),
+    dueToDate: round2(dueToDate),
+    dues: round2(dues),
+    lateFee: round2(lateFee),
+    studentsClear,
+    studentsWithDues,
+    studentsTotal: entries.length,
+    percentage: dueToDate > 0 ? Math.round((settled / dueToDate) * 100) : 0,
+    percentageOfYear:
+      expected > 0 ? Math.round((settledOfYear / expected) * 100) : 0,
   };
 }

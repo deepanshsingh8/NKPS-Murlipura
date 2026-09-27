@@ -6,7 +6,6 @@ import {
   GraduationCap,
   BookOpen,
   CalendarDays,
-  Sparkles,
   ArrowRight,
   type LucideIcon,
 } from "lucide-react";
@@ -35,9 +34,9 @@ const tiles: AcademicsTile[] = [
     featureKey: "classes",
   },
   {
-    label: "Subjects",
+    label: "Subjects & Assignments",
     description:
-      "Maintain the subject master list. Mark subjects as active or elective; used across classes and results.",
+      "Subject master list, class–subject–teacher assignments, and the Science/Commerce/Humanities streams.",
     href: "/academics/subjects",
     icon: BookOpen,
     accentColor: "text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30",
@@ -60,15 +59,6 @@ const tiles: AcademicsTile[] = [
     icon: CalendarDays,
     accentColor: "text-violet-600 bg-violet-100 dark:bg-violet-900/30",
     featureKey: "academic_years",
-  },
-  {
-    label: "Non-Scholastic Classes",
-    description:
-      "Grade students on co-scholastic sub-skills per class and exam. Overrides teacher-entered grades.",
-    href: "/exams/non-scholastic-assessments",
-    icon: Sparkles,
-    accentColor: "text-rose-600 bg-rose-100 dark:bg-rose-900/30",
-    featureKey: "non_scholastic_entry",
   },
 ];
 

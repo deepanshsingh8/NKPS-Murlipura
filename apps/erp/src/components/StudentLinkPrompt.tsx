@@ -85,7 +85,7 @@ export function StudentLinkPrompt({ onLinked }: { onLinked: () => void }) {
         <Button
           type="submit"
           disabled={submitting || !admissionNo.trim() || !dob}
-          className="h-10 bg-navy-900 hover:bg-navy-800 text-white"
+          className="h-10 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
         >
           {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
           Connect

@@ -55,33 +55,39 @@ export default function ResetPasswordPage() {
 
     try {
       const supabase = createClient();
-      const { data: updateData, error } = await supabase.auth.updateUser({
-        password: newPassword,
+
+      // One server route sets the password and clears must_change_password.
+      // Keeping them together is what stops the flag being cleared by someone
+      // who never changed the password; the flag column is locked against
+      // browser writes (migration 061) in any case.
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        toast.error("Your reset link has expired. Please request a new one.");
+        return;
+      }
+
+      const res = await fetch("/api/portal/complete-password-change", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ newPassword }),
       });
 
-      if (error) {
-        toast.error(error.message);
-      } else {
-        // Clear must_change_password flag if it was set, so middleware doesn't
-        // bounce the user back to /portal/change-password. This column is locked
-        // against direct writes from the browser client (migration 061), so it
-        // must go through an API route backed by the service-role client.
-        if (updateData.user) {
-          const {
-            data: { session },
-          } = await supabase.auth.getSession();
-          if (session?.access_token) {
-            await fetch("/api/portal/complete-password-change", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${session.access_token}` },
-            });
-          }
-        }
-        await supabase.auth.signOut();
-        setSuccess(true);
-        toast.success("Password reset successfully!");
-        setTimeout(() => router.push("/portal/login"), 2000);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        toast.error(body?.error ?? "Couldn't reset your password. Please try again.");
+        return;
       }
+
+      await supabase.auth.signOut();
+      setSuccess(true);
+      toast.success("Password reset successfully!");
+      setTimeout(() => router.push("/portal/login"), 2000);
     } catch {
       toast.error("An unexpected error occurred");
     } finally {
@@ -90,18 +96,18 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-cream-50 px-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-cream-50 dark:bg-background px-6">
       <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+        <div className="bg-white dark:bg-card rounded-2xl shadow-xl border border-gray-100 dark:border-border p-8">
           {success ? (
             <div className="text-center">
-              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-                <CheckCircle className="h-8 w-8 text-green-600" />
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 dark:bg-green-950/30">
+                <CheckCircle className="h-8 w-8 text-green-600 dark:text-green-400" />
               </div>
-              <h2 className="font-heading text-2xl font-bold text-navy-900">
+              <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
                 Password Reset!
               </h2>
-              <p className="text-gray-500 mt-2 text-sm">
+              <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">
                 Your password has been reset successfully. Redirecting to login...
               </p>
             </div>
@@ -109,19 +115,19 @@ export default function ResetPasswordPage() {
             <>
               <div className="text-center mb-8">
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gold-500/10">
-                  <KeyRound className="h-8 w-8 text-gold-600" />
+                  <KeyRound className="h-8 w-8 text-gold-600 dark:text-gold-400" />
                 </div>
-                <h2 className="font-heading text-2xl font-bold text-navy-900">
+                <h2 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
                   Set New Password
                 </h2>
-                <p className="text-gray-500 mt-2 text-sm">
+                <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm">
                   Enter your new password below.
                 </p>
               </div>
 
               {linkError ? (
                 <div className="text-center py-6">
-                  <p className="text-sm text-red-600 mb-4">{linkError}</p>
+                  <p className="text-sm text-red-600 dark:text-red-400 mb-4">{linkError}</p>
                   <Button
                     onClick={() => router.push("/portal/forgot-password")}
                     variant="outline"
@@ -132,13 +138,13 @@ export default function ResetPasswordPage() {
                 </div>
               ) : !sessionReady ? (
                 <div className="text-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin text-navy-900 mx-auto mb-3" />
-                  <p className="text-sm text-gray-500">Verifying your reset link...</p>
+                  <Loader2 className="h-6 w-6 animate-spin text-navy-900 dark:text-white mx-auto mb-3" />
+                  <p className="text-sm text-gray-500 dark:text-gray-400">Verifying your reset link...</p>
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-5">
                   <div className="space-y-2">
-                    <Label htmlFor="new-password" className="text-navy-900 font-medium">
+                    <Label htmlFor="new-password" className="text-navy-900 dark:text-white font-medium">
                       New Password
                     </Label>
                     <Input
@@ -147,14 +153,14 @@ export default function ResetPasswordPage() {
                       placeholder="At least 6 characters"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                      className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                       required
                       minLength={6}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="confirm-password" className="text-navy-900 font-medium">
+                    <Label htmlFor="confirm-password" className="text-navy-900 dark:text-white font-medium">
                       Confirm Password
                     </Label>
                     <Input
@@ -163,7 +169,7 @@ export default function ResetPasswordPage() {
                       placeholder="Re-enter your password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="h-11 border-gray-200 focus:border-navy-900 focus:ring-navy-900"
+                      className="h-11 border-gray-200 dark:border-border focus:border-navy-900 focus:ring-navy-900 dark:focus:border-gold-500 dark:focus:ring-gold-500"
                       required
                       minLength={6}
                     />
@@ -172,7 +178,7 @@ export default function ResetPasswordPage() {
                   <Button
                     type="submit"
                     disabled={loading}
-                    className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white font-medium"
+                    className="w-full h-11 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 font-medium"
                   >
                     {loading ? (
                       <>

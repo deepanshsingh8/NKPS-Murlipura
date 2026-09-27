@@ -77,10 +77,15 @@ export function StaffDirectory() {
     (async () => {
       try {
         const supabase = createClient();
+        // public_staff_directory, not staff_members: the base table also
+        // holds date_of_birth, address, phone, email and license_number, and
+        // `select("*")` was shipping all of it to every visitor. The view
+        // (migration 098) exposes only these columns and active staff, and
+        // the table itself is now authenticated-only. Columns are listed
+        // explicitly so widening the view can never silently widen this page.
         const { data, error } = await supabase
-          .from("staff_members")
-          .select("*")
-          .eq("is_active", true)
+          .from("public_staff_directory")
+          .select("id, name, subject, category, photo_url, qualifications, sort_order")
           .in("category", PUBLIC_CATEGORIES as unknown as string[])
           .order("sort_order")
           .order("name");
@@ -201,12 +206,12 @@ export function StaffDirectory() {
         {/* Polished search */}
         <div className="max-w-md mx-auto mt-8 relative group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-chalk-faint group-focus-within:text-gold-500 transition-colors" />
-          <input
+          <input /* mobile-layout-ok: chalkboard-styled search, text-base on phones set below */
             type="text"
             placeholder="Search faculty by name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-11 pr-4 py-3 rounded-xl border border-chalk/20 bg-white/[0.06] text-sm text-chalk placeholder:text-chalk-faint focus:outline-none focus:ring-2 focus:ring-gold-500/20 focus:border-gold-500 shadow-sm transition-all"
+            className="w-full pl-11 pr-4 py-3 rounded-xl border border-chalk/20 bg-white/[0.06] text-base sm:text-sm text-chalk placeholder:text-chalk-faint focus:outline-none focus:ring-2 focus:ring-gold-500/20 focus:border-gold-500 shadow-sm transition-all"
           />
         </div>
 

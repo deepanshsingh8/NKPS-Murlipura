@@ -516,27 +516,22 @@ function PreviewBody({
             />
             <InfoChip label="Rounding" value={cfg.rounding_summary} />
           </div>
-          <div className="flex justify-between items-end pt-2 gap-3 flex-wrap">
-            <div className="space-y-1">
-              {previewPdfHref && (
-                <a href={previewPdfHref} target="_blank" rel="noopener noreferrer">
-                  <Button
-                    variant="outline"
-                    className="text-navy-900 dark:text-white"
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Download sample PDF
-                  </Button>
-                </a>
-              )}
-              <p className="text-[11px] text-gray-500 dark:text-gray-400 max-w-md">
-                Renders the final-result layout for this student using the
-                same engine the public report card will use. Useful for
-                eyeballing rounding, grace, and grade-scale config end-to-end.
-              </p>
-            </div>
-            <p className="text-[10px] font-mono text-gray-400 dark:text-gray-500 break-all">
-              rm: {cfg.result_master_id}
+          <div className="space-y-1 pt-2">
+            {previewPdfHref && (
+              <a href={previewPdfHref} target="_blank" rel="noopener noreferrer">
+                <Button
+                  variant="outline"
+                  className="text-navy-900 dark:text-white"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download sample PDF
+                </Button>
+              </a>
+            )}
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 max-w-md">
+              Renders the final-result layout for this student using the
+              same engine the public report card will use. Useful for
+              eyeballing rounding, grace, and grade-scale config end-to-end.
             </p>
           </div>
         </CardContent>

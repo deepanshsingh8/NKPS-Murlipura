@@ -8,7 +8,7 @@ import {
 import { rateLimit } from "@nkps/shared/lib/rate-limit";
 
 /**
- * Admin access to the temporary-password vault (migration 088).
+ * Admin access to the temporary-password vault (migration 902).
  *
  * The problem this solves: portal accounts are created with a generated
  * password that only ever leaves the server inside the welcome email. With
@@ -293,7 +293,7 @@ export async function POST(request: Request) {
       }
 
       // Force the change on next login. Do this BEFORE vaulting: the
-      // migration-088 trigger deletes vault rows when the flag goes false, and
+      // migration-902 trigger deletes vault rows when the flag goes false, and
       // this update is the only thing that could flip it — writing the flag
       // first means the row we store afterwards is never swept away by our own
       // update. (It also keeps the invariant true if vaulting then fails: the

@@ -135,7 +135,7 @@ export function PtmImportDialog({
         <Upload className="h-4 w-4 mr-2" />
         {triggerLabel}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-3xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Import PTM notes from CSV</DialogTitle>
           <DialogDescription>

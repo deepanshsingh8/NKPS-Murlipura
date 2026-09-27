@@ -37,6 +37,7 @@ import type {
   TransportChangeReason,
   TransportChangeStatus,
 } from "@nkps/shared/types";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 interface ChildOption {
   student_id: string;
@@ -178,21 +179,40 @@ export default function ParentTransportPage() {
         return;
       }
 
+      // One enrollment read for every child. PostgREST rejects an empty
+      // `.in()` list, so skip the query when no link row carries a student.
+      const studentIds = studentParents
+        .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+        .filter((id): id is string => Boolean(id));
+
+      // Newest enrollment per child, as before: rows arrive newest-first, so
+      // the first one seen for a student is the one to label them with.
+      const classByStudent = new Map<
+        string,
+        { name: string; section: string } | null
+      >();
+      if (studentIds.length > 0) {
+        const { data: enrollments } = await supabase
+          .from("student_enrollments")
+          .select("student_id, classes(name, section)")
+          .in("student_id", studentIds)
+          .order("enrollment_date", { ascending: false });
+
+        for (const row of (enrollments ?? []) as unknown as {
+          student_id: string;
+          classes: { name: string; section: string } | null;
+        }[]) {
+          if (!classByStudent.has(row.student_id)) {
+            classByStudent.set(row.student_id, row.classes ?? null);
+          }
+        }
+      }
+
       const childOptions: ChildOption[] = [];
       for (const sp of studentParents) {
         const student = sp.students as unknown as { id: string; full_name: string };
         if (!student) continue;
-        const { data: enrollment } = await supabase
-          .from("student_enrollments")
-          .select("classes(name, section)")
-          .eq("student_id", student.id)
-          .order("enrollment_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        const classInfo = enrollment?.classes as unknown as {
-          name: string;
-          section: string;
-        } | null;
+        const classInfo = classByStudent.get(student.id) ?? null;
         childOptions.push({
           student_id: student.id,
           full_name: student.full_name,
@@ -386,10 +406,9 @@ export default function ParentTransportPage() {
         {children.length > 1 && (
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-gray-400" />
-            <select
+            <NativeSelect
               value={selectedChild}
               onChange={(e) => setSelectedChild(e.target.value)}
-              className="rounded-lg border border-gray-200 dark:border-border bg-white dark:bg-card px-3 py-2 text-sm text-navy-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
             >
               {children.map((child) => (
                 <option key={child.student_id} value={child.student_id}>
@@ -397,7 +416,7 @@ export default function ParentTransportPage() {
                   {child.class_name ? ` (${child.class_name} - ${child.section})` : ""}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
       </div>
@@ -666,7 +685,7 @@ export default function ParentTransportPage() {
                     <Button
                       type="submit"
                       disabled={submitting}
-                      className="bg-navy-900 hover:bg-navy-800 text-white"
+                      className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
                     >
                       {submitting ? (
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />

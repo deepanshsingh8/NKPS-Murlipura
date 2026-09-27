@@ -125,9 +125,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: delErr.message }, { status: 500 });
   }
 
+  // The importer also materializes enrollment rows for the imported session.
+  // Both filters matter: import_batch_id scopes to this batch, and the source
+  // check guarantees we can never delete an enrollment the school created
+  // itself, even if a batch id were somehow reused.
+  const { error: enrollDelErr, count: enrollDeleted } = await admin
+    .from("student_enrollments")
+    .delete({ count: "exact" })
+    .eq("import_batch_id", batchId)
+    .eq("source", "historical_import");
+  if (enrollDelErr) {
+    // The results are already gone; report the partial revert rather than
+    // implying the batch is fully undone.
+    console.error("[results.historical-revert] enrollment delete:", enrollDelErr);
+    return NextResponse.json(
+      {
+        error: `Results were removed, but the imported enrollment records could not be deleted: ${enrollDelErr.message}`,
+        deleted: count ?? rows.length,
+        batch_id: batchId,
+      },
+      { status: 500 }
+    );
+  }
+
   return NextResponse.json({
     success: true,
     deleted: count ?? rows.length,
+    enrollments_deleted: enrollDeleted ?? 0,
     batch_id: batchId,
   });
 }

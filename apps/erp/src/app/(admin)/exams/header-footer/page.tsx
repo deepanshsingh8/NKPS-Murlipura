@@ -268,7 +268,7 @@ export default function HeaderFooterPage() {
                   placeholder="Full address on one line"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label className="text-xs font-medium">Affiliation</Label>
                   <Input
@@ -379,7 +379,7 @@ export default function HeaderFooterPage() {
                           size="icon"
                           onClick={() => removeSigLabel(i)}
                           aria-label="Remove signature label"
-                          className="h-9 w-9 text-red-600"
+                          className="h-9 w-9 text-red-600 dark:text-red-400"
                         >
                           <X className="h-4 w-4" />
                         </Button>

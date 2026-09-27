@@ -22,6 +22,8 @@ import { Badge } from "@nkps/shared/components/ui/badge";
 import { Button } from "@nkps/shared/components/ui/button";
 import { toast } from "sonner";
 import { Download, BarChart3, Users, AlertTriangle } from "lucide-react";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
+import { gradeChip } from "@/lib/grades";
 
 interface ChildOption {
   student_id: string;
@@ -50,15 +52,6 @@ interface ExamGroup {
   overall_grade: string;
 }
 
-const GRADE_COLORS: Record<string, string> = {
-  "A+": "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800",
-  A: "bg-green-50 dark:bg-green-950/20 text-green-600 dark:text-green-400 border-green-200 dark:border-green-800",
-  "B+": "bg-blue-100 dark:bg-blue-950/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800",
-  B: "bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800",
-  C: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800",
-  D: "bg-orange-100 dark:bg-orange-950/30 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800",
-  F: "bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800",
-};
 
 export default function ParentResultsPage() {
   const searchParams = useSearchParams();
@@ -68,6 +61,11 @@ export default function ParentResultsPage() {
   const [selectedChild, setSelectedChild] = useState<string>("");
   const [exams, setExams] = useState<ExamGroup[]>([]);
   const [selectedExam, setSelectedExam] = useState<string>("");
+  // Past sessions for the selected child. Empty = current session.
+  const [availableYears, setAvailableYears] = useState<
+    { id: string; name: string; is_current: boolean }[]
+  >([]);
+  const [selectedYear, setSelectedYear] = useState<string>("");
   const [studentName, setStudentName] = useState("");
   const [className, setClassName] = useState("");
   const [rollNumber, setRollNumber] = useState<number | null>(null);
@@ -107,6 +105,35 @@ export default function ParentResultsPage() {
         return;
       }
 
+      // One enrollment read for every child. PostgREST rejects an empty
+      // `.in()` list, so skip the query when no link row carries a student.
+      const studentIds = studentParents
+        .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+        .filter((id): id is string => Boolean(id));
+
+      // Newest enrollment per child, as before: rows arrive newest-first, so
+      // the first one seen for a student is the one to label them with.
+      const classByStudent = new Map<
+        string,
+        { name: string; section: string } | null
+      >();
+      if (studentIds.length > 0) {
+        const { data: enrollments } = await supabase
+          .from("student_enrollments")
+          .select("student_id, classes(name, section)")
+          .in("student_id", studentIds)
+          .order("enrollment_date", { ascending: false });
+
+        for (const row of (enrollments ?? []) as unknown as {
+          student_id: string;
+          classes: { name: string; section: string } | null;
+        }[]) {
+          if (!classByStudent.has(row.student_id)) {
+            classByStudent.set(row.student_id, row.classes ?? null);
+          }
+        }
+      }
+
       const childOptions: ChildOption[] = [];
       for (const sp of studentParents) {
         const student = sp.students as unknown as {
@@ -115,18 +142,7 @@ export default function ParentResultsPage() {
         };
         if (!student) continue;
 
-        const { data: enrollment } = await supabase
-          .from("student_enrollments")
-          .select("classes(name, section)")
-          .eq("student_id", student.id)
-          .order("enrollment_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const classInfo = enrollment?.classes as unknown as {
-          name: string;
-          section: string;
-        } | null;
+        const classInfo = classByStudent.get(student.id) ?? null;
 
         childOptions.push({
           student_id: student.id,
@@ -166,7 +182,8 @@ export default function ParentResultsPage() {
       setLoadingResults(true);
 
       const res = await fetch(
-        `/api/results/report-card?student_id=${selectedChild}`
+        `/api/results/report-card?student_id=${selectedChild}` +
+          (selectedYear ? `&academic_year_id=${selectedYear}` : "")
       );
 
       if (!res.ok) {
@@ -187,6 +204,7 @@ export default function ParentResultsPage() {
           : ""
       );
       setRollNumber(data.student?.roll_number ?? null);
+      setAvailableYears(data.available_years ?? []);
       const nextExams = data.exams ?? [];
       setExams(nextExams);
       setSelectedExam(nextExams[0]?.exam_type_id ?? "");
@@ -194,7 +212,7 @@ export default function ParentResultsPage() {
     }
 
     fetchResults();
-  }, [selectedChild]);
+  }, [selectedChild, selectedYear]);
 
   async function handleDownload() {
     if (!selectedChild || !selectedExam) {
@@ -257,10 +275,14 @@ export default function ParentResultsPage() {
           {children.length > 1 && (
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-gray-400" />
-              <select
+              <NativeSelect
                 value={selectedChild}
-                onChange={(e) => setSelectedChild(e.target.value)}
-                className="rounded-lg border border-gray-200 dark:border-border bg-white dark:bg-card px-3 py-2 text-sm text-navy-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-gold-500"
+                onChange={(e) => {
+                  setSelectedChild(e.target.value);
+                  // Siblings have different enrolled sessions, so a year held
+                  // over from the previous child would be meaningless.
+                  setSelectedYear("");
+                }}
               >
                 {children.map((child) => (
                   <option key={child.student_id} value={child.student_id}>
@@ -268,8 +290,23 @@ export default function ParentResultsPage() {
                     {child.class_name ? ` (${child.class_name} - ${child.section})` : ""}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </div>
+          )}
+
+          {availableYears.length > 1 && (
+            <NativeSelect
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(e.target.value)}
+              aria-label="Academic session"
+            >
+              {availableYears.map((y) => (
+                <option key={y.id} value={y.is_current ? "" : y.id}>
+                  {y.name}
+                  {y.is_current ? " (current)" : ""}
+                </option>
+              ))}
+            </NativeSelect>
           )}
 
           <Button
@@ -327,7 +364,7 @@ export default function ParentResultsPage() {
         </Card>
       ) : (
         <Tabs value={selectedExam} onValueChange={setSelectedExam}>
-          <TabsList variant="line" className="mb-4 flex-wrap">
+          <TabsList variant="line" className="mb-4">
             {exams.map((exam) => (
               <TabsTrigger key={exam.exam_type_id} value={exam.exam_type_id}>
                 {exam.exam_type_name}
@@ -343,7 +380,7 @@ export default function ParentResultsPage() {
                     <span>{exam.exam_type_name}</span>
                     <div className="flex items-center gap-3">
                       <Badge
-                        className={`text-sm px-3 py-1 ${GRADE_COLORS[exam.overall_grade] ?? ""}`}
+                        className={`text-sm px-3 py-1 ${gradeChip(exam.overall_grade)}`}
                       >
                         {exam.overall_grade}
                       </Badge>
@@ -400,7 +437,7 @@ export default function ParentResultsPage() {
                               </TableCell>
                               <TableCell className="text-center">
                                 <Badge
-                                  className={`text-xs ${GRADE_COLORS[sub.grade ?? ""] ?? ""}`}
+                                  className={`text-xs ${gradeChip(sub.grade ?? "")}`}
                                 >
                                   {sub.grade ?? "--"}
                                 </Badge>
@@ -423,7 +460,7 @@ export default function ParentResultsPage() {
                           </TableCell>
                           <TableCell className="text-center">
                             <Badge
-                              className={`text-xs ${GRADE_COLORS[exam.overall_grade] ?? ""}`}
+                              className={`text-xs ${gradeChip(exam.overall_grade)}`}
                             >
                               {exam.overall_grade}
                             </Badge>

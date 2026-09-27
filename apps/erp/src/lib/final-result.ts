@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeGrade, resolveGradeScaleForClass } from "@/lib/grading";
 import type { GradeBand, GradeScale } from "@/lib/grading";
 import { applySupplementarySubstitution } from "@/lib/supplementary";
+import type { SupplementaryAttemptForSubstitution } from "@/lib/supplementary";
 import type {
   ExamKind,
   FinalResult,
@@ -467,60 +468,180 @@ async function loadScaleById(
   };
 }
 
-export async function computeFinalResult(
+// ---------------------------------------------------------------------------
+// Cohort context
+//
+// Every input the engine needs splits cleanly into two groups:
+//
+//   class-level — `result_masters`, `result_master_subjects`,
+//     `class_exam_configs`, the grade scale, and `class_tests`. Identical for
+//     every student in a (class, year), so they are fetched exactly once.
+//
+//   student-level — `results`, `class_test_results`,
+//     `supplementary_attempts`, `student_enrollments`. Fetched for the whole
+//     cohort in one `.in("student_id", …)` sweep each.
+//
+// `computeFinalResultFromContext` is then a pure function of the context plus
+// a student id. `computeFinalResult` keeps its old one-student signature by
+// building a one-student context; the cohort callers build the context once
+// and share it.
+// ---------------------------------------------------------------------------
+
+interface ClassTestRow {
+  id: string;
+  subject_id: string;
+  name: string;
+  max_marks: number | string;
+  weightage: number | string | null;
+  test_date: string | null;
+}
+
+export interface ClassResultContext {
+  class_id: string;
+  academic_year_id: string;
+  include_unpublished: boolean;
+  /** Students whose per-student feeds this context actually carries. */
+  students: Set<string>;
+  /**
+   * Most-recent active-enrollment class per student. A student missing from
+   * this map has no active enrollment for the year and computes to null,
+   * exactly as the per-student path always did.
+   */
+  enrollment_class_by_student: Map<string, string>;
+  master: ResultMaster | null;
+  subjects: RMSubjectRow[];
+  /** Real exam configs followed by the synthetic `ct:<uuid>` entries. */
+  exam_configs: ExamConfigRow[];
+  scale: GradeScale | null;
+  results_by_student: Map<string, ResultRow[]>;
+  class_test_rows_by_student: Map<string, ResultRow[]>;
+  supplementary_by_student: Map<string, SupplementaryAttemptForSubstitution[]>;
+  pass_threshold_lookup:
+    | ((subject_id: string, max_marks: number) => number)
+    | null;
+}
+
+// PostgREST puts `.in(...)` lists in the query string, so very large cohorts
+// need splitting. School classes are ~40 students; 150 keeps whole-grade
+// callers safe without ever chunking in practice.
+const STUDENT_CHUNK = 150;
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  if (items.length <= size) return items.length > 0 ? [[...items]] : [];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Resolve each student's active-enrollment class for a year.
+ *
+ * Multi-active-enrollment safety: a student who transferred mid-year may have
+ * two `status='active'` rows for the same year. We pick the most recent
+ * (created_at desc) and surface a console warning so the admin knows which
+ * enrollment the compute used. We deliberately don't throw here —
+ * `computeFinalResult` is called from many low-stakes places (live preview,
+ * rank compute) where one-of-many is fine. The finalize path wraps this with
+ * `buildYearFinalSnapshot`, which DOES throw on multi-enrollment so the
+ * finalize loop can surface a per-student error.
+ */
+async function resolveEnrollmentClasses(
+  supabase: SupabaseClient,
+  studentIds: readonly string[],
+  academicYearId: string
+): Promise<Map<string, string>> {
+  const byStudent = new Map<string, string>();
+  const seen = new Map<string, number>();
+  for (const batch of chunk(studentIds, STUDENT_CHUNK)) {
+    const { data, error } = await supabase
+      .from("student_enrollments")
+      .select("student_id, class_id, created_at")
+      .in("student_id", batch)
+      .eq("academic_year_id", academicYearId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false });
+    // `created_at` only exists as of migration 086. Before it this query
+    // failed with PostgREST 42703 and the discarded error made this function
+    // return null for every student — silently emptying year-final compute.
+    // Log it.
+    if (error) {
+      console.error(
+        `[computeFinalResult] enrollment lookup failed for ${
+          batch.length === 1 ? `student ${batch[0]}` : `${batch.length} students`
+        }:`,
+        error
+      );
+      continue;
+    }
+    // Rows arrive newest-first, so the first row seen for a student wins.
+    for (const row of data ?? []) {
+      const sid = row.student_id as string;
+      seen.set(sid, (seen.get(sid) ?? 0) + 1);
+      if (!byStudent.has(sid)) byStudent.set(sid, row.class_id as string);
+    }
+  }
+  for (const [sid, count] of seen) {
+    if (count > 1) {
+      console.warn(
+        `[computeFinalResult] student ${sid} has ${count} active enrollments for year ${academicYearId}; using most recent`
+      );
+    }
+  }
+  return byStudent;
+}
+
+/**
+ * Load every input the engine needs for one (class, year) and a set of
+ * students, in a fixed number of queries regardless of cohort size.
+ */
+export async function loadClassContext(
   supabase: SupabaseClient,
   params: {
-    student_id: string;
+    class_id: string;
     academic_year_id: string;
-    /**
-     * Privacy gate (audit H2). When false, only `is_published=true` results
-     * and `is_published=true` class_test_results are pulled — the live
-     * compute path is what students/parents see when no finalized snapshot
-     * exists, and they must NOT see marks a teacher just typed.
-     *
-     * Defaults to `true` to preserve admin/teacher behavior (live preview,
-     * rank compute, finalize-time snapshot building all need the full set).
-     * Privacy-sensitive callers (the public report-card PDF route, the
-     * student/parent final-result endpoint) MUST pass `false` when the
-     * caller is a student or parent.
-     */
+    student_ids: readonly string[];
     includeUnpublished?: boolean;
+    /**
+     * Pre-resolved enrollment classes. Lets `computeFinalResult` reuse the
+     * lookup it already had to do to discover the student's class.
+     */
+    enrollment_class_by_student?: Map<string, string>;
   }
-): Promise<FinalResult | null> {
-  const { student_id, academic_year_id } = params;
+): Promise<ClassResultContext> {
+  const { class_id: classId, academic_year_id: academicYearId } = params;
   const includeUnpublished = params.includeUnpublished ?? true;
+  const studentIds = [...new Set(params.student_ids)];
 
-  // Multi-active-enrollment safety: a student who transferred mid-year may
-  // have two `status='active'` rows for the same year. Pick the most recent
-  // (created_at desc) and surface a console warning so the admin knows the
-  // year-final compute used a specific enrollment. We deliberately don't
-  // throw here — `computeFinalResult` is called from many low-stakes places
-  // (live preview, rank compute) where one-of-many is fine. The finalize
-  // path wraps this with `buildYearFinalSnapshot`, which DOES throw on
-  // multi-enrollment so the finalize loop can surface a per-student error.
-  const { data: enrollments } = await supabase
-    .from("student_enrollments")
-    .select("class_id, created_at")
-    .eq("student_id", student_id)
-    .eq("academic_year_id", academic_year_id)
-    .eq("status", "active")
-    .order("created_at", { ascending: false });
-  if (!enrollments || enrollments.length === 0) return null;
-  if (enrollments.length > 1) {
-    console.warn(
-      `[computeFinalResult] student ${student_id} has ${enrollments.length} active enrollments for year ${academic_year_id}; using most recent`
-    );
-  }
-  const classId = enrollments[0].class_id as string;
+  const enrollmentClassByStudent =
+    params.enrollment_class_by_student ??
+    (await resolveEnrollmentClasses(supabase, studentIds, academicYearId));
+
+  const base: ClassResultContext = {
+    class_id: classId,
+    academic_year_id: academicYearId,
+    include_unpublished: includeUnpublished,
+    students: new Set(studentIds),
+    enrollment_class_by_student: enrollmentClassByStudent,
+    master: null,
+    subjects: [],
+    exam_configs: [],
+    scale: null,
+    results_by_student: new Map(),
+    class_test_rows_by_student: new Map(),
+    supplementary_by_student: new Map(),
+    pass_threshold_lookup: null,
+  };
 
   const { data: masterRow } = await supabase
     .from("result_masters")
     .select("*")
     .eq("class_id", classId)
-    .eq("academic_year_id", academic_year_id)
+    .eq("academic_year_id", academicYearId)
     .maybeSingle();
-  if (!masterRow) return null;
+  // No master → legacy fallback; every student computes to null.
+  if (!masterRow) return base;
   const master = coerceMaster(masterRow);
+  base.master = master;
 
   const [subjectsRes, configsRes, scale] = await Promise.all([
     supabase
@@ -538,6 +659,7 @@ export async function computeFinalResult(
       ? loadScaleById(supabase, master.grade_scale_id)
       : resolveGradeScaleForClass(supabase, classId, "scholastic"),
   ]);
+  base.scale = scale;
 
   const subjects: RMSubjectRow[] = (subjectsRes.data ?? []).map((row) => {
     const sub = row.subjects as unknown as { name: string } | null;
@@ -550,7 +672,9 @@ export async function computeFinalResult(
       subject_name: sub?.name ?? "",
     };
   });
-  if (subjects.length === 0) return null;
+  // Master with zero subjects → legacy fallback, same as no master.
+  if (subjects.length === 0) return base;
+  base.subjects = subjects;
 
   const examConfigs: ExamConfigRow[] = (configsRes.data ?? [])
     .map((row): ExamConfigRow | null => {
@@ -559,7 +683,7 @@ export async function computeFinalResult(
         kind: ExamKind;
         academic_year_id: string;
       } | null;
-      if (!et || et.academic_year_id !== academic_year_id) return null;
+      if (!et || et.academic_year_id !== academicYearId) return null;
       return {
         exam_type_id: row.exam_type_id as string,
         weightage: nOrNull(row.weightage),
@@ -570,24 +694,13 @@ export async function computeFinalResult(
       };
     })
     .filter((x): x is ExamConfigRow => x !== null);
+  base.exam_configs = examConfigs;
 
   const examTypeIds = examConfigs.map((e) => e.exam_type_id);
   const subjectIds = subjects.map((s) => s.subject_id);
-  let results: ResultRow[] = [];
-  if (examTypeIds.length > 0 && subjectIds.length > 0) {
-    let resQuery = supabase
-      .from("results")
-      .select("exam_type_id, subject_id, marks_obtained, max_marks")
-      .eq("student_id", student_id)
-      .in("exam_type_id", examTypeIds)
-      .in("subject_id", subjectIds);
-    if (!includeUnpublished) {
-      // Privacy gate: students/parents only see published rows. The live-
-      // compute path returns whatever is published right now — teachers'
-      // unsaved or unpublished entries stay hidden.
-      resQuery = resQuery.eq("is_published", true);
-    }
-    const { data: resRows } = await resQuery;
+
+  const resultsByStudent = base.results_by_student;
+  if (examTypeIds.length > 0 && subjectIds.length > 0 && studentIds.length > 0) {
     // Apply per-class max_marks_override (if any). For an exam configured with
     // an override, every result row for that exam_type is treated as if its
     // max were the override — this is what the admin UI promises and what
@@ -599,32 +712,51 @@ export async function computeFinalResult(
         maxOverrideByExam.set(ec.exam_type_id, ec.max_marks_override);
       }
     }
-    results = (resRows ?? []).map((r) => {
-      const override = maxOverrideByExam.get(r.exam_type_id as string);
-      const originalMax = Number(r.max_marks);
-      const originalMarks = Number(r.marks_obtained);
-      // Audit H9: when an override is set, rescale BOTH marks and max so
-      // percentage is preserved. Previously only `max_marks` was replaced,
-      // which meant a 60/100 row became 60/50 = 120% — phantom over-marks.
-      // The override is conceptually "treat this exam as if it were out of
-      // N for this class"; the student's percentage stays identical, the
-      // raw_marks threshold (e.g. "needs 33 marks") now lives in the
-      // override's marks-space.
-      if (override !== undefined && originalMax > 0) {
-        return {
-          exam_type_id: r.exam_type_id as string,
-          subject_id: r.subject_id as string,
-          marks_obtained: (originalMarks / originalMax) * override,
-          max_marks: override,
-        };
+    for (const batch of chunk(studentIds, STUDENT_CHUNK)) {
+      let resQuery = supabase
+        .from("results")
+        .select("student_id, exam_type_id, subject_id, marks_obtained, max_marks")
+        .in("student_id", batch)
+        .in("exam_type_id", examTypeIds)
+        .in("subject_id", subjectIds);
+      if (!includeUnpublished) {
+        // Privacy gate: students/parents only see published rows. The live-
+        // compute path returns whatever is published right now — teachers'
+        // unsaved or unpublished entries stay hidden.
+        resQuery = resQuery.eq("is_published", true);
       }
-      return {
-        exam_type_id: r.exam_type_id as string,
-        subject_id: r.subject_id as string,
-        marks_obtained: originalMarks,
-        max_marks: originalMax,
-      };
-    });
+      const { data: resRows } = await resQuery;
+      for (const r of resRows ?? []) {
+        const sid = r.student_id as string;
+        const override = maxOverrideByExam.get(r.exam_type_id as string);
+        const originalMax = Number(r.max_marks);
+        const originalMarks = Number(r.marks_obtained);
+        // Audit H9: when an override is set, rescale BOTH marks and max so
+        // percentage is preserved. Previously only `max_marks` was replaced,
+        // which meant a 60/100 row became 60/50 = 120% — phantom over-marks.
+        // The override is conceptually "treat this exam as if it were out of
+        // N for this class"; the student's percentage stays identical, the
+        // raw_marks threshold (e.g. "needs 33 marks") now lives in the
+        // override's marks-space.
+        const row: ResultRow =
+          override !== undefined && originalMax > 0
+            ? {
+                exam_type_id: r.exam_type_id as string,
+                subject_id: r.subject_id as string,
+                marks_obtained: (originalMarks / originalMax) * override,
+                max_marks: override,
+              }
+            : {
+                exam_type_id: r.exam_type_id as string,
+                subject_id: r.subject_id as string,
+                marks_obtained: originalMarks,
+                max_marks: originalMax,
+              };
+        const list = resultsByStudent.get(sid);
+        if (list) list.push(row);
+        else resultsByStudent.set(sid, [row]);
+      }
+    }
   }
 
   // Class tests stored in the dedicated `class_tests` + `class_test_results`
@@ -638,42 +770,41 @@ export async function computeFinalResult(
   if (subjectIds.length > 0) {
     const { data: ctRows } = await supabase
       .from("class_tests")
-      .select(
-        "id, subject_id, name, max_marks, weightage, test_date"
-      )
+      .select("id, subject_id, name, max_marks, weightage, test_date")
       .eq("class_id", classId)
       .in("subject_id", subjectIds)
       .eq("is_published", true);
-
-    type CTRow = {
-      id: string;
-      subject_id: string;
-      name: string;
-      max_marks: number | string;
-      weightage: number | string | null;
-      test_date: string | null;
-    };
-    const tests = (ctRows ?? []) as CTRow[];
+    const tests = (ctRows ?? []) as ClassTestRow[];
 
     if (tests.length > 0) {
       const testIds = tests.map((t) => t.id);
-      const { data: ctResRows } = await supabase
-        .from("class_test_results")
-        .select("class_test_id, marks_obtained, max_marks")
-        .eq("student_id", student_id)
-        .in("class_test_id", testIds);
-
-      const ctRes = new Map<
+      // student → class_test_id → marks
+      const ctResByStudent = new Map<
         string,
-        { marks_obtained: number; max_marks: number }
+        Map<string, { marks_obtained: number; max_marks: number }>
       >();
-      for (const r of ctResRows ?? []) {
-        const m = r.marks_obtained;
-        if (m === null || m === undefined) continue;
-        ctRes.set(r.class_test_id as string, {
-          marks_obtained: Number(m),
-          max_marks: Number(r.max_marks),
-        });
+      if (studentIds.length > 0) {
+        for (const batch of chunk(studentIds, STUDENT_CHUNK)) {
+          const { data: ctResRows } = await supabase
+            .from("class_test_results")
+            .select("student_id, class_test_id, marks_obtained, max_marks")
+            .in("student_id", batch)
+            .in("class_test_id", testIds);
+          for (const r of ctResRows ?? []) {
+            const m = r.marks_obtained;
+            if (m === null || m === undefined) continue;
+            const sid = r.student_id as string;
+            let perTest = ctResByStudent.get(sid);
+            if (!perTest) {
+              perTest = new Map();
+              ctResByStudent.set(sid, perTest);
+            }
+            perTest.set(r.class_test_id as string, {
+              marks_obtained: Number(m),
+              max_marks: Number(r.max_marks),
+            });
+          }
+        }
       }
 
       // Push class tests *after* the real exam configs so existing exams
@@ -701,14 +832,18 @@ export async function computeFinalResult(
           exam_name: t.name,
           kind: "class_test",
         });
-        const matched = ctRes.get(t.id);
-        if (matched) {
-          results.push({
+        for (const sid of studentIds) {
+          const matched = ctResByStudent.get(sid)?.get(t.id);
+          if (!matched) continue;
+          const row: ResultRow = {
             exam_type_id: synthId,
             subject_id: t.subject_id,
             marks_obtained: matched.marks_obtained,
             max_marks: matched.max_marks,
-          });
+          };
+          const list = base.class_test_rows_by_student.get(sid);
+          if (list) list.push(row);
+          else base.class_test_rows_by_student.set(sid, [row]);
         }
       }
     }
@@ -717,66 +852,224 @@ export async function computeFinalResult(
   // Phase 8: substitute passed supplementary attempts into the results
   // feed before per-subject pct compute. Only applies when at least one
   // attempt exists for this student in the relevant exam set.
-  if (examTypeIds.length > 0 && subjectIds.length > 0) {
-    const { data: suppRows } = await supabase
-      .from("supplementary_attempts")
-      .select(
-        "student_id, parent_exam_type_id, subject_id, marks_obtained, passed"
-      )
-      .eq("student_id", student_id)
-      .in("parent_exam_type_id", examTypeIds)
-      .in("subject_id", subjectIds);
-    const attempts = (suppRows ?? []).map((a) => ({
-      student_id: a.student_id as string,
-      parent_exam_type_id: a.parent_exam_type_id as string,
-      subject_id: a.subject_id as string,
-      passed: Boolean(a.passed),
-      marks_obtained: Number(a.marks_obtained),
-    }));
-    if (attempts.length > 0) {
-      const subjectOverride = new Map(
-        subjects.map((s) => [s.subject_id, s.pass_mark_value_override])
-      );
-      const passThresholdLookup = (subjectId: string, maxMarks: number) => {
-        const raw = subjectOverride.get(subjectId) ?? master.pass_mark_value;
-        return master.pass_mark_mode === "percentage"
-          ? (raw / 100) * maxMarks
-          : raw;
-      };
-      results = applySupplementarySubstitution(
-        results,
-        attempts,
-        master.supplementary_pass_action,
-        passThresholdLookup
-      ) as ResultRow[];
+  if (examTypeIds.length > 0 && subjectIds.length > 0 && studentIds.length > 0) {
+    const subjectOverride = new Map(
+      subjects.map((s) => [s.subject_id, s.pass_mark_value_override])
+    );
+    base.pass_threshold_lookup = (subjectId: string, maxMarks: number) => {
+      const raw = subjectOverride.get(subjectId) ?? master.pass_mark_value;
+      return master.pass_mark_mode === "percentage"
+        ? (raw / 100) * maxMarks
+        : raw;
+    };
+    for (const batch of chunk(studentIds, STUDENT_CHUNK)) {
+      const { data: suppRows } = await supabase
+        .from("supplementary_attempts")
+        .select("student_id, parent_exam_type_id, subject_id, marks_obtained, passed")
+        .in("student_id", batch)
+        .in("parent_exam_type_id", examTypeIds)
+        .in("subject_id", subjectIds);
+      for (const a of suppRows ?? []) {
+        const sid = a.student_id as string;
+        const attempt: SupplementaryAttemptForSubstitution = {
+          student_id: sid,
+          parent_exam_type_id: a.parent_exam_type_id as string,
+          subject_id: a.subject_id as string,
+          passed: Boolean(a.passed),
+          marks_obtained: Number(a.marks_obtained),
+        };
+        const list = base.supplementary_by_student.get(sid);
+        if (list) list.push(attempt);
+        else base.supplementary_by_student.set(sid, [attempt]);
+      }
     }
+  }
+
+  return base;
+}
+
+/**
+ * Pure compute for one student against a preloaded cohort context.
+ *
+ * Returns null in exactly the cases the per-student path always did: no
+ * active enrollment, no result master, or a master with zero subjects. Also
+ * returns null when the student's most-recent active enrollment resolves to a
+ * different class than the context's — the cohort helpers below fall back to
+ * that student's own class for those (rare, mid-year transfer) rows.
+ */
+export function computeFinalResultFromContext(
+  ctx: ClassResultContext,
+  studentId: string
+): FinalResult | null {
+  const { master } = ctx;
+  if (!master || ctx.subjects.length === 0) return null;
+  if (ctx.enrollment_class_by_student.get(studentId) !== ctx.class_id) {
+    return null;
+  }
+
+  const graded = ctx.results_by_student.get(studentId) ?? [];
+  const classTests = ctx.class_test_rows_by_student.get(studentId) ?? [];
+  let results: ResultRow[] =
+    classTests.length > 0 ? [...graded, ...classTests] : graded.slice();
+
+  const attempts = ctx.supplementary_by_student.get(studentId);
+  if (attempts && attempts.length > 0 && ctx.pass_threshold_lookup) {
+    results = applySupplementarySubstitution(
+      results,
+      attempts,
+      master.supplementary_pass_action,
+      ctx.pass_threshold_lookup
+    ) as ResultRow[];
   }
 
   return computeFromFixtures({
     master,
-    subjects,
-    exam_configs: examConfigs,
+    subjects: ctx.subjects,
+    exam_configs: ctx.exam_configs,
     results,
-    scale,
-    student_id,
+    scale: ctx.scale,
+    student_id: studentId,
+    class_id: ctx.class_id,
+    academic_year_id: ctx.academic_year_id,
+  });
+}
+
+export async function computeFinalResult(
+  supabase: SupabaseClient,
+  params: {
+    student_id: string;
+    academic_year_id: string;
+    /**
+     * Privacy gate (audit H2). When false, only `is_published=true` results
+     * and `is_published=true` class_test_results are pulled — the live
+     * compute path is what students/parents see when no finalized snapshot
+     * exists, and they must NOT see marks a teacher just typed.
+     *
+     * Defaults to `true` to preserve admin/teacher behavior (live preview,
+     * rank compute, finalize-time snapshot building all need the full set).
+     * Privacy-sensitive callers (the public report-card PDF route, the
+     * student/parent final-result endpoint) MUST pass `false` when the
+     * caller is a student or parent.
+     */
+    includeUnpublished?: boolean;
+  }
+): Promise<FinalResult | null> {
+  const { student_id, academic_year_id } = params;
+  const includeUnpublished = params.includeUnpublished ?? true;
+
+  const enrollmentClassByStudent = await resolveEnrollmentClasses(
+    supabase,
+    [student_id],
+    academic_year_id
+  );
+  const classId = enrollmentClassByStudent.get(student_id);
+  if (!classId) return null;
+
+  const ctx = await loadClassContext(supabase, {
     class_id: classId,
     academic_year_id,
+    student_ids: [student_id],
+    includeUnpublished,
+    enrollment_class_by_student: enrollmentClassByStudent,
   });
+  return computeFinalResultFromContext(ctx, student_id);
+}
+
+function contextCovers(
+  ctx: ClassResultContext,
+  classId: string,
+  academicYearId: string,
+  includeUnpublished: boolean,
+  studentIds: readonly string[]
+): boolean {
+  if (
+    ctx.class_id !== classId ||
+    ctx.academic_year_id !== academicYearId ||
+    ctx.include_unpublished !== includeUnpublished
+  ) {
+    return false;
+  }
+  return studentIds.every((sid) => ctx.students.has(sid));
+}
+
+/**
+ * Compute final results for a whole cohort with a fixed number of queries.
+ *
+ * Returns the context alongside the results so a caller that needs a second
+ * pass (the green sheet needs ranks too) can reuse it instead of paying for
+ * the class-level reads twice.
+ */
+export async function computeCohortFinalResults(
+  supabase: SupabaseClient,
+  params: {
+    class_id: string;
+    academic_year_id: string;
+    student_ids: readonly string[];
+    includeUnpublished?: boolean;
+    /** Reused when it already covers this class/year/privacy/cohort. */
+    context?: ClassResultContext;
+  }
+): Promise<{
+  context: ClassResultContext;
+  results: Map<string, FinalResult | null>;
+}> {
+  const { class_id: classId, academic_year_id: academicYearId } = params;
+  const includeUnpublished = params.includeUnpublished ?? true;
+  const studentIds = [...new Set(params.student_ids)];
+
+  const ctx =
+    params.context &&
+    contextCovers(params.context, classId, academicYearId, includeUnpublished, studentIds)
+      ? params.context
+      : await loadClassContext(supabase, {
+          class_id: classId,
+          academic_year_id: academicYearId,
+          student_ids: studentIds,
+          includeUnpublished,
+        });
+
+  const results = new Map<string, FinalResult | null>();
+  // A student whose most-recent active enrollment landed in another class
+  // (mid-year transfer) must be computed against THAT class's master, which
+  // is what the per-student path does. Rare, so it keeps its own round trip.
+  const transferred: string[] = [];
+  for (const sid of studentIds) {
+    const enrolledIn = ctx.enrollment_class_by_student.get(sid);
+    if (enrolledIn !== undefined && enrolledIn !== ctx.class_id) {
+      transferred.push(sid);
+      continue;
+    }
+    results.set(sid, computeFinalResultFromContext(ctx, sid));
+  }
+  if (transferred.length > 0) {
+    const settled = await Promise.all(
+      transferred.map((sid) =>
+        computeFinalResult(supabase, {
+          student_id: sid,
+          academic_year_id: academicYearId,
+          includeUnpublished,
+        }).then((fr) => [sid, fr] as const)
+      )
+    );
+    for (const [sid, fr] of settled) results.set(sid, fr);
+  }
+
+  return { context: ctx, results };
 }
 
 /**
  * Compute ranks for every active student in a (class, academic_year) cohort.
  *
- * Runs `computeFinalResult` in parallel per student and buckets results by
- * `overall.main_total_pct` descending. Ties share a rank and the next rank
- * skips by the tie-group size (1, 2, 2, 4 pattern).
+ * Buckets students by `overall.main_total_pct` descending. Ties share a rank
+ * and the next rank skips by the tie-group size (1, 2, 2, 4 pattern).
  *
  * Students whose final result is null (no master, zero main subjects, or no
  * recorded marks) are skipped entirely — they simply don't appear in the
  * returned map.
  *
- * Cost: O(N) compute calls. Callers should gate invocation on
- * `result_master.show_rank` before paying for this.
+ * Cost: one enrollment lookup plus one cohort load (a fixed number of
+ * queries, not O(N)). Pass `context` to reuse a cohort already loaded by the
+ * caller. Callers should still gate invocation on `result_master.show_rank`.
  */
 export async function computeRanksForClass(
   supabase: SupabaseClient,
@@ -784,6 +1077,8 @@ export async function computeRanksForClass(
     class_id: string;
     academic_year_id: string;
     includeUnpublished?: boolean;
+    /** Reused when it already covers this class/year/privacy/cohort. */
+    context?: ClassResultContext;
   }
 ): Promise<Map<string, number>> {
   const { class_id, academic_year_id } = params;
@@ -799,17 +1094,16 @@ export async function computeRanksForClass(
   const studentIds = (enrollments ?? []).map((e) => e.student_id as string);
   if (studentIds.length === 0) return new Map();
 
-  const results = await Promise.all(
-    studentIds.map((sid) =>
-      computeFinalResult(supabase, {
-        student_id: sid,
-        academic_year_id,
-        includeUnpublished,
-      }).then((fr) => ({ sid, fr }))
-    )
-  );
+  const { results } = await computeCohortFinalResults(supabase, {
+    class_id,
+    academic_year_id,
+    student_ids: studentIds,
+    includeUnpublished,
+    context: params.context,
+  });
 
-  const scored = results
+  const scored = studentIds
+    .map((sid) => ({ sid, fr: results.get(sid) ?? null }))
     .filter((r): r is { sid: string; fr: FinalResult } => r.fr !== null)
     .map((r) => ({ sid: r.sid, pct: r.fr.overall.main_total_pct }))
     .sort((a, b) => b.pct - a.pct);

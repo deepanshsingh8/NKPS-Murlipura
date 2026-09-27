@@ -15,6 +15,7 @@
 //     exam_type_id) so re-imports overwrite rather than duplicate.
 
 import { NextRequest, NextResponse } from "next/server";
+import { classSortOrder } from "@nkps/shared/lib/constants";
 import { randomUUID } from "node:crypto";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
 import {
@@ -137,7 +138,10 @@ export async function POST(req: NextRequest) {
   // Load lookups.
   const [streamsRes, classesRes, studentsRes, subjectsRes, examTypesRes] =
     await Promise.all([
-      admin.from("streams").select("id, name"),
+      // Fetched unfiltered, with `kind`, then partitioned below: resolution
+      // must see only streams, but the "should I create this name?" check must
+      // see wings too. (migration 118)
+      admin.from("streams").select("id, name, kind"),
       admin
         .from("classes")
         .select("id, name, section, stream_id")
@@ -156,7 +160,12 @@ export async function POST(req: NextRequest) {
   }
 
   const streamByName = new Map<string, string>();
+  // Names owned by a stream OR a wing — see the fees historical importer for
+  // why resolution and creation need different views. (migration 118)
+  const streamNameTaken = new Set<string>();
   for (const s of streamsRes.data ?? []) {
+    streamNameTaken.add(String(s.name).toLowerCase());
+    if (s.kind === "wing") continue;
     streamByName.set(s.name.toLowerCase(), s.id as string);
   }
   type ClassRow = { id: string; name: string; section: string; stream_id: string | null };
@@ -242,7 +251,11 @@ export async function POST(req: NextRequest) {
   const willCreateStreams: string[] = [];
   for (const spec of classSpecByKey.values()) {
     if (!spec.stream_name) continue;
-    if (!streamByName.has(spec.stream_name.toLowerCase()) && !willCreateStreams.includes(spec.stream_name)) {
+    if (
+      !streamByName.has(spec.stream_name.toLowerCase()) &&
+      !streamNameTaken.has(spec.stream_name.toLowerCase()) &&
+      !willCreateStreams.includes(spec.stream_name)
+    ) {
       willCreateStreams.push(spec.stream_name);
     }
   }
@@ -290,7 +303,7 @@ export async function POST(req: NextRequest) {
   if (willCreateStreams.length > 0) {
     const { data: insertedStreams, error: streamInsErr } = await admin
       .from("streams")
-      .insert(willCreateStreams.map((name) => ({ name })))
+      .insert(willCreateStreams.map((name) => ({ name, kind: "stream" })))
       .select("id, name");
     if (streamInsErr) {
       return NextResponse.json(
@@ -321,7 +334,9 @@ export async function POST(req: NextRequest) {
       section: spec.section,
       academic_year_id: academicYearId,
       stream_id: sid,
-      sort_order: 0,
+      // Was a flat 0, which put every imported class at the very top of the
+      // 27 screens that order by this column, jumbled together.
+      sort_order: classSortOrder(spec.name, spec.section),
     });
   }
   if (classesToCreate.length > 0) {
@@ -348,6 +363,62 @@ export async function POST(req: NextRequest) {
       : null;
     const c = classesByKey.get(classKey(spec.name, spec.section, sid));
     if (c) classIdBySpec.set(sKey, c.id);
+  }
+
+  // 0d. Materialize the enrollment rows.
+  //
+  // The importer used to create the past-year class, subjects and exam types
+  // but NOT an enrollment, so imported results hung off a class the student
+  // was never recorded as attending. Everything that joins through
+  // student_enrollments — report cards, green/white sheets, roll numbers, PTM
+  // reports, year-final compute — could not see the student in that class.
+  const enrollmentSeen = new Set<string>();
+  const enrollmentRows: Array<Record<string, unknown>> = [];
+  for (const r of resolvedRows) {
+    const classId = classIdBySpec.get(r.class_spec_key);
+    if (!classId || !r.student_id) continue;
+    // One student appears on many mark rows; a single upsert payload carrying
+    // the same conflict key twice errors with "ON CONFLICT DO UPDATE command
+    // cannot affect row a second time", so de-duplicate in JS first.
+    const dedupeKey = `${r.student_id}|${academicYearId}`;
+    if (enrollmentSeen.has(dedupeKey)) continue;
+    enrollmentSeen.add(dedupeKey);
+
+    const spec = classSpecByKey.get(r.class_spec_key);
+    const sid = spec?.stream_name
+      ? streamByName.get(spec.stream_name.toLowerCase()) ?? null
+      : null;
+
+    enrollmentRows.push({
+      student_id: r.student_id,
+      class_id: classId,
+      academic_year_id: academicYearId,
+      stream_id: sid,
+      // Never 'active': a past session must not compete with the live roster,
+      // and only active rows participate in roll-number recompute.
+      status: "passed",
+      roll_number: null,
+      source: "historical_import",
+      import_batch_id: batchId,
+    });
+  }
+
+  if (enrollmentRows.length > 0) {
+    // ignoreDuplicates is load-bearing: a re-run, or a student who genuinely
+    // has a real enrollment for that session, must never be downgraded to
+    // 'passed' or have their roll number wiped.
+    const { error: enrollErr } = await admin
+      .from("student_enrollments")
+      .upsert(enrollmentRows, {
+        onConflict: "student_id,academic_year_id",
+        ignoreDuplicates: true,
+      });
+    if (enrollErr) {
+      return NextResponse.json(
+        { error: `Failed to create enrollments: ${enrollErr.message}` },
+        { status: 500 }
+      );
+    }
   }
 
   // 1. Ensure subjects exist for everything in this file.
@@ -484,6 +555,7 @@ export async function POST(req: NextRequest) {
       total_rows: parsed.rows.length,
       ok_rows: okRows.length,
       error_rows: errorRows.length,
+      enrollments_created: enrollmentRows.length,
       results_to_create: resultsPayload.length,
       committed,
       skipped_existing: skippedExisting,

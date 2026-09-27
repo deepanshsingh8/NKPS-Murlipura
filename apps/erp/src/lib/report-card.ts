@@ -126,10 +126,24 @@ export async function getReportCardData(
   if (academicYearId) {
     enrollmentQuery = enrollmentQuery.eq("academic_year_id", academicYearId);
   }
-  const { data: enrollment } = await enrollmentQuery
+  // Order by enrollment_date first (the school-meaningful date), then
+  // created_at as the tie-break. NOTE: `created_at` only exists as of
+  // migration 086 — before it, this ordering silently failed with PostgREST
+  // 42703 and the discarded error meant `enrollment` came back null on EVERY
+  // report card, stripping class, roll number, grade scale and attendance.
+  // Never swallow this error again.
+  const { data: enrollment, error: enrollmentError } = await enrollmentQuery
+    .order("enrollment_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (enrollmentError) {
+    console.error(
+      `[getReportCardData] enrollment lookup failed for student ${studentId}:`,
+      enrollmentError
+    );
+  }
 
   // Resolve the grade scale for this student's class (falls back to the
   // default scholastic scale if no per-class override exists). Subject and
@@ -141,13 +155,16 @@ export async function getReportCardData(
     : null;
   const gradeBands = gradeScale?.bands ?? [];
 
-  // Current academic year — used for attendance window.
-  const { data: academicYear } = await supabase
+  // Academic year — used for the attendance window and the printed year
+  // label. Honours the requested year when one is given: hardcoding
+  // is_current meant a past-year report card counted THIS year's attendance
+  // and printed this year's name, both wrong.
+  const academicYearQuery = supabase
     .from("academic_years")
-    .select("id, name, start_date, end_date")
-    .eq("is_current", true)
-    .limit(1)
-    .maybeSingle();
+    .select("id, name, start_date, end_date");
+  const { data: academicYear } = academicYearId
+    ? await academicYearQuery.eq("id", academicYearId).limit(1).maybeSingle()
+    : await academicYearQuery.eq("is_current", true).limit(1).maybeSingle();
 
   let attendance: ReportCardAttendance | null = null;
   if (enrollment?.class_id) {

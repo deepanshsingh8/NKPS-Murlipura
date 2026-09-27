@@ -19,8 +19,10 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { Loader2, Users, Search } from "lucide-react";
 import { formatClassName } from "@nkps/shared/lib/utils";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 interface ClassOption {
   id: string;
@@ -201,17 +203,16 @@ export default function TeacherStudentsPage() {
           ) : (
             <>
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 mb-4">
-                <select
+                <NativeSelect
                   value={selectedClassId}
                   onChange={(e) => setSelectedClassId(e.target.value)}
-                  className="rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm dark:bg-card dark:text-white"
                 >
                   {classes.map((c) => (
                     <option key={c.id} value={c.id}>
                       {formatClassName(c)}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
 
                 <div className="relative flex-1 w-full sm:w-auto">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
@@ -234,11 +235,20 @@ export default function TeacherStudentsPage() {
                 </p>
               ) : (
                 <>
-                <TableFilterSummary
-                  ctl={table}
-                  total={filteredStudents.length}
-                  shown={table.rows.length}
-                />
+                <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                  <TableFilterSummary
+                    ctl={table}
+                    total={filteredStudents.length}
+                    shown={table.rows.length}
+                    className="mb-0 mr-auto"
+            />
+                  <TableExportButton
+                    ctl={table}
+                    filename="my-students"
+                    title="My Students"
+                    featureKey="students"
+                  />
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>

@@ -34,9 +34,11 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import { Plus, Trash2, Pencil, Loader2, Bus as BusIcon, Route, Search } from "lucide-react";
-import { adminApi } from "@nkps/shared/lib/admin-api";
+import { adminApi, adminFetch } from "@nkps/shared/lib/admin-api";
+import { cn } from "@nkps/shared/lib/utils";
 import type { Bus, BusStop, BusRouteStop, StaffMember } from "@nkps/shared/types";
 
 interface BusWithRelations extends Bus {
@@ -45,6 +47,48 @@ interface BusWithRelations extends Bus {
   // Names of the stops this bus serves, in stop sort order — used by the
   // "Stops served" dialog.
   stop_names?: string[];
+  /** Students riding this bus in the active year. */
+  riders?: number;
+  /** `capacity - riders`, or null when the bus has no capacity recorded. */
+  seatsLeft?: number | null;
+}
+
+/**
+ * Seats free, in words.
+ *
+ * Distinguishes the three cases the office actually acts on: room left, no
+ * room, and "we never recorded a capacity for this bus" — which is not zero
+ * seats and must not read as though it were.
+ */
+function seatsLabel(bus: BusWithRelations): string | null {
+  if (bus.riders == null) return null;
+  if (bus.capacity == null) return "No capacity set";
+  const left = bus.capacity - bus.riders;
+  if (left > 0) return `${left} free`;
+  return left === 0 ? "Full" : `Over by ${Math.abs(left)}`;
+}
+
+function SeatsCell({ bus }: { bus: BusWithRelations }) {
+  const label = seatsLabel(bus);
+  if (label == null) return <span className="text-gray-400">—</span>;
+  if (bus.capacity == null) {
+    return <span className="text-xs text-gray-400">{label}</span>;
+  }
+  const left = bus.capacity - (bus.riders ?? 0);
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+        left > 0
+          ? "bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-400"
+          : left === 0
+            ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+            : "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
+      )}
+    >
+      {label}
+    </span>
+  );
 }
 
 export default function AdminBusesPage() {
@@ -82,7 +126,9 @@ export default function AdminBusesPage() {
   const supabase = createClient();
 
   const fetchData = async () => {
-    const [busesRes, driversRes, stopsRes, routeStopsRes] = await Promise.all([
+    // Riders are student data, so they come from the transport-gated route
+    // rather than the browser client — see /api/transport/bus-load.
+    const [busesRes, driversRes, stopsRes, routeStopsRes, loadRes] = await Promise.all([
       supabase
         .from("buses")
         .select("*, staff_members:driver_id(name)")
@@ -101,7 +147,19 @@ export default function AdminBusesPage() {
       supabase
         .from("bus_route_stops")
         .select("bus_id, bus_stops:bus_stop_id(name, sort_order)"),
+      adminFetch("/api/transport/bus-load"),
     ]);
+
+    // Occupancy is an enrichment, not the point of the page: if the count
+    // fails to load the fleet still lists, with the seat columns blank rather
+    // than a wrong zero.
+    const loadPayload = loadRes.ok
+      ? ((await loadRes.json().catch(() => null)) as {
+          loads?: Record<string, number>;
+        } | null)
+      : null;
+    const loads = loadPayload?.loads ?? {};
+    const haveLoads = loadPayload != null;
 
     if (busesRes.error) {
       toast.error("Failed to fetch buses");
@@ -127,11 +185,16 @@ export default function AdminBusesPage() {
           const stops = (stopsByBus.get(id) ?? []).sort(
             (a, z) => a.sort_order - z.sort_order
           );
+          const bus = b as unknown as Bus;
+          const riders = loads[id] ?? 0;
           return {
-            ...(b as unknown as Bus),
+            ...bus,
             driver_name: (b.staff_members as { name: string } | null)?.name ?? "—",
             stop_count: stops.length,
             stop_names: stops.map((s) => s.name),
+            riders: haveLoads ? riders : undefined,
+            seatsLeft:
+              haveLoads && bus.capacity != null ? bus.capacity - riders : null,
           };
         }
       );
@@ -158,6 +221,21 @@ export default function AdminBusesPage() {
         emptyLabel: "No driver",
       },
       capacity: { label: "Capacity", value: (b) => b.capacity, filter: "none" },
+      riders: {
+        label: "Students",
+        value: (b) => b.riders ?? null,
+        sortValue: (b) => b.riders ?? -1,
+        filter: "none",
+        emptyLabel: "—",
+      },
+      seats: {
+        label: "Seats free",
+        value: (b) => seatsLabel(b),
+        // Sort by the number, not the label: "Full" and "3 free" have no
+        // useful alphabetical order, and an unknown seat count belongs last.
+        sortValue: (b) => b.seatsLeft ?? -Infinity,
+        filter: "none",
+      },
       registration: {
         label: "Reg. No.",
         value: (b) => b.registration_number || null,
@@ -366,17 +444,17 @@ export default function AdminBusesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="erp-page-bar mb-6">
         <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           Buses &amp; Routes
         </h1>
-        <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white">
+        <Button onClick={openAdd} className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900">
           <Plus className="h-4 w-4 mr-2" />
           Add Bus
         </Button>
       </div>
 
-      <div className="erp-table-container p-6">
+      <div className="erp-table-container p-4 sm:p-6">
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
@@ -387,17 +465,28 @@ export default function AdminBusesPage() {
           </p>
         ) : (
           <>
-          <TableFilterSummary
-            ctl={table}
-            total={buses.length}
-            shown={table.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={buses.length}
+              shown={table.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="buses"
+              title="Buses"
+              featureKey="transport"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
                 <SortFilterHead ctl={table} col="bus_number" />
                 <SortFilterHead ctl={table} col="driver" />
                 <SortFilterHead ctl={table} col="capacity" />
+                <SortFilterHead ctl={table} col="riders" />
+                <SortFilterHead ctl={table} col="seats" />
                 <SortFilterHead ctl={table} col="registration" />
                 <SortFilterHead ctl={table} col="stops" />
                 <SortFilterHead ctl={table} col="active" />
@@ -407,7 +496,7 @@ export default function AdminBusesPage() {
             <TableBody>
               {table.rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                  <TableCell colSpan={9} className="py-10 text-center text-gray-500 dark:text-gray-400">
                     No buses match the column filters.
                   </TableCell>
                 </TableRow>
@@ -420,6 +509,12 @@ export default function AdminBusesPage() {
                   </TableCell>
                   <TableCell className="text-gray-600 dark:text-gray-300">
                     {bus.capacity ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-gray-600 dark:text-gray-300">
+                    {bus.riders ?? "—"}
+                  </TableCell>
+                  <TableCell>
+                    <SeatsCell bus={bus} />
                   </TableCell>
                   <TableCell className="text-gray-600 dark:text-gray-300">
                     {bus.registration_number || "—"}
@@ -457,7 +552,7 @@ export default function AdminBusesPage() {
                         onClick={() => openRouteDialog(bus)}
                         title="Manage Route"
                         aria-label="Manage route"
-                        className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+                        className="text-amber-600 dark:text-amber-400 hover:text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-950/30"
                       >
                         <Route className="h-4 w-4" />
                       </Button>
@@ -495,7 +590,7 @@ export default function AdminBusesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-500/10">
-                <BusIcon className="h-5 w-5 text-teal-600" />
+                <BusIcon className="h-5 w-5 text-teal-600 dark:text-teal-400" />
               </div>
               <div>
                 <DialogTitle>{editingBus ? "Edit Bus" : "Add New Bus"}</DialogTitle>
@@ -507,7 +602,7 @@ export default function AdminBusesPage() {
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Bus Number *</Label>
                 <Input
@@ -527,7 +622,7 @@ export default function AdminBusesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Capacity</Label>
                 <Input
@@ -591,7 +686,7 @@ export default function AdminBusesPage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {editingBus ? "Update Bus" : "Create Bus"}
@@ -607,7 +702,7 @@ export default function AdminBusesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                <Route className="h-5 w-5 text-amber-600" />
+                <Route className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
                 <DialogTitle>Stops Served</DialogTitle>
@@ -653,7 +748,7 @@ export default function AdminBusesPage() {
             {stopsBus && (
               <Button
                 type="button"
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
                 onClick={() => {
                   const bus = stopsBus;
                   setStopsBus(null);
@@ -674,7 +769,7 @@ export default function AdminBusesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                <Route className="h-5 w-5 text-amber-600" />
+                <Route className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
                 <DialogTitle>Manage Route</DialogTitle>
@@ -743,7 +838,7 @@ export default function AdminBusesPage() {
               type="button"
               disabled={routeSubmitting}
               onClick={handleRouteSave}
-              className="bg-navy-900 hover:bg-navy-800 text-white"
+              className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {routeSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Route

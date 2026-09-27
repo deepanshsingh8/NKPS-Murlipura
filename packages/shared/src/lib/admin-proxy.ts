@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditorWithUser } from "@nkps/shared/lib/verify-admin";
 import type { FeatureKey } from "@nkps/shared/lib/permissions";
+import {
+  ROW_DEPENDENCIES,
+  countRowDependencies,
+  describeDependencies,
+} from "@nkps/shared/lib/row-dependencies";
 
 // Generic admin DB write proxy. Each app (apps/erp, apps/cms) mounts its own
 // /api/admin route as a thin wrapper that calls createAdminProxyHandler with
@@ -163,6 +168,33 @@ export function createAdminProxyHandler(config: AdminProxyConfig) {
               { status: 400 }
             );
           }
+
+          // Refuse deletes that would cascade academic records away. The FKs
+          // pointing at these master tables are mostly ON DELETE CASCADE, so
+          // without this gate removing a subject silently takes every mark
+          // recorded against it. Deactivate is the intended action there, and
+          // the message says so. Keyed on `id` because the dependency map is
+          // written in terms of the master row's primary key.
+          if (ROW_DEPENDENCIES[table] && match.column === "id") {
+            const report = await countRowDependencies(
+              admin,
+              table,
+              String(match.value)
+            );
+            if (report.blockingTotal > 0) {
+              return NextResponse.json(
+                {
+                  error: `Cannot delete: this record still has ${describeDependencies(
+                    report.blocking
+                  )} linked to it. Deactivate it instead, or remove those records first.`,
+                  code: "HAS_DEPENDENTS",
+                  dependencies: report,
+                },
+                { status: 409 }
+              );
+            }
+          }
+
           result = await query
             .delete()
             .eq(match.column, match.value);
@@ -181,12 +213,39 @@ export function createAdminProxyHandler(config: AdminProxyConfig) {
           result.error
         );
         const errMsg = result.error.message ?? "";
+        // Exclusion-constraint violation. Today the only one in the schema is
+        // timetable_teacher_no_overlap, and hitting it is the single most
+        // likely way an admin learns about parallel groups — so name the fix
+        // rather than leaving them at the generic 500 this used to fall to.
+        if (
+          result.error.code === "23P01" ||
+          /exclusion constraint|timetable_teacher_no_overlap/i.test(errMsg)
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "That teacher is already booked elsewhere at this time. If they really are with several classes at once — a games period, say — tick \"Shared activity\" on the period.",
+            },
+            { status: 409 }
+          );
+        }
         if (
           result.error.code === "23505" ||
           /duplicate key|unique constraint/i.test(errMsg)
         ) {
+          // The timetable's primary-group index (migration 119) trips this when
+          // a cell already has a group 0, and "this record already exists" sends
+          // the admin hunting for a duplicate that isn't there.
+          const isPrimaryGroup = /timetable_periods_primary_group_uniq/i.test(errMsg);
+          const isCellGroup = /timetable_periods_cell_group_key/i.test(errMsg);
           return NextResponse.json(
-            { error: "This record already exists. Duplicate entries are not allowed." },
+            {
+              error: isPrimaryGroup
+                ? "This period already has a main group. Add another group to it instead of a second period."
+                : isCellGroup
+                  ? "That period already has a group with this number. Give the group a different number, or edit the existing one."
+                  : "This record already exists. Duplicate entries are not allowed.",
+            },
             { status: 409 }
           );
         }

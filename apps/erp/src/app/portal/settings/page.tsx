@@ -16,6 +16,11 @@ import {
   ArrowLeft,
   Check,
   CheckCircle,
+  Palette,
+  Info,
+  LogOut,
+  Download,
+  RefreshCw,
 } from "lucide-react";
 import {
   Dialog,
@@ -26,6 +31,15 @@ import {
 import { ImageCropper } from "@nkps/shared/components/ImageCropper";
 import { getCmsUrl } from "@nkps/shared/lib/cross-app";
 import { validatePhotoFile } from "@nkps/shared/lib/photo-spec";
+import { SessionProvider } from "@nkps/shared/components/providers/SessionProvider";
+import { AppLockProvider } from "@nkps/shared/components/security/AppLockProvider";
+import { ThemeToggle } from "@nkps/shared/components/ThemeToggle";
+import {
+  SettingsGroup,
+  SettingsRow,
+} from "@nkps/shared/components/settings/SettingsPrimitives";
+import { AppLockSettings } from "@nkps/shared/components/settings/AppLockSettings";
+import { useIsStandalone } from "@nkps/shared/hooks/useMediaQuery";
 
 interface ProfileData {
   id: string;
@@ -36,10 +50,19 @@ interface ProfileData {
   avatar_url: string | null;
 }
 
-export default function SettingsPage() {
+const NAV = [
+  { id: "account", label: "Account", icon: User },
+  { id: "security-lock", label: "App Lock", icon: Shield },
+  { id: "password", label: "Password", icon: Shield },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "about", label: "About", icon: Info },
+] as const;
+
+function SettingsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const standalone = useIsStandalone();
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -123,8 +146,7 @@ export default function SettingsPage() {
       return;
     }
 
-    const url = URL.createObjectURL(file);
-    setAvatarCropSrc(url);
+    setAvatarCropSrc(URL.createObjectURL(file));
   };
 
   const handleAvatarCropDone = async (croppedFile: File) => {
@@ -224,7 +246,6 @@ export default function SettingsPage() {
     if (profile?.role === "admin" || profile?.role === "staff") {
       const from = searchParams.get("from");
       if (from === "cms") return { url: getCmsUrl("/"), external: true };
-      if (from === "erp") return { url: "/", external: false };
       return { url: "/", external: false };
     }
     // Teachers — including those with editor capability — return to the
@@ -237,227 +258,347 @@ export default function SettingsPage() {
       return { url: "/teacher", external: false };
     }
     switch (profile?.role) {
+      case "parent": return { url: "/parent", external: false };
       default: return { url: "/student", external: false };
     }
   };
 
   const goToDashboard = () => {
     const { url, external } = getDashboardPath();
-    if (external) {
-      window.location.href = url;
+    if (external) window.location.href = url;
+    else router.push(url);
+  };
+
+  const signOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    document.cookie = "x-user-role=; path=/; max-age=0";
+    window.location.href = "/portal/login";
+  };
+
+  // The service worker holds a waiting version until something tells it to take
+  // over. PWARegister shows a toast when it notices; this is the manual door.
+  const checkForUpdates = async () => {
+    if (!("serviceWorker" in navigator)) {
+      toast.error("Updates aren't available in this browser");
+      return;
+    }
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      toast.error("The app isn't installed on this device");
+      return;
+    }
+    await registration.update();
+    if (registration.waiting) {
+      registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      toast.success("Updating…");
     } else {
-      router.push(url);
+      toast.success("You're on the latest version");
     }
   };
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-50">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-navy-900/20 border-t-navy-900" />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-50 dark:bg-background">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-navy-900/20 border-t-navy-900 dark:border-white/20 dark:border-t-white" />
       </div>
     );
   }
 
+  const initials = profile?.full_name
+    ? profile.full_name
+        .split(" ")
+        .slice(0, 2)
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+    : "?";
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-50">
-      <div className="mx-auto max-w-2xl px-6 py-10">
-        {/* Header */}
-        <div className="mb-8">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-50 dark:bg-background">
+      {/* App bar — sticky, safe-area aware, with a real back control. The old
+          screen put "Back to Dashboard" inline at the top of the document, so
+          it scrolled away and left no way out. */}
+      <header className="app-safe-t sticky top-0 z-10 border-b border-navy-900/10 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80 dark:border-border dark:bg-card/95 dark:supports-[backdrop-filter]:bg-card/80">
+        <div className="mx-auto flex h-14 max-w-3xl items-center gap-2 px-2 sm:px-4">
           <button
             onClick={goToDashboard}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 hover:text-navy-900 dark:hover:text-white transition-colors mb-4"
+            aria-label="Back"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-navy-900 active:bg-navy-900/5 dark:text-white dark:active:bg-white/10"
           >
-            <ArrowLeft className="h-4 w-4" />
-            Back to Dashboard
+            <ArrowLeft className="h-5 w-5" />
           </button>
-          <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
+          <h1 className="font-heading text-lg font-semibold text-navy-900 dark:text-white">
             Settings
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Manage your profile, security, and preferences
-          </p>
         </div>
+      </header>
 
-        <div className="space-y-6">
-          {/* ── Profile Section ── */}
-          <div className="bg-white dark:bg-card rounded-2xl border border-gray-200 dark:border-border shadow-sm p-6">
-            <div className="flex items-center gap-2 mb-5">
-              <User className="h-5 w-5 text-gray-400" />
-              <h2 className="font-heading text-lg font-semibold text-navy-900 dark:text-white">
-                Profile
-              </h2>
-            </div>
-
-            {/* Avatar */}
-            <div className="flex items-center gap-5 mb-6">
-              <div className="relative group">
-                {profile?.avatar_url ? (
-                  <Image
-                    src={profile.avatar_url}
-                    alt={profile.full_name}
-                    width={80}
-                    height={80}
-                    className="h-20 w-20 rounded-full object-cover ring-4 ring-gray-100 dark:ring-border"
-                  />
-                ) : (
-                  <div className="h-20 w-20 rounded-full bg-navy-900 dark:bg-gold-500/20 flex items-center justify-center text-white dark:text-gold-400 text-xl font-bold ring-4 ring-gray-100 dark:ring-border">
-                    {profile?.full_name
-                      .split(" ")
-                      .slice(0, 2)
-                      .map((n) => n[0])
-                      .join("")
-                      .toUpperCase()}
-                  </div>
-                )}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploadingAvatar}
-                  className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                >
-                  {uploadingAvatar ? (
-                    <Loader2 className="h-5 w-5 text-white animate-spin" />
-                  ) : (
-                    <Camera className="h-5 w-5 text-white" />
-                  )}
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                  className="hidden"
-                  onChange={handleAvatarFileSelect}
-                />
-              </div>
-              <div>
-                <p className="font-semibold text-navy-900 dark:text-white">
-                  {profile?.full_name}
-                </p>
-                <p className="text-sm text-gray-500 dark:text-gray-400">{profile?.email}</p>
-                <p className="text-xs text-gold-600 dark:text-gold-400 capitalize font-medium mt-0.5">
-                  {profile?.role}
-                </p>
-              </div>
-            </div>
-
-            <form onSubmit={handleSaveProfile} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-navy-900 dark:text-white">Full Name</Label>
-                  <Input
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="h-10"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-navy-900 dark:text-white">Phone</Label>
-                  <Input
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="Phone number"
-                    className="h-10"
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-gray-400">Email</Label>
-                <Input
-                  value={profile?.email ?? ""}
-                  disabled
-                  className="h-10 bg-gray-50 dark:bg-muted"
-                />
-                <p className="text-xs text-gray-400">Email cannot be changed. Contact admin for assistance.</p>
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  disabled={saving}
-                  className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
-                >
-                  {saving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4 mr-2" />
-                  )}
-                  Save Changes
-                </Button>
-              </div>
-            </form>
-          </div>
-
-          {/* ── Security Section ── */}
-          <div className="bg-white dark:bg-card rounded-2xl border border-gray-200 dark:border-border shadow-sm p-6">
-            <div className="flex items-center gap-2 mb-5">
-              <Shield className="h-5 w-5 text-gray-400" />
-              <h2 className="font-heading text-lg font-semibold text-navy-900 dark:text-white">
-                Change Password
-              </h2>
-            </div>
-
-            {passwordChanged && (
-              <div className="mb-4 flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-900/20">
-                <CheckCircle className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-                <p className="text-sm font-medium text-green-800 dark:text-green-300">
-                  Password changed successfully
-                </p>
+      <div className="app-safe-x mx-auto max-w-3xl px-4 pb-[calc(3rem+env(safe-area-inset-bottom,0px))] pt-5 sm:px-6">
+        {/* Identity card */}
+        <div className="mb-6 flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-border dark:bg-card">
+          <div className="relative shrink-0">
+            {profile?.avatar_url ? (
+              <Image
+                src={profile.avatar_url}
+                alt={profile.full_name}
+                width={64}
+                height={64}
+                className="h-16 w-16 rounded-full object-cover ring-4 ring-gray-100 dark:ring-border"
+              />
+            ) : (
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-navy-900 text-lg font-bold text-white ring-4 ring-gray-100 dark:bg-gold-500/20 dark:text-gold-400 dark:ring-border">
+                {initials}
               </div>
             )}
-
-            <form onSubmit={handleChangePassword} className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-navy-900 dark:text-white">Current Password</Label>
-                <Input
-                  type="password"
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  placeholder="Enter current password"
-                  className="h-10"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-navy-900 dark:text-white">New Password</Label>
-                  <Input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="At least 6 characters"
-                    className="h-10"
-                    required
-                    minLength={6}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-navy-900 dark:text-white">Confirm New Password</Label>
-                  <Input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Re-enter new password"
-                    className="h-10"
-                    required
-                    minLength={6}
-                  />
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  disabled={changingPassword}
-                  variant="outline"
-                  className="border-navy-900 text-navy-900 hover:bg-navy-900 hover:text-white dark:border-gold-500 dark:text-gold-400 dark:hover:bg-gold-500 dark:hover:text-navy-900"
-                >
-                  {changingPassword && (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  )}
-                  Change Password
-                </Button>
-              </div>
-            </form>
+            {/* A always-visible badge, not a hover overlay: there is no hover on
+                a phone, so the old control was invisible on the device most
+                likely to be changing a photo. */}
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingAvatar}
+              aria-label="Change profile photo"
+              className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full bg-navy-900 text-white shadow-md ring-2 ring-white dark:bg-gold-500 dark:text-navy-900 dark:ring-card"
+            >
+              {uploadingAvatar ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Camera className="h-4 w-4" />
+              )}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+              className="hidden"
+              onChange={handleAvatarFileSelect}
+            />
           </div>
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-navy-900 dark:text-white">
+              {profile?.full_name}
+            </p>
+            <p className="truncate text-sm text-gray-500 dark:text-gray-400">
+              {profile?.email}
+            </p>
+            <span className="mt-1 inline-block rounded-full bg-gold-500/15 px-2 py-0.5 text-[11px] font-medium capitalize text-gold-700 dark:text-gold-400">
+              {profile?.role}
+            </span>
+          </div>
+        </div>
 
+        <div className="lg:flex lg:gap-8">
+          {/* Section nav — desktop only. On a phone the page is short enough to
+              scroll and a nav rail would just take the width the content needs. */}
+          <nav className="hidden lg:block lg:w-44 lg:shrink-0">
+            <div className="sticky top-20 space-y-0.5">
+              {NAV.map(({ id, label, icon: Icon }) => (
+                <a
+                  key={id}
+                  href={`#${id}`}
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-gray-600 transition-colors hover:bg-white hover:text-navy-900 dark:text-gray-400 dark:hover:bg-card dark:hover:text-white"
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {label}
+                </a>
+              ))}
+            </div>
+          </nav>
+
+          <div className="min-w-0 flex-1 space-y-7">
+            {/* ── Account ── */}
+            <SettingsGroup id="account" title="Account" icon={User}>
+              <form onSubmit={handleSaveProfile}>
+                <SettingsRow
+                  label="Full name"
+                  stacked
+                  control={
+                    <Input
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      className="h-11"
+                      required
+                    />
+                  }
+                />
+                <SettingsRow
+                  label="Phone"
+                  stacked
+                  control={
+                    <Input
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="Phone number"
+                      type="tel"
+                      inputMode="tel"
+                      className="h-11"
+                    />
+                  }
+                />
+                <SettingsRow
+                  label="Email"
+                  hint="Email can't be changed here — ask an admin."
+                  stacked
+                  control={
+                    <Input
+                      value={profile?.email ?? ""}
+                      disabled
+                      className="h-11 bg-gray-50 dark:bg-muted"
+                    />
+                  }
+                />
+                <div className="flex justify-end px-4 py-3">
+                  <Button
+                    type="submit"
+                    disabled={saving}
+                    className="h-11 bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
+                  >
+                    {saving ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="mr-2 h-4 w-4" />
+                    )}
+                    Save changes
+                  </Button>
+                </div>
+              </form>
+            </SettingsGroup>
+
+            {/* ── App Lock ── */}
+            <AppLockSettings />
+
+            {/* ── Password ── */}
+            <SettingsGroup id="password" title="Password" icon={Shield}>
+              {passwordChanged && (
+                <div className="flex items-center gap-3 border-b border-gray-100 bg-green-50 px-4 py-3 dark:border-border/70 dark:bg-green-900/20">
+                  <CheckCircle className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
+                  <p className="text-sm font-medium text-green-800 dark:text-green-300">
+                    Password changed successfully
+                  </p>
+                </div>
+              )}
+              <form onSubmit={handleChangePassword}>
+                <SettingsRow
+                  label="Current password"
+                  stacked
+                  control={
+                    <Input
+                      type="password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Enter current password"
+                      className="h-11"
+                      required
+                    />
+                  }
+                />
+                <SettingsRow
+                  label="New password"
+                  hint="At least 6 characters."
+                  stacked
+                  control={
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-gray-500 dark:text-gray-400">
+                          New password
+                        </Label>
+                        <Input
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className="h-11"
+                          required
+                          minLength={6}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs text-gray-500 dark:text-gray-400">
+                          Confirm
+                        </Label>
+                        <Input
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          className="h-11"
+                          required
+                          minLength={6}
+                        />
+                      </div>
+                    </div>
+                  }
+                />
+                <div className="flex justify-end px-4 py-3">
+                  <Button
+                    type="submit"
+                    disabled={changingPassword}
+                    variant="outline"
+                    className="h-11"
+                  >
+                    {changingPassword && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Change password
+                  </Button>
+                </div>
+              </form>
+            </SettingsGroup>
+
+            {/* ── Appearance ── */}
+            <SettingsGroup id="appearance" title="Appearance" icon={Palette}>
+              <SettingsRow
+                label="Theme"
+                hint="System follows your phone or computer, including its night schedule."
+                stacked
+                control={<ThemeToggle />}
+              />
+            </SettingsGroup>
+
+            {/* ── About ── */}
+            <SettingsGroup id="about" title="About" icon={Info}>
+              <SettingsRow
+                label="Installed app"
+                hint={
+                  standalone
+                    ? "Running from your home screen."
+                    : "Open in a browser. Add it to your home screen for a full-screen app."
+                }
+                control={
+                  <Download
+                    className={
+                      standalone
+                        ? "h-4 w-4 text-green-600 dark:text-green-400"
+                        : "h-4 w-4 text-gray-400"
+                    }
+                  />
+                }
+              />
+              <SettingsRow
+                label="Check for updates"
+                hint="Reloads the app if a newer version is ready."
+                control={
+                  <Button variant="outline" size="sm" onClick={checkForUpdates}>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Check
+                  </Button>
+                }
+              />
+              <SettingsRow
+                label="Sign out"
+                hint="Ends this session on this device."
+                control={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={signOut}
+                    className="border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
+                  >
+                    <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                    Sign out
+                  </Button>
+                }
+              />
+            </SettingsGroup>
+          </div>
         </div>
       </div>
 
@@ -480,5 +621,19 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// /portal has no layout of its own — its other routes are the signed-out auth
+// screens, which must not be wrapped in a session or a lock. So this page
+// mounts both itself: the App Lock switches need the provider to write to, and
+// a settings screen left uncovered would be a way to sit on an unlocked app.
+export default function SettingsPage() {
+  return (
+    <SessionProvider>
+      <AppLockProvider>
+        <SettingsContent />
+      </AppLockProvider>
+    </SessionProvider>
   );
 }

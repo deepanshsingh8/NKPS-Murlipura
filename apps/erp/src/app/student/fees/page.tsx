@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@nkps/shared/lib/supabase/client";
+import { todayISO } from "@nkps/shared/lib/date";
 import {
   Card,
   CardContent,
@@ -20,10 +21,10 @@ import {
 import { Button } from "@nkps/shared/components/ui/button";
 import { CreditCard, CheckCircle, AlertCircle, Loader2, Download } from "lucide-react";
 import {
-  amountBilledToDate,
+  computeDuesBreakdown,
+  resolveBillingCutoff,
   resolveEffectiveFeeLines,
   resolveStudentType,
-  sumAnnualized,
 } from "@/lib/fees";
 import type { StopFeeLookup } from "@/lib/fees";
 import type {
@@ -41,13 +42,19 @@ const formatCurrency = (amount: number) =>
     maximumFractionDigits: 0,
   }).format(amount);
 
-// Today, as YYYY-MM-DD. Computed once per render pass so every fee line is
-// judged against the same date.
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function StudentFeesPage() {
   const [loading, setLoading] = useState(true);
   const [feeLines, setFeeLines] = useState<EffectiveFeeLine[]>([]);
+  // A failed fee read must not pass for "you owe less". RLS filtering returns
+  // an empty set with no error and is indistinguishable from a genuine nil,
+  // but an actual transport error is catchable — so catch it and say so rather
+  // than rendering a confidently smaller balance. lib/student-dues.ts takes
+  // the same position for the download gate.
+  const [feeLoadError, setFeeLoadError] = useState<string | null>(null);
+  // Null while on the roll; the leaving date once the student has left, which
+  // is where their fee schedule stops. See resolveBillingCutoff().
+  const [billingCutoff, setBillingCutoff] = useState<string | null>(null);
   // The year's start anchors recurring fees that carry no due date of their
   // own (transport stop fees, legacy monthly/quarterly rows).
   const [academicYear, setAcademicYear] = useState<{
@@ -85,7 +92,7 @@ export default function StudentFeesPage() {
       const { data: enrollment } = await supabase
         .from("student_enrollments")
         .select(
-          "class_id, stream_id, academic_year_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, classes(name)"
+          "class_id, stream_id, academic_year_id, has_transport, bus_stop_id, transport_direction, transport_fee_override, status, exit_date, status_changed_at, classes(name)"
         )
         .eq("student_id", studentId)
         .order("enrollment_date", { ascending: false })
@@ -103,6 +110,7 @@ export default function StudentFeesPage() {
         (enrollment?.transport_fee_override as number | null) ?? null;
       const academicYearId =
         (enrollment?.academic_year_id as string | null) ?? null;
+      setBillingCutoff(resolveBillingCutoff(enrollment));
 
       // A schedule row can be restricted to newly-admitted or returning
       // students (the admission fee bills only this year's intake), so the
@@ -147,15 +155,27 @@ export default function StudentFeesPage() {
         if (academicYearId) {
           structuresQuery = structuresQuery.eq("academic_year_id", academicYearId);
         }
-        const [{ data: structuresData }, { data: stopFeesData }] = await Promise.all([
+        const [
+          { data: structuresData, error: structuresError },
+          { data: stopFeesData, error: stopFeesError },
+        ] = await Promise.all([
           structuresQuery,
           academicYearId
             ? supabase
                 .from("bus_stop_fees")
                 .select("bus_stop_id, amount, frequency, is_active, bus_stops(name)")
                 .eq("academic_year_id", academicYearId)
-            : Promise.resolve({ data: [] }),
+            : Promise.resolve({ data: [], error: null }),
         ]);
+        // Name which half failed: a missing transport line and a missing
+        // academic line are different amounts of wrong.
+        setFeeLoadError(
+          structuresError
+            ? "Couldn't load the fee structure for your class, so the figures below are incomplete. Please refresh, or contact the school office."
+            : stopFeesError
+              ? "Couldn't load transport fees, so any bus fee is missing from the figures below. Please refresh, or contact the school office."
+              : null
+        );
         const stopFees: StopFeeLookup[] = (
           (stopFeesData as
             | {
@@ -228,38 +248,41 @@ export default function StudentFeesPage() {
   //   totalFees      — the whole year's obligation (annualized).
   //   billedToDate   — the slice of it that has actually fallen due.
   // "Pending" is measured against the second, because a January instalment
-  // isn't an arrear in August. This is the same figure the download dues gate
-  // uses (see lib/student-dues.ts), so the number shown here is exactly the
-  // number that decides whether an admit card downloads.
+  // isn't an arrear in August.
+  //
+  // This delegates to computeDuesBreakdown — the same function the office's
+  // dues register runs (AdminFeesContent) — so the number shown here is the
+  // number the school will quote. This page used to do the arithmetic inline
+  // and omit the late fee, which showed a smaller balance than /fees/dues.
+  //
+  // It is deliberately NOT the figure the download gate uses: student-dues.ts
+  // carries no late-fee term, so the gate stays the more lenient of the two.
   const today = todayISO();
-  const totalFees = sumAnnualized(feeLines);
-  const billedToDate = feeLines.reduce(
-    (sum, line) =>
-      sum + amountBilledToDate(line, today, academicYear?.start_date),
-    0
-  );
-  // Match the admin dues view: cash paid + any waiver granted both settle a
-  // fee. A partially-refunded payment keeps status 'refunded' with amount_paid
-  // unchanged, so include refunded rows too and net out refund_amount (never
-  // below 0 per row) — otherwise the whole receipt vanishes and dues overstate.
-  const totalPaid = payments
-    .filter(
+  // computeDuesBreakdown requires payments pre-scoped to the billed year (done
+  // in the query above) and to receipt-bearing statuses. 'refunded' belongs in
+  // that set: a partially-refunded payment keeps status 'refunded' with
+  // amount_paid intact, and settledAmount() nets out refund_amount per row —
+  // dropping those rows would make the whole receipt vanish and overstate dues.
+  const dues = computeDuesBreakdown({
+    lines: feeLines,
+    payments: payments.filter(
       (p) =>
         p.status === "paid" ||
         p.status === "partial" ||
         p.status === "refunded"
-    )
-    .reduce(
-      (sum, p) =>
-        sum +
-        Math.max(
-          0,
-          Number(p.amount_paid) - Number(p.refund_amount ?? 0)
-        ) +
-        Number(p.waiver_amount ?? 0),
-      0
-    );
-  const pending = billedToDate - totalPaid;
+    ),
+    today,
+    yearStartDate: academicYear?.start_date,
+    // Priced to their leaving date once they have left, so a student who
+    // settled up and moved on is not shown a balance that keeps growing
+    // behind them.
+    billingCutoff,
+  });
+  const totalFees = dues.expected;
+  const billedToDate = dues.billedToDate;
+  const totalPaid = dues.paid;
+  // Already floored at 0 and inclusive of any late fee.
+  const pending = dues.dues;
 
   // Lines marked paid: match by fee_structure_id (academic) or
   // bus_stop_id (transport). Both keys live in EffectiveFeeLine.id by
@@ -281,6 +304,13 @@ export default function StudentFeesPage() {
           View your fee structure and payment history.
         </p>
       </div>
+
+      {feeLoadError && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{feeLoadError}</p>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -309,7 +339,7 @@ export default function StudentFeesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-green-600">
+            <p className="text-3xl font-bold text-green-600 dark:text-green-400">
               {formatCurrency(totalPaid)}
             </p>
           </CardContent>
@@ -323,9 +353,17 @@ export default function StudentFeesPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-red-600">
-              {formatCurrency(pending > 0 ? pending : 0)}
+            <p className="text-3xl font-bold text-red-600 dark:text-red-400">
+              {formatCurrency(pending)}
             </p>
+            {/* Name the surcharge rather than letting it inflate the headline
+                unexplained. */}
+            {dues.lateFee > 0 && (
+              <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                Includes a late fee of {formatCurrency(dues.lateFee)} on overdue
+                instalments.
+              </p>
+            )}
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {billedToDate < totalFees
                 ? `Instalments due so far: ${formatCurrency(billedToDate)}. The rest falls due later in the session.`

@@ -46,7 +46,7 @@ const MONTH_NAMES = [
 const CALENDAR_COLORS: Record<string, string> = {
   present: "bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800",
   absent: "bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800",
-  late: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800",
+  late: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800",
 };
 
 export default function StudentAttendancePage() {
@@ -213,8 +213,8 @@ export default function StudentAttendancePage() {
         </Card>
         <Card className="erp-card">
           <CardContent className="p-4 text-center">
-            <Clock className="h-5 w-5 text-yellow-500 mx-auto mb-1" />
-            <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-400">{lateDays}</p>
+            <Clock className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{lateDays}</p>
             <p className="text-xs text-gray-500 dark:text-gray-400">Late</p>
           </CardContent>
         </Card>
@@ -271,7 +271,7 @@ export default function StudentAttendancePage() {
               Absent
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-sm bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-200 dark:border-border" />
+              <span className="w-3 h-3 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-border" />
               Late
             </span>
             <span className="flex items-center gap-1">
@@ -281,7 +281,7 @@ export default function StudentAttendancePage() {
           </div>
 
           {/* Day headers */}
-          <div className="grid grid-cols-7 gap-1 mb-1">
+          <div className="grid grid-cols-7 gap-1 mb-1"> {/* mobile-layout-ok: a month is seven days wide on every screen */}
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
               <div key={d} className="text-center text-xs font-medium text-gray-500 dark:text-gray-400 py-1">
                 {d}
@@ -290,7 +290,7 @@ export default function StudentAttendancePage() {
           </div>
 
           {/* Calendar grid */}
-          <div className="grid grid-cols-7 gap-1">
+          <div className="grid grid-cols-7 gap-1"> {/* mobile-layout-ok: a month is seven days wide on every screen */}
             {/* Empty cells for first week offset */}
             {Array.from({ length: firstDay }).map((_, i) => (
               <div key={`empty-${i}`} className="aspect-square" />
@@ -359,7 +359,7 @@ export default function StudentAttendancePage() {
                       <Badge className="bg-red-100 dark:bg-red-950/30 text-red-700 dark:text-red-400 text-xs">
                         A:{m.absent}
                       </Badge>
-                      <Badge className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-xs">
+                      <Badge className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs">
                         L:{m.late}
                       </Badge>
                     </div>

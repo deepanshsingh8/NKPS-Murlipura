@@ -8,6 +8,11 @@ import {
   linkProfileToParent,
   linkParentToStudentRecord,
 } from "@/lib/identity/link";
+import {
+  findStudentByAdmissionNo,
+  isSameDateOfBirth,
+  normalizeAdmissionNo,
+} from "@/lib/identity/student-lookup";
 
 const MAX_CHILDREN_PER_PARENT = 10;
 
@@ -79,21 +84,39 @@ export async function POST(request: Request) {
       );
     }
 
-    // Two-tier rate limit:
+    // Validate the body BEFORE spending rate-limit budget. A malformed or
+    // half-filled form never reached the student directory, so counting it as
+    // an attempt only locked out parents who fumbled the form — the attacker
+    // this limit exists for always sends a well-formed payload.
+    const body = await request.json();
+    const result = linkChildSchema.safeParse(body);
+
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Invalid data", details: result.error.flatten() },
+        { status: 400 }
+      );
+    }
+
+    const { admission_no, date_of_birth, relationship } = result.data;
+
+    // Two-tier rate limit on the verification itself:
     //  - Per-parent: stops a stolen account from sweeping the directory.
     //  - Per-IP: stops account-rotation attempts from the same machine.
-    // Generous enough that a parent linking a few siblings will never hit it.
+    // A family linking several siblings, with a typo or two along the way,
+    // stays well inside it; guessing a date of birth does not.
     const parentLimit = rateLimit({
       name: "link-child:parent",
       key: parentId,
-      max: 5,
+      max: 10,
       windowSeconds: 30 * 60,
     });
     if (!parentLimit.ok) {
       return NextResponse.json(
         {
-          error:
-            "Too many attempts. Please wait a few minutes before trying again.",
+          error: `Too many attempts. Please wait ${Math.ceil(
+            parentLimit.resetSeconds / 60
+          )} minute(s) before trying again, or contact the school office.`,
         },
         { status: 429 }
       );
@@ -111,32 +134,33 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate request body
-    const body = await request.json();
-    const result = linkChildSchema.safeParse(body);
-
-    if (!result.success) {
-      return NextResponse.json(
-        { error: "Invalid data", details: result.error.flatten() },
-        { status: 400 }
-      );
-    }
-
-    const { admission_no, date_of_birth, relationship } = result.data;
     const supabase = createAdminClient();
 
-    // Look up student by admission number
-    const { data: student } = await supabase
-      .from("students")
-      .select("id, date_of_birth, full_name, admission_no, photo_url, is_active")
-      .eq("admission_no", admission_no)
-      .single();
+    // Matched case-insensitively and whitespace-tolerantly: the admission
+    // number is an identifier people retype off a diary or a fee slip, not the
+    // secret. The date of birth below is the secret.
+    const student = await findStudentByAdmissionNo<{
+      id: string;
+      date_of_birth: string | null;
+      full_name: string;
+      admission_no: string;
+      photo_url: string | null;
+      is_active: boolean | null;
+    }>(
+      supabase,
+      admission_no,
+      "id, date_of_birth, full_name, admission_no, photo_url, is_active"
+    );
 
     // Audit H4: collapse "no such admission no" and "DOB mismatch" into a
     // single generic message so an attacker can't enumerate which
     // admission_nos exist by submitting a known-bad DOB. The "DOB missing"
     // branch stays distinct because that's genuinely a school-side data
     // gap the parent needs to be told about.
+    //
+    // Every branch that returns it logs which gate it was, because the parent
+    // is told the same thing either way and the school otherwise has no way to
+    // tell a wrong date of birth from a missing student.
     const verifyFailed = NextResponse.json(
       {
         error:
@@ -144,7 +168,12 @@ export async function POST(request: Request) {
       },
       { status: 400 }
     );
-    if (!student || !student.is_active) return verifyFailed;
+    if (!student) {
+      console.warn(
+        `[link-child] no student matches admission_no=${normalizeAdmissionNo(admission_no)}`
+      );
+      return verifyFailed;
+    }
     if (!student.date_of_birth) {
       return NextResponse.json(
         {
@@ -154,7 +183,29 @@ export async function POST(request: Request) {
         { status: 422 }
       );
     }
-    if (student.date_of_birth !== date_of_birth) return verifyFailed;
+    if (!isSameDateOfBirth(student.date_of_birth, date_of_birth)) {
+      console.warn(
+        `[link-child] date of birth does not match for admission_no=${student.admission_no}`
+      );
+      return verifyFailed;
+    }
+
+    // Checked only AFTER the date of birth matched. At that point the caller
+    // has proved they know this child, so naming the real obstacle tells them
+    // nothing they hadn't already established — and "we couldn't verify those
+    // details" would have sent them round in circles re-typing correct ones.
+    if (student.is_active === false) {
+      console.warn(
+        `[link-child] admission_no=${student.admission_no} verified but the student record is inactive`
+      );
+      return NextResponse.json(
+        {
+          error:
+            "This student's record is no longer active at the school. Please contact the school office to have it reopened or linked for you.",
+        },
+        { status: 409 }
+      );
+    }
 
     // Already-linked is a no-op that must be reported as such — check it BEFORE
     // the cap, otherwise a parent at the cap re-submitting a child they've
@@ -209,13 +260,18 @@ export async function POST(request: Request) {
     }
     const isPrimary = linked.isPrimaryContact ?? false;
 
-    // Fetch enrollment info to return full child data
+    // Enrollment info for the card we hand back. Newest first, to match what
+    // the dashboard shows on reload — an unordered `limit(1)` could hand back
+    // last year's class and make the fresh card disagree with the page behind
+    // it. maybeSingle(), because a student between sessions has no enrollment
+    // and that is not an error.
     const { data: enrollment } = await supabase
       .from("student_enrollments")
       .select("class_id, roll_number, classes(name, section)")
       .eq("student_id", student.id)
+      .order("enrollment_date", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     const classInfo = enrollment?.classes as unknown as {
       name: string;

@@ -37,6 +37,9 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import {
   Plus,
   Pencil,
@@ -99,13 +102,18 @@ export default function TimetablePage() {
   const [deleteTarget, setDeleteTarget] = useState<ExamSchedule | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Classes and exam types are both year-scoped, so this follows the session
+  // picker rather than the is_current flag.
+  const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
   const fetchInitial = useCallback(async () => {
     const supabase = createClient();
-    const { data: current } = await supabase
-      .from("academic_years")
-      .select("id")
-      .eq("is_current", true)
-      .maybeSingle();
+    let yearQuery = supabase.from("academic_years").select("id");
+    yearQuery = sessionId
+      ? yearQuery.eq("id", sessionId)
+      : yearQuery.eq("is_current", true);
+    const { data: current } = await yearQuery.maybeSingle();
     if (!current) return;
 
     const [classesRes, examsRes, subjectsRes] = await Promise.all([
@@ -128,7 +136,7 @@ export default function TimetablePage() {
     setClasses(classesRes.data ?? []);
     setExamTypes((examsRes.data as ExamType[]) ?? []);
     setAllSubjects((subjectsRes.data as Subject[]) ?? []);
-  }, []);
+  }, [sessionId]);
 
   const fetchSchedules = useCallback(async () => {
     if (!selectedClassId || !selectedExamTypeId) {
@@ -323,14 +331,17 @@ export default function TimetablePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
-          Exam Timetable
-        </h1>
-        <p className="text-gray-500 dark:text-gray-400 mt-1">
-          Set the date, time, and room for each subject&apos;s paper per class
-          and exam. Admit cards embed this schedule automatically.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
+            Exam Timetable
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">
+            Set the date, time, and room for each subject&apos;s paper per class
+            and exam. Admit cards embed this schedule automatically.
+          </p>
+        </div>
+        <AcademicSessionPicker state={session} />
       </div>
 
       <Card className="bg-white dark:bg-card rounded-2xl">
@@ -420,11 +431,20 @@ export default function TimetablePage() {
               </div>
             ) : (
               <>
-              <TableFilterSummary
-                ctl={table}
-                total={schedules.length}
-                shown={table.rows.length}
-              />
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                <TableFilterSummary
+                  ctl={table}
+                  total={schedules.length}
+                  shown={table.rows.length}
+                  className="mb-0 mr-auto"
+            />
+                <TableExportButton
+                  ctl={table}
+                  filename="exam-timetable"
+                  title="Exam Timetable"
+                  featureKey="exam_timetable"
+                />
+              </div>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -482,7 +502,7 @@ export default function TimetablePage() {
                               size="icon"
                               onClick={() => openEdit(s)}
                               aria-label="Edit timetable slot"
-                              className="h-7 w-7 text-blue-600"
+                              className="h-7 w-7 text-blue-600 dark:text-blue-400"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -491,7 +511,7 @@ export default function TimetablePage() {
                               size="icon"
                               onClick={() => setDeleteTarget(s)}
                               aria-label="Delete timetable slot"
-                              className="h-7 w-7 text-red-600"
+                              className="h-7 w-7 text-red-600 dark:text-red-400"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -566,7 +586,7 @@ export default function TimetablePage() {
                 onChange={(e) => setForm({ ...form, exam_date: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label>Start time</Label>
                 <Input

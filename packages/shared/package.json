@@ -8,7 +8,9 @@
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.0.2",
-    "resend": "^6.12.2"
+    "@react-pdf/renderer": "^4.5.1",
+    "resend": "^6.12.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/google.maps": "^3.64.0"

@@ -179,7 +179,7 @@ export function SubstitutePickerDialog({
                   key={c.teacher.id}
                   className={`rounded-lg border p-3 ${
                     isCurrent
-                      ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-900/15"
+                      ? "border-green-300 dark:border-green-800 bg-green-50/40 dark:bg-green-900/15"
                       : "border-gray-200 dark:border-border bg-white dark:bg-card"
                   }`}
                 >

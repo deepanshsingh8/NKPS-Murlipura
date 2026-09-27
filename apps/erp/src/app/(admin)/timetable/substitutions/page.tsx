@@ -117,6 +117,8 @@ export default function AdminSubstitutionsPage() {
   // Load teachers once.
   useEffect(() => {
     (async () => {
+      // Active only: this list is for marking someone absent today, so there
+      // is no stored value to preserve and a retired teacher cannot be absent.
       const { data } = await supabase
         .from("teachers")
         .select("*")
@@ -218,7 +220,7 @@ export default function AdminSubstitutionsPage() {
         <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           Substitutions
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="erp-page-actions">
           <div className="flex items-center gap-2">
             <Label htmlFor="sub-date" className="text-xs text-gray-500 dark:text-gray-400">
               Date
@@ -343,7 +345,7 @@ export default function AdminSubstitutionsPage() {
                         {row.period.room ? ` · ${row.period.room}` : ""}
                       </div>
                       {sub && subTeacher ? (
-                        <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                        <div className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300">
                           <UserCheck className="h-3.5 w-3.5" />
                           Substitute: {subTeacher.full_name}
                         </div>

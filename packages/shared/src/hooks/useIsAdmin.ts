@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClient } from "@nkps/shared/lib/supabase/client";
+import { useSession } from "@nkps/shared/components/providers/SessionProvider";
 
 /**
  * Client-side check for whether the signed-in user is an admin.
@@ -13,31 +12,13 @@ import { createClient } from "@nkps/shared/lib/supabase/client";
  *
  * Returns `null` while the role is still loading so callers can render nothing
  * (rather than flashing an admin button to an editor before the role resolves).
+ *
+ * Reads the shell's shared session rather than resolving the role itself —
+ * four of these mount per admin page and each used to cost its own
+ * getUser() -> profiles pair.
  */
 export function useIsAdmin(): boolean | null {
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) {
-        if (active) setIsAdmin(false);
-        return;
-      }
-      supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .single()
-        .then(({ data }) => {
-          if (active) setIsAdmin(data?.role === "admin");
-        });
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return isAdmin;
+  const { loading, profile } = useSession();
+  if (loading) return null;
+  return profile?.role === "admin";
 }

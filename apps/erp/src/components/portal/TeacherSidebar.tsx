@@ -10,66 +10,61 @@ import {
   Sparkles,
   FileText,
   MessageSquare,
+  NotebookPen,
 } from "lucide-react";
-import { PortalSidebar } from "./PortalSidebar";
+import {
+  SidebarShell,
+  type SidebarSection,
+} from "@nkps/shared/components/SidebarShell";
 import { AppSwitcher } from "@nkps/shared/components/AppSwitcher";
 import { useSidebar } from "@nkps/shared/components/providers/SidebarProvider";
 
-const navLinks = [
+// Grouped by what a teacher is doing, not by what the ERP calls the table:
+// the things you enter, the things you look up, and the people you teach.
+const sections: SidebarSection[] = [
   {
-    href: "/teacher",
-    label: "Dashboard",
-    icon: <LayoutDashboard className="h-5 w-5 shrink-0" />,
+    label: "Overview",
+    items: [
+      { kind: "link", icon: LayoutDashboard, label: "Dashboard", href: "/teacher" },
+    ],
   },
   {
-    href: "/teacher/attendance",
-    label: "Attendance",
-    icon: <ClipboardCheck className="h-5 w-5 shrink-0" />,
+    label: "Teaching",
+    items: [
+      { kind: "link", icon: ClipboardCheck, label: "Attendance", href: "/teacher/attendance" },
+      { kind: "link", icon: NotebookPen, label: "Class Diary", href: "/teacher/class-diary" },
+      { kind: "link", icon: BarChart3, label: "Results", href: "/teacher/results" },
+      { kind: "link", icon: FileText, label: "Class Tests", href: "/teacher/class-tests" },
+      { kind: "link", icon: Sparkles, label: "Non-Scholastic", href: "/teacher/non-scholastic" },
+      { kind: "link", icon: MessageSquare, label: "PTM Notes", href: "/teacher/ptm-notes" },
+    ],
   },
   {
-    href: "/teacher/results",
-    label: "Results",
-    icon: <BarChart3 className="h-5 w-5 shrink-0" />,
+    label: "Schedule",
+    items: [
+      { kind: "link", icon: Clock, label: "Timetable", href: "/teacher/timetable" },
+      { kind: "link", icon: CalendarDays, label: "Calendar", href: "/teacher/calendar" },
+    ],
   },
   {
-    href: "/teacher/class-tests",
-    label: "Class Tests",
-    icon: <FileText className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/teacher/non-scholastic",
-    label: "Non-Scholastic",
-    icon: <Sparkles className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/teacher/ptm-notes",
-    label: "PTM Notes",
-    icon: <MessageSquare className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/teacher/timetable",
-    label: "Timetable",
-    icon: <Clock className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/teacher/students",
-    label: "Students",
-    icon: <Users className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/teacher/calendar",
-    label: "Calendar",
-    icon: <CalendarDays className="h-5 w-5 shrink-0" />,
+    label: "People",
+    items: [
+      { kind: "link", icon: Users, label: "Students", href: "/teacher/students" },
+    ],
   },
 ];
 
 export function TeacherSidebar() {
   const { collapsed } = useSidebar();
   return (
-    <PortalSidebar
-      title="Teacher Portal"
-      role="Teacher"
-      navLinks={navLinks}
+    <SidebarShell
+      homeHref="/teacher"
+      sections={sections}
+      headerTitle="Teacher Portal"
+      headerSubtitle="Teacher"
+      // A portal has no feature keys: everything here belongs to the role that
+      // the route gate already checked on the way in.
+      gate="none"
       footerExtra={<AppSwitcher scope="erp-portal" collapsed={collapsed} />}
     />
   );

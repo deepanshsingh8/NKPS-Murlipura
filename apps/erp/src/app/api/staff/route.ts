@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
 import { createPortalUser } from "@nkps/shared/lib/create-portal-user";
-import { mirrorStaffToTeacher, promoteStaffToTeacher } from "@/lib/staff-teacher-sync";
+import {
+  mirrorStaffToTeacher,
+  promoteStaffToTeacher,
+  retireTeacherForStaff,
+} from "@/lib/staff-teacher-sync";
 import { staffPortalRole } from "@nkps/shared/lib/staff-roles";
 import { staffCreateSchema, staffUpdateSchema } from "@nkps/shared/lib/validations";
 import { extractStoragePath } from "@nkps/shared/lib/storage-paths";
@@ -191,6 +195,11 @@ export async function DELETE(request: NextRequest) {
         await admin.storage.from("staff-photos").remove(photoFiles);
       }
 
+      // Retire linked teachers BEFORE the staff rows go — the FK is ON DELETE
+      // SET NULL, so afterwards there is no way left to find them, and they
+      // would stay active in every teacher dropdown. (migration 116)
+      await retireTeacherForStaff(admin, ids);
+
       const { error } = await admin
         .from("staff_members")
         .delete()
@@ -215,6 +224,10 @@ export async function DELETE(request: NextRequest) {
       const path = extractStoragePath(photo_url, "staff-photos");
       if (path) await admin.storage.from("staff-photos").remove([path]);
     }
+
+    // See the bulk branch above: retire before deleting, or the teacher row is
+    // orphaned and stays active. (migration 116)
+    await retireTeacherForStaff(admin, id);
 
     const { error } = await admin
       .from("staff_members")

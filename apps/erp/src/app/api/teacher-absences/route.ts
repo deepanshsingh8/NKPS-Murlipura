@@ -118,7 +118,10 @@ export async function POST(request: NextRequest) {
     .eq("teacher_id", teacher_id)
     .eq("day_of_week", dayOfWeek)
     .eq("is_break", false)
-    .order("start_time", { ascending: true });
+    .order("start_time", { ascending: true })
+    // Parallel groups of one cell tie exactly on start_time (migration 119),
+    // so without this the affected-period list reorders between requests.
+    .order("group_no", { ascending: true });
 
   if (finalHalfDay === "first_half") {
     periodsQuery = periodsQuery.lte("period_number", HALF_DAY_CUTOFF_PERIOD);

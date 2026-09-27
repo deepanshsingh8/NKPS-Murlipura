@@ -8,49 +8,47 @@ import {
   Clock,
   CalendarDays,
   IdCard,
+  NotebookPen,
 } from "lucide-react";
-import { PortalSidebar } from "./PortalSidebar";
+import {
+  SidebarShell,
+  type SidebarSection,
+} from "@nkps/shared/components/SidebarShell";
 
-const navLinks = [
+const sections: SidebarSection[] = [
   {
-    href: "/student",
-    label: "Dashboard",
-    icon: <LayoutDashboard className="h-5 w-5 shrink-0" />,
+    label: "Overview",
+    items: [
+      { kind: "link", icon: LayoutDashboard, label: "Dashboard", href: "/student" },
+      { kind: "link", icon: NotebookPen, label: "Class Diary", href: "/student/diary" },
+    ],
   },
   {
-    href: "/student/attendance",
-    label: "Attendance",
-    icon: <ClipboardCheck className="h-5 w-5 shrink-0" />,
+    label: "My studies",
+    items: [
+      { kind: "link", icon: ClipboardCheck, label: "Attendance", href: "/student/attendance" },
+      { kind: "link", icon: BarChart3, label: "Results", href: "/student/results" },
+      { kind: "link", icon: IdCard, label: "Admit Cards", href: "/student/admit-cards" },
+      { kind: "link", icon: Clock, label: "Timetable", href: "/student/timetable" },
+    ],
   },
   {
-    href: "/student/results",
-    label: "Results",
-    icon: <BarChart3 className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/student/admit-cards",
-    label: "Admit Cards",
-    icon: <IdCard className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/student/fees",
-    label: "Fees",
-    icon: <CreditCard className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/student/timetable",
-    label: "Timetable",
-    icon: <Clock className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/student/calendar",
-    label: "Calendar",
-    icon: <CalendarDays className="h-5 w-5 shrink-0" />,
+    label: "School",
+    items: [
+      { kind: "link", icon: CalendarDays, label: "Calendar", href: "/student/calendar" },
+      { kind: "link", icon: CreditCard, label: "Fees", href: "/student/fees" },
+    ],
   },
 ];
 
 export function StudentSidebar() {
   return (
-    <PortalSidebar title="Student Portal" role="Student" navLinks={navLinks} />
+    <SidebarShell
+      homeHref="/student"
+      sections={sections}
+      headerTitle="Student Portal"
+      headerSubtitle="Student"
+      gate="none"
+    />
   );
 }

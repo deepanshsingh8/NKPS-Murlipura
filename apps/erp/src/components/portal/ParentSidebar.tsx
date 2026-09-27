@@ -10,59 +10,56 @@ import {
   IdCard,
   MessageSquare,
   Bus,
+  NotebookPen,
 } from "lucide-react";
-import { PortalSidebar } from "./PortalSidebar";
+import {
+  SidebarShell,
+  type SidebarSection,
+} from "@nkps/shared/components/SidebarShell";
+import { AgentMark } from "@nkps/shared/components/icons/AgentMark";
 
-const navLinks = [
+const sections: SidebarSection[] = [
   {
-    href: "/parent",
-    label: "Dashboard",
-    icon: <LayoutDashboard className="h-5 w-5 shrink-0" />,
+    label: "Overview",
+    items: [
+      { kind: "link", icon: LayoutDashboard, label: "Dashboard", href: "/parent" },
+      { kind: "link", icon: NotebookPen, label: "Class Diary", href: "/parent/diary" },
+      { kind: "link", icon: AgentMark, label: "Ask the school", href: "/parent/ask" },
+    ],
   },
   {
-    href: "/parent/attendance",
-    label: "Attendance",
-    icon: <ClipboardCheck className="h-5 w-5 shrink-0" />,
+    label: "Academics",
+    items: [
+      { kind: "link", icon: ClipboardCheck, label: "Attendance", href: "/parent/attendance" },
+      { kind: "link", icon: BarChart3, label: "Results", href: "/parent/results" },
+      { kind: "link", icon: IdCard, label: "Admit Cards", href: "/parent/admit-cards" },
+      { kind: "link", icon: Clock, label: "Timetable", href: "/parent/timetable" },
+      { kind: "link", icon: MessageSquare, label: "PTM Notes", href: "/parent/ptm" },
+    ],
   },
   {
-    href: "/parent/results",
-    label: "Results",
-    icon: <BarChart3 className="h-5 w-5 shrink-0" />,
+    label: "Fees & transport",
+    items: [
+      { kind: "link", icon: CreditCard, label: "Fees", href: "/parent/fees" },
+      { kind: "link", icon: Bus, label: "Transport", href: "/parent/transport" },
+    ],
   },
   {
-    href: "/parent/admit-cards",
-    label: "Admit Cards",
-    icon: <IdCard className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/parent/timetable",
-    label: "Timetable",
-    icon: <Clock className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/parent/fees",
-    label: "Fees",
-    icon: <CreditCard className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/parent/transport",
-    label: "Transport",
-    icon: <Bus className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/parent/calendar",
-    label: "Calendar",
-    icon: <CalendarDays className="h-5 w-5 shrink-0" />,
-  },
-  {
-    href: "/parent/ptm",
-    label: "PTM Notes",
-    icon: <MessageSquare className="h-5 w-5 shrink-0" />,
+    label: "School",
+    items: [
+      { kind: "link", icon: CalendarDays, label: "Calendar", href: "/parent/calendar" },
+    ],
   },
 ];
 
 export function ParentSidebar() {
   return (
-    <PortalSidebar title="Parent Portal" role="Parent" navLinks={navLinks} />
+    <SidebarShell
+      homeHref="/parent"
+      sections={sections}
+      headerTitle="Parent Portal"
+      headerSubtitle="Parent"
+      gate="none"
+    />
   );
 }

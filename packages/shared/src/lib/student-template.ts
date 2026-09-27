@@ -126,6 +126,51 @@ export const EDUCATION_LEVELS: readonly EnumValue[] = [
   { value: "pg_or_more", label: "PG or More", aliases: ["pg", "post graduation", "postgraduate", "post graduate", "masters", "phd"] },
 ];
 
+// Salutations print on certificates and letters ("S/o Shri …"). Kept as two
+// separate sets because the honorifics genuinely differ, and offering "Mrs"
+// for a father is how bad data gets entered.
+export const FATHER_SALUTATIONS: readonly EnumValue[] = [
+  { value: "mr", label: "Mr.", aliases: ["mr", "mister"] },
+  { value: "shri", label: "Shri", aliases: ["sri", "shree", "sh"] },
+  { value: "dr", label: "Dr.", aliases: ["doctor"] },
+  { value: "prof", label: "Prof.", aliases: ["professor"] },
+  { value: "late", label: "Late", aliases: ["late shri", "l"] },
+  { value: "capt", label: "Capt.", aliases: ["captain"] },
+  { value: "col", label: "Col.", aliases: ["colonel"] },
+];
+
+export const MOTHER_SALUTATIONS: readonly EnumValue[] = [
+  { value: "mrs", label: "Mrs.", aliases: ["mrs", "missus"] },
+  { value: "ms", label: "Ms.", aliases: ["miss"] },
+  { value: "smt", label: "Smt.", aliases: ["shrimati", "srimati"] },
+  { value: "dr", label: "Dr.", aliases: ["doctor"] },
+  { value: "prof", label: "Prof.", aliases: ["professor"] },
+  { value: "late", label: "Late", aliases: ["late smt", "l"] },
+];
+
+// A pointer to whichever mobile column receives SMS — never a copy of the
+// number. The old ERP stored a duplicated "Sms Mobile No" string and let it
+// drift out of sync with the real numbers.
+export const SMS_MOBILE_SOURCES: readonly EnumValue[] = [
+  { value: "student", label: "Student", aliases: ["self", "student mobile"] },
+  { value: "father", label: "Father", aliases: ["father mobile"] },
+  { value: "mother", label: "Mother", aliases: ["mother mobile"] },
+  { value: "guardian", label: "Guardian", aliases: ["guardian mobile"] },
+];
+
+export const AREA_TYPES: readonly EnumValue[] = [
+  { value: "rural", label: "Rural" },
+  { value: "urban", label: "Urban", aliases: ["city", "town"] },
+];
+
+// Manual override for the New/Old classification that is otherwise derived
+// from admission_date against the session's date range.
+export const STUDENT_TYPES: readonly EnumValue[] = [
+  { value: "new", label: "New", aliases: ["new student", "fresh"] },
+  { value: "old", label: "Old", aliases: ["old student", "existing", "continuing"] },
+  { value: "transfer", label: "Transfer", aliases: ["transferred", "migrated"] },
+];
+
 // ── The registry ────────────────────────────────────────────────────────────
 // Ordered exactly as the bulk template sheet: identifying columns first, then
 // General Profile in particular order, extras, then Enrolment Profile.
@@ -466,6 +511,172 @@ export const STUDENT_TEMPLATE_FIELDS: readonly StudentTemplateField[] = [
     exportLabel: "Completed Highest Education Level of Mother / Father / Legal Guardian",
     kind: "enum", enumValues: EDUCATION_LEVELS, colWidth: 18,
     aliases: ["highest education", "parent education", "completed highest education level", "highest education level"],
+  },
+
+  // ── Custom-report fields (migration 089) ──────────────────────────────────
+  // All `extra: true` on purpose. These are real columns that belong in the
+  // bulk sheet, the student form and every report — but they are NOT
+  // particulars of the school's mandated two-profile document, so they must
+  // not renumber or intrude on the per-student export layout. `extra` is
+  // exactly that distinction (see phone/email/religion above).
+  //
+  // Particular numbers continue the extras ranges already in use: general
+  // extras from 93 (phone/email/religion hold 90–92), enrolment extras from 90.
+
+  // ── General: identity & contact extras ──
+  {
+    key: "father_salutation", source: "students", section: "general", particular: 93,
+    label: "Father's Title", kind: "enum", enumValues: FATHER_SALUTATIONS, extra: true, colWidth: 12,
+    aliases: ["father title", "fathers title", "father salutation", "father prefix"],
+  },
+  {
+    key: "mother_salutation", source: "students", section: "general", particular: 94,
+    label: "Mother's Title", kind: "enum", enumValues: MOTHER_SALUTATIONS, extra: true, colWidth: 12,
+    aliases: ["mother title", "mothers title", "mother salutation", "mother prefix"],
+  },
+  {
+    key: "caste", source: "students", section: "general", particular: 95,
+    label: "Caste", kind: "text", extra: true, colWidth: 14,
+    aliases: ["community", "caste name", "sub caste"],
+  },
+  {
+    key: "area_type", source: "students", section: "general", particular: 96,
+    label: "Rural / Urban", kind: "enum", enumValues: AREA_TYPES, extra: true, colWidth: 12,
+    aliases: ["area", "area type", "rural or urban", "locality", "region type"],
+  },
+  {
+    key: "place_of_birth", source: "students", section: "general", particular: 97,
+    label: "Place of Birth", kind: "text", extra: true, colWidth: 16,
+    aliases: ["birth place", "pob"],
+  },
+  {
+    key: "district", source: "students", section: "general", particular: 98,
+    label: "District", kind: "text", extra: true, colWidth: 14,
+    aliases: ["dist", "student district", "home district"],
+  },
+  {
+    key: "state", source: "students", section: "general", particular: 99,
+    label: "State", kind: "text", extra: true, colWidth: 14,
+    aliases: ["student state", "home state"],
+  },
+  {
+    key: "office_address", source: "students", section: "general", particular: 100,
+    label: "Father's Office Address", kind: "text", extra: true, colWidth: 26,
+    aliases: ["office address", "father office address", "fathers office address"],
+  },
+  {
+    key: "mother_office_address", source: "students", section: "general", particular: 101,
+    label: "Mother's Office Address", kind: "text", extra: true, colWidth: 26,
+    aliases: ["mothers office address", "mother office"],
+  },
+  {
+    key: "mailing_address", source: "students", section: "general", particular: 102,
+    label: "Mailing Address", kind: "text", extra: true, colWidth: 26,
+    aliases: ["postal address", "correspondence address"],
+  },
+  {
+    key: "sms_mobile_source", source: "students", section: "general", particular: 103,
+    label: "SMS Mobile", kind: "enum", enumValues: SMS_MOBILE_SOURCES, extra: true, colWidth: 12,
+    aliases: ["sms mobile no", "sms number", "sms recipient", "sms to"],
+  },
+
+  // ── Enrolment: government / board identifiers ──
+  {
+    key: "pen_number", source: "students", section: "enrolment", particular: 90,
+    label: "PEN No", kind: "text", extra: true, colWidth: 16,
+    aliases: ["pen", "pen number", "enroll no", "enrollment no", "enroll no pen no", "permanent education number"],
+  },
+  {
+    key: "apaar_number", source: "students", section: "enrolment", particular: 91,
+    label: "APAAR No", kind: "text", extra: true, colWidth: 16,
+    aliases: ["apaar", "apaar id", "abc id", "automated permanent academic account registry"],
+  },
+  {
+    key: "cbse_registration_no", source: "students", section: "enrolment", particular: 92,
+    label: "CBSE Reg. No", kind: "text", extra: true, colWidth: 16,
+    aliases: ["cbse reg no", "cbse registration no", "cbse registration number", "board registration no"],
+  },
+  {
+    key: "nic_number", source: "students", section: "enrolment", particular: 93,
+    label: "NIC No", kind: "text", extra: true, colWidth: 14,
+    aliases: ["nic", "nic no", "nic number"],
+  },
+
+  // ── Enrolment: admissions desk ──
+  {
+    key: "registration_no", source: "students", section: "enrolment", particular: 94,
+    label: "Reg. No", kind: "text", extra: true, colWidth: 12,
+    aliases: ["reg no", "registration no", "registration number"],
+  },
+  {
+    key: "registration_date", source: "students", section: "enrolment", particular: 95,
+    label: "Registration Date (DD/MM/YYYY)", exportLabel: "Registration Date", kind: "date", extra: true, colWidth: 20,
+    aliases: ["reg date", "date of registration"],
+  },
+  {
+    key: "form_no", source: "students", section: "enrolment", particular: 96,
+    label: "Form No", kind: "text", extra: true, colWidth: 10,
+    aliases: ["form number", "admission form no"],
+  },
+  {
+    key: "admission_confirm_date", source: "students", section: "enrolment", particular: 97,
+    label: "Admission Confirm Date (DD/MM/YYYY)", exportLabel: "Admission Confirm Date",
+    kind: "date", extra: true, colWidth: 22,
+    aliases: ["admission confirmed on", "confirm date", "date of confirmation"],
+  },
+  {
+    key: "counsellor_name", source: "students", section: "enrolment", particular: 98,
+    label: "Counsellor Name", kind: "name", extra: true, colWidth: 18,
+    aliases: ["counselor name", "counsellor", "counselor"],
+  },
+  {
+    key: "counsellor_remark", source: "students", section: "enrolment", particular: 99,
+    label: "Counsellor Remark", kind: "text", extra: true, colWidth: 26,
+    aliases: ["counselor remark", "counsellor remarks", "counselling notes"],
+  },
+  {
+    key: "staff_reference", source: "students", section: "enrolment", particular: 100,
+    label: "Staff Reference", kind: "text", extra: true, colWidth: 18,
+    aliases: ["referred by", "staff ref", "reference"],
+  },
+  {
+    key: "student_type", source: "students", section: "enrolment", particular: 101,
+    label: "Student Type", kind: "enum", enumValues: STUDENT_TYPES, extra: true, colWidth: 12,
+    aliases: ["new old", "old new", "type of student"],
+  },
+  {
+    key: "caution_money_receipt_no", source: "students", section: "enrolment", particular: 102,
+    label: "Caution Money Receipt No", kind: "text", extra: true, colWidth: 18,
+    aliases: ["cautionmoney receiptno", "caution receipt no", "caution money receipt"],
+  },
+  {
+    key: "caution_money_receipt_date", source: "students", section: "enrolment", particular: 103,
+    label: "Caution Money Receipt Date (DD/MM/YYYY)", exportLabel: "Caution Money Receipt Date",
+    kind: "date", extra: true, colWidth: 24,
+    aliases: ["cautionmoney receipt date", "caution receipt date"],
+  },
+  {
+    key: "caution_money_amount", source: "students", section: "enrolment", particular: 104,
+    label: "Caution Money Amount", kind: "number", extra: true, colWidth: 16,
+    aliases: ["cautionmoney amount", "caution amount", "caution deposit"],
+  },
+
+  // ── Enrolment: previous-school marks (completes the group that stopped at
+  //    board_percentage = the old ERP's "Pre.Percentage") ──
+  {
+    key: "previous_school_max_marks", source: "students", section: "enrolment", particular: 105,
+    label: "Previous School Max Marks", kind: "number", extra: true, colWidth: 16,
+    aliases: ["pre maximum marks", "previous maximum marks", "max marks", "total marks"],
+  },
+  {
+    key: "previous_school_obtained_marks", source: "students", section: "enrolment", particular: 106,
+    label: "Previous School Obtained Marks", kind: "number", extra: true, colWidth: 18,
+    aliases: ["pre obtain marks", "previous obtained marks", "obtained marks", "marks obtained"],
+  },
+  {
+    key: "previous_school_result", source: "students", section: "enrolment", particular: 107,
+    label: "Previous School Result", kind: "text", extra: true, colWidth: 16,
+    aliases: ["pre result", "previous result", "result of previous class"],
   },
 ];
 

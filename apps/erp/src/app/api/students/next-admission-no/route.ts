@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
+import { fetchAllRows } from "@nkps/shared/lib/fetch-all-rows";
 
 /**
  * GET /api/students/next-admission-no
@@ -18,21 +19,32 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Scan admission numbers to find the numeric maximum. The range must clear
-    // the true row count (active + all alumni), not PostgREST's 1000-row
-    // default: a truncated window returns an arbitrary subset that can miss the
-    // real maximum and suggest an already-used number. 100k comfortably covers
-    // a school's full lifetime enrolment; only one lightweight text column is
-    // fetched. (A DB-side aggregate RPC would avoid the transfer entirely if the
-    // table ever grows past this — the field is an editable suggestion backed by
-    // the admission_no UNIQUE constraint, so a stale value only costs a retry.)
-    const { data, error } = await admin
-      .from("students")
-      .select("admission_no")
-      .range(0, 99999);
+    // Scan admission numbers to find the numeric maximum. Every row has to be
+    // read — active students and every alumni cohort — because a partial
+    // window returns an arbitrary subset that can miss the real maximum and
+    // suggest a number already in use. `.range(0, 99999)` did not do that: a
+    // Range header cannot lift PostgREST's 1000-row cap, it can only ask for
+    // less than it, so the scan quietly stopped at a thousand admission
+    // numbers. Paged instead, ordered by id so the pages are disjoint; only
+    // one lightweight text column is fetched. (A DB-side max() over a numeric
+    // cast would avoid the transfer entirely if this ever gets slow — the
+    // field is an editable suggestion backed by the admission_no UNIQUE
+    // constraint, so a stale value only costs a retry.)
+    const { data, error, truncated } = await fetchAllRows<{
+      admission_no: string;
+    }>((from, to) =>
+      admin
+        .from("students")
+        .select("admission_no")
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    if (error) {
-      console.error("[students.next-admission-no]", error);
+    if (error || truncated) {
+      console.error(
+        "[students.next-admission-no]",
+        error ?? "read stopped at the paging guard"
+      );
       return NextResponse.json({ error: "Failed to compute" }, { status: 500 });
     }
 

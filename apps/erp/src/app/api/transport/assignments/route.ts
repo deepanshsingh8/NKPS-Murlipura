@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
+import { fetchAllRows } from "@nkps/shared/lib/fetch-all-rows";
 
 /**
  * Year-scoped data for /transport/assignments.
@@ -21,12 +22,18 @@ import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
  * world-readable by policy and stay on the client, where they load in parallel
  * with this request.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const admin = await verifyAdminOrEditor("transport");
     if (!admin) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // An explicit ?academic_year_id= overrides the active-year rule below, so
+    // the page's session picker can show a past year's assignments.
+    const requestedYearId = new URL(request.url).searchParams.get(
+      "academic_year_id"
+    );
 
     // Active year: prefer is_current, else newest by name — same rule the page
     // applied client-side, kept here so the fallback survives a year switch
@@ -45,22 +52,32 @@ export async function GET() {
     }
 
     const years = yearsData ?? [];
-    const year = years.find((y) => y.is_current) ?? years[0] ?? null;
+    const year =
+      (requestedYearId ? years.find((y) => y.id === requestedYearId) : null) ??
+      years.find((y) => y.is_current) ??
+      years[0] ??
+      null;
 
     if (!year) {
       return NextResponse.json({ year: null, enrollments: [], fees: [] });
     }
 
-    // .range(0, 9999) pushes past PostgREST's 1000-row default cap — a full
-    // school's enrollments exceed it, and the truncation would be silent.
+    // Paged. `.range(0, 9999)` never pushed past PostgREST's 1000-row cap — a
+    // Range header can only ask for less than it — so a full school's
+    // enrolments stopped at a thousand and the students past that simply were
+    // not on the screen the office assigns stops from. Ordered by id so the
+    // pages are disjoint.
     const [enrollRes, feesRes] = await Promise.all([
-      admin
-        .from("student_enrollments")
-        .select(
-          "id, student_id, class_id, has_transport, bus_stop_id, bus_id, transport_direction, transport_fee_override, pickup_address, students(full_name, admission_no), classes(name, section, streams(name))"
-        )
-        .eq("academic_year_id", year.id)
-        .range(0, 9999),
+      fetchAllRows((from, to) =>
+        admin
+          .from("student_enrollments")
+          .select(
+            "id, student_id, class_id, status, has_transport, bus_stop_id, bus_id, transport_direction, transport_fee_override, pickup_address, students(full_name, admission_no), classes(name, section, streams(name))"
+          )
+          .eq("academic_year_id", year.id)
+          .order("id", { ascending: true })
+          .range(from, to)
+      ),
       admin
         .from("bus_stop_fees")
         .select("*")
@@ -68,10 +85,10 @@ export async function GET() {
         .eq("is_active", true),
     ]);
 
-    if (enrollRes.error) {
+    if (enrollRes.error || enrollRes.truncated) {
       console.error(
         "Transport assignments: fetch enrollments error:",
-        enrollRes.error
+        enrollRes.error ?? "read stopped at the paging guard"
       );
       return NextResponse.json(
         { error: "Failed to load enrollments" },
@@ -81,7 +98,7 @@ export async function GET() {
 
     return NextResponse.json({
       year,
-      enrollments: enrollRes.data ?? [],
+      enrollments: enrollRes.data,
       fees: feesRes.data ?? [],
     });
   } catch (err) {

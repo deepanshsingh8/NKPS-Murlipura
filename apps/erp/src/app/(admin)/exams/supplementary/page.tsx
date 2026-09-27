@@ -480,13 +480,13 @@ export default function AdminSupplementaryPage() {
                                 <SelectContent>
                                   <SelectItem value="passed">
                                     <span className="flex items-center gap-1">
-                                      <CheckCircle2 className="h-3 w-3 text-green-600" />
+                                      <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
                                       Passed
                                     </span>
                                   </SelectItem>
                                   <SelectItem value="failed">
                                     <span className="flex items-center gap-1">
-                                      <XCircle className="h-3 w-3 text-red-600" />
+                                      <XCircle className="h-3 w-3 text-red-600 dark:text-red-400" />
                                       Failed
                                     </span>
                                   </SelectItem>

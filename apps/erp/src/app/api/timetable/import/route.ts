@@ -9,6 +9,13 @@ import { verifyAdminOrEditor } from "@nkps/shared/lib/verify-admin";
  *
  * Expected columns (case-insensitive, leading/trailing whitespace stripped):
  *   Day, Period, Section, Subject, Teacher, Start, End, Room
+ *   Group   (optional) — which parallel track in the cell. Blank or 0 is the
+ *           primary one; 1, 2, … are the extra groups that make a Games period
+ *           or an XI/XII optional slot. A non-numeric value is taken as the
+ *           group's label ("Basketball") and numbered in sheet order.
+ *   Shared  (optional) — yes/true marks a combined activity running across
+ *           several classes, so the teacher-clash check lets the same coach
+ *           appear for VI-A, VI-B and VII-A at the same time.
  *
  *   Day:     Monday..Saturday OR 1..6
  *   Period:  positive integer (1..N)
@@ -36,6 +43,8 @@ const DAY_NAMES: Record<string, number> = {
 interface RawRow {
   Day?: unknown;
   Period?: unknown;
+  Group?: unknown;
+  Shared?: unknown;
   Section?: unknown;
   Subject?: unknown;
   Teacher?: unknown;
@@ -43,6 +52,14 @@ interface RawRow {
   End?: unknown;
   Room?: unknown;
   [k: string]: unknown;
+}
+
+/** Sane ceiling for a hand-typed Group number; group_no is a smallint. */
+const MAX_GROUP_NO = 99;
+
+/** "yes" / "y" / "true" / "1" / "shared" all mean shared. Blank means not. */
+function parseShared(raw: string): boolean {
+  return /^(y|yes|true|1|shared)$/i.test(raw.trim());
 }
 
 interface PreviewRow {
@@ -60,6 +77,10 @@ interface PreviewRow {
   room: string | null;
   status: "ok" | "warning" | "error";
   messages: string[];
+  // migration 119 — parallel groups within one cell.
+  group_no: number;
+  group_label: string | null;
+  is_shared: boolean;
 }
 
 function asString(v: unknown): string {
@@ -182,7 +203,11 @@ export async function POST(request: Request) {
   // overlap (not period_number) because classes run staggered schedules — the
   // same period number is a different wall-clock time across classes.
   const teacherIntervals = new Map<string, Array<{ start: string; end: string; row: number }>>(); // "day:teacher_id"
-  const classIntervals = new Map<string, Array<{ start: string; end: string; row: number }>>();   // "class_id:day"
+  const classIntervals = new Map<string, Array<{ start: string; end: string; row: number }>>();   // "class_id:day:group_no"
+  // Group numbers already used in each cell, so a sheet can name its groups
+  // ("Basketball", "Badminton") and let us number them in order. Keyed
+  // "class_id|day|period". (migration 119)
+  const usedGroups = new Map<string, Set<number>>();
   const slotsOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
     aStart < bEnd && aEnd > bStart;
 
@@ -200,6 +225,8 @@ export async function POST(request: Request) {
     const startRaw = get(raw as RawRow, "Start");
     const endRaw = get(raw as RawRow, "End");
     const roomRaw = asString(get(raw as RawRow, "Room"));
+    const groupRaw = asString(get(raw as RawRow, "Group"));
+    const isShared = parseShared(asString(get(raw as RawRow, "Shared")));
 
     const day = parseDay(dayRaw);
     if (day == null) { messages.push(`Day "${dayRaw}" is not valid (use Monday–Saturday or 1–6)`); status = "error"; }
@@ -241,29 +268,73 @@ export async function POST(request: Request) {
       status = "error";
     }
 
+    // Which parallel track of the cell this row is. A blank Group column — every
+    // sheet written before migration 119 — means the primary group, so those
+    // sheets behave exactly as they always did.
+    let groupNo = 0;
+    let groupLabel: string | null = null;
+    // One key per cell, whether or not the class resolved, so numbering stays
+    // consistent across a sheet whose Section column has a typo.
+    const cellKey = `${classRow?.id ?? sectionRaw.toLowerCase()}|${day}|${periodNum}`;
+    const usedInCell = usedGroups.get(cellKey) ?? new Set<number>();
+    if (groupRaw) {
+      if (/^\d+$/.test(groupRaw)) {
+        groupNo = parseInt(groupRaw, 10);
+        // group_no is a smallint; a Group column accidentally filled with room
+        // numbers would otherwise fail at commit with a raw Postgres error.
+        if (groupNo > MAX_GROUP_NO) {
+          messages.push(
+            `Group "${groupRaw}" is too large — number parallel groups from 1, or name them instead`
+          );
+          status = "error";
+        } else if (usedInCell.has(groupNo)) {
+          messages.push(`Group ${groupNo} is already used for this class and period`);
+          status = "error";
+        }
+      } else {
+        // A named group ("Basketball") takes the next free slot in sheet order.
+        groupLabel = groupRaw;
+        while (usedInCell.has(groupNo)) groupNo++;
+      }
+    }
+    usedInCell.add(groupNo);
+    usedGroups.set(cellKey, usedInCell);
+
     // Cross-row conflicts (within the spreadsheet), by wall-clock overlap.
     // Gated on having valid times rather than a truthy period number, so
     // period 0 rows are checked too (the old `&& periodNum` skipped them).
     if (status !== "error" && day != null && startTime && endTime) {
-      if (teacherRow) {
+      // A shared activity is exempt: the games coach really is with VI-A, VI-B
+      // and VII-A at the same time, and the DB constraint exempts these rows
+      // too. (migration 119)
+      if (teacherRow && !isShared) {
         const tk = `${day}:${teacherRow.id}`;
         const clash = (teacherIntervals.get(tk) ?? []).find((s) =>
           slotsOverlap(s.start, s.end, startTime, endTime)
         );
         if (clash) {
-          messages.push(`Teacher clash with row ${clash.row}`); status = "error";
+          messages.push(
+            `Teacher clash with row ${clash.row} — put "yes" in the Shared column on both if this is a combined activity`
+          );
+          status = "error";
         } else {
           if (!teacherIntervals.has(tk)) teacherIntervals.set(tk, []);
           teacherIntervals.get(tk)!.push({ start: startTime, end: endTime, row: i + 2 });
         }
       }
       if (classRow) {
-        const ck = `${classRow.id}:${day}`;
+        // Keyed by group as well as class and day: two groups of one cell are
+        // meant to share a time, and only a repeat within the SAME group is a
+        // real double-booking. (migration 119)
+        const ck = `${classRow.id}:${day}:${groupNo}`;
         const clash = (classIntervals.get(ck) ?? []).find((s) =>
           slotsOverlap(s.start, s.end, startTime, endTime)
         );
         if (clash) {
-          messages.push(`Overlapping time for this class with row ${clash.row}`); status = "error";
+          messages.push(
+            `Overlapping time for this class with row ${clash.row} — use the Group column if these are parallel groups in one period`
+          );
+          status = "error";
         } else {
           if (!classIntervals.has(ck)) classIntervals.set(ck, []);
           classIntervals.get(ck)!.push({ start: startTime, end: endTime, row: i + 2 });
@@ -286,6 +357,9 @@ export async function POST(request: Request) {
       room: roomRaw || null,
       status,
       messages,
+      group_no: groupNo,
+      group_label: groupLabel,
+      is_shared: isShared,
     });
   });
 

@@ -656,7 +656,7 @@ function SectionCardItem({
             {getCardPrimaryText(card)}
           </p>
           {card.is_default && (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 text-blue-600 border-blue-200 bg-blue-50">
+            <Badge variant="outline" className="text-[9px] px-1 py-0 text-blue-600 dark:text-blue-400 border-blue-200 bg-blue-50 dark:bg-blue-950/30">
               Default
             </Badge>
           )}
@@ -1045,7 +1045,7 @@ export default function AdminSiteMediaPage() {
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             Manage images and section content across the website.{" "}
             {customizedCount > 0 && (
-              <span className="inline-flex items-center gap-1 text-green-600">
+              <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
                 <Check className="h-3.5 w-3.5" />
                 {customizedCount} customized
               </span>
@@ -1092,7 +1092,7 @@ export default function AdminSiteMediaPage() {
                       {PAGE_LABELS[page] || page}
                     </h2>
                     {pageCustomized > 0 && (
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                      <span className="text-xs bg-green-100 dark:bg-green-950/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded-full">
                         {pageCustomized} customized
                       </span>
                     )}
@@ -1179,7 +1179,7 @@ export default function AdminSiteMediaPage() {
 
       {/* ─── Add / Edit Card Dialog ─── */}
       <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) { setDialogOpen(false); resetForm(); } else { setDialogOpen(true); } }}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editing ? "Edit Card" : "Add Card"} — {SECTION_LABELS[dialogSection] || dialogSection}
@@ -1205,11 +1205,11 @@ export default function AdminSiteMediaPage() {
                 <>
                   {file && file.length > 0 ? (
                     <div className="flex items-center gap-3 mb-2">
-                      <div className="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 relative border-2 border-green-400">
+                      <div className="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 dark:bg-muted relative border-2 border-green-400">
                         <Image src={URL.createObjectURL(file[0])} alt="Cropped" fill className="object-cover" sizes="64px" />
                       </div>
                       <div>
-                        <p className="text-xs text-green-600 font-medium">Image cropped & ready</p>
+                        <p className="text-xs text-green-600 dark:text-green-400 font-medium">Image cropped & ready</p>
                         <button type="button" onClick={() => setFile(null)} className="text-xs text-gray-500 hover:text-red-500 mt-0.5">
                           Remove
                         </button>
@@ -1217,7 +1217,7 @@ export default function AdminSiteMediaPage() {
                     </div>
                   ) : editing?.image_url ? (
                     <div className="flex items-center gap-3 mb-2">
-                      <div className="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 relative">
+                      <div className="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 dark:bg-muted relative">
                         <Image src={editing.image_url} alt="Current" fill className="object-cover" sizes="64px" />
                       </div>
                       <span className="text-xs text-gray-500">Current image (upload new to replace)</span>
@@ -1293,7 +1293,7 @@ export default function AdminSiteMediaPage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 {editing ? "Save Changes" : "Add Card"}

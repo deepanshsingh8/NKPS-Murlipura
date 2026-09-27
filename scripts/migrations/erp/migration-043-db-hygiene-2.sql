@@ -4,11 +4,20 @@
 -- All idempotent. Re-running is safe.
 --
 -- NOT included here (intentionally):
---   • Renumbering of duplicate-prefix `027-*` and `031-*` migration files.
---     Those files have already been applied to live deployments; renaming
---     would create a "missing migration" if the deploy pipeline tracks by
+--   • Renumbering of the duplicate-prefix `027-*` migration files. Those
+--     files have already been applied to live deployments; renaming would
+--     create a "missing migration" if the deploy pipeline tracks by
 --     filename. The schema mirror is the source of truth on fresh installs;
---     documented in the Round 2 audit doc.
+--     documented in the Round 2 audit doc. Note the two `027-*` files live in
+--     different folders (base/ + erp/), so apply order stays unambiguous.
+--
+--     UPDATE 2026-08-22: the `031-*` pair WAS renumbered after all --
+--     `031-teacher-substitutions` became `094-teacher-substitutions`. Unlike
+--     `027-*`, both `031-*` files sat in the same folder (erp/), so ascending
+--     order genuinely could not resolve them. This repo has no filename-
+--     tracking deploy pipeline (migrations are applied by hand in Supabase
+--     Studio), so the risk cited above did not apply. `031` still means
+--     db-hygiene, so the references to "Migration 031" below are unchanged.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Partial-unique on academic_years.is_current (audit H13)

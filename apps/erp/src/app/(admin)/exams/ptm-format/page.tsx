@@ -314,7 +314,7 @@ export default function AdminPtmFormatPage() {
                     <span className="flex items-center gap-1">
                       {t.is_default ? (
                         <Star
-                          className={`h-3.5 w-3.5 ${active ? "text-yellow-300" : "text-yellow-500"}`}
+                          className={`h-3.5 w-3.5 ${active ? "text-amber-300" : "text-amber-500"}`}
                           fill="currentColor"
                         />
                       ) : null}
@@ -495,7 +495,7 @@ export default function AdminPtmFormatPage() {
                       deleting ||
                       templates.length <= 1
                     }
-                    className="text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
                     {deleting ? "Deleting…" : "Delete"}

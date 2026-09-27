@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Input } from "@nkps/shared/components/ui/input";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
 
 const currentCalendarYear = new Date().getFullYear();
 
@@ -64,12 +65,12 @@ export function AcademicYearSelect({
   }
 
   return (
-    <select
+    <NativeSelect
       id={id}
       value={ACADEMIC_YEARS.includes(value) ? value : ""}
       onChange={(e) => handleSelectChange(e.target.value)}
       required={required}
-      className="w-full h-9 rounded-lg border border-gray-200 dark:border-border px-3 text-sm bg-white dark:bg-muted focus:border-navy-900 focus:ring-1 focus:ring-navy-900 outline-none transition-colors"
+      className="w-full"
     >
       <option value="">Select year</option>
       {ACADEMIC_YEARS.map((yr) => (
@@ -78,6 +79,6 @@ export function AcademicYearSelect({
         </option>
       ))}
       <option value="__other__">Other...</option>
-    </select>
+    </NativeSelect>
   );
 }

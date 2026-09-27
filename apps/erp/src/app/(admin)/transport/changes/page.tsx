@@ -34,6 +34,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import {
   Plus,
@@ -483,7 +484,7 @@ export default function TransportChangesPage() {
             Review parent requests and record office-initiated transport changes.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="w-40">
             <Select
               value={statusFilter}
@@ -507,7 +508,7 @@ export default function TransportChangesPage() {
               resetForm();
               setDialogOpen(true);
             }}
-            className="bg-navy-900 hover:bg-navy-800 text-white"
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
           >
             <Plus className="h-4 w-4 mr-2" />
             Record change
@@ -515,7 +516,7 @@ export default function TransportChangesPage() {
         </div>
       </div>
 
-      <div className="erp-table-container p-6">
+      <div className="erp-table-container p-4 sm:p-6">
         {loading ? (
           <div className="flex justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-gray-500" />
@@ -527,11 +528,20 @@ export default function TransportChangesPage() {
           </p>
         ) : (
           <>
-          <TableFilterSummary
-            ctl={table}
-            total={filteredChanges.length}
-            shown={table.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={filteredChanges.length}
+              shown={table.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="transport-change-requests"
+              title="Transport Change Requests"
+              featureKey="transport"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -599,7 +609,7 @@ export default function TransportChangesPage() {
                           href={row.applicationSignedUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm"
+                          className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 text-sm"
                         >
                           View
                           <ExternalLink className="h-3.5 w-3.5" />
@@ -616,7 +626,7 @@ export default function TransportChangesPage() {
                             variant="outline"
                             disabled={reviewingId === row.id}
                             onClick={() => handleReview(row.id, "approve")}
-                            className="text-green-600 border-green-200 hover:bg-green-50 dark:hover:bg-green-950/30"
+                            className="text-green-600 dark:text-green-400 border-green-200 hover:bg-green-50 dark:hover:bg-green-950/30"
                           >
                             {reviewingId === row.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -630,7 +640,7 @@ export default function TransportChangesPage() {
                             variant="outline"
                             disabled={reviewingId === row.id}
                             onClick={() => handleReview(row.id, "reject")}
-                            className="text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/30"
+                            className="text-red-600 dark:text-red-400 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/30"
                           >
                             <X className="h-4 w-4" />
                             <span className="ml-1">Reject</span>
@@ -651,11 +661,11 @@ export default function TransportChangesPage() {
 
       {/* Record Change Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-500/10">
-                <Bus className="h-5 w-5 text-teal-600" />
+                <Bus className="h-5 w-5 text-teal-600 dark:text-teal-400" />
               </div>
               <div>
                 <DialogTitle>Record Transport Change</DialogTitle>
@@ -830,7 +840,7 @@ export default function TransportChangesPage() {
             )}
 
             {/* Effective dates */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Effective From</Label>
                 <Input
@@ -919,7 +929,7 @@ export default function TransportChangesPage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Record change

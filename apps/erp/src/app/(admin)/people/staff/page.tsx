@@ -1,5 +1,8 @@
 "use client";
 
+import dynamic from "next/dynamic";
+import { useMountOnceOpen } from "@nkps/shared/lib/hooks/use-mount-once-open";
+
 import { useEffect, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
 import { createClient } from "@nkps/shared/lib/supabase/client";
@@ -35,6 +38,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { Checkbox } from "@nkps/shared/components/ui/checkbox";
 import { toast } from "sonner";
 import {
@@ -46,7 +50,6 @@ import {
   UserCog,
   Users,
   Upload,
-  Download,
   ChevronDown,
   UserPlus,
   UserCheck,
@@ -71,15 +74,53 @@ import {
   PHOTO_SPEC_HELPER_TEXT,
   validatePhotoFile,
 } from "@nkps/shared/lib/photo-spec";
-import { StaffBulkUpload } from "@/components/StaffBulkUpload";
+// Loaded when it is first opened, not when the page is. Bulk upload is a
+// once-a-session job on a screen people open every day, and the component
+// is 772 lines of it.
+const StaffBulkUpload = dynamic(() =>
+  import("@/components/StaffBulkUpload").then((m) => m.StaffBulkUpload)
+);
 import { CreatePortalUsersDialog } from "@/components/CreatePortalUsersDialog";
+import { StaffAvatar } from "@/components/StaffAvatar";
+import { StaffDetailDialog } from "@/components/StaffDetailDialog";
 import { useIsAdmin } from "@nkps/shared/hooks/useIsAdmin";
+import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from "@nkps/shared/components/ui/tabs";
 import {
   staffPortalRole,
   isTeachingStaffCategory,
+  staffCategoryGroup,
+  type StaffGroup,
 } from "@nkps/shared/lib/staff-roles";
 import type { StaffMember, StaffCategory } from "@nkps/shared/types";
-import { downloadCSV, STAFF_CSV_COLUMNS } from "@/lib/csv-export";
+
+// One tab per staff family. The grouping itself lives in staff-roles.ts next to
+// the login rules, so a category can never sit on one tab here and be treated
+// as another kind of staff elsewhere.
+/** A staff member's linked `teachers` row, and whether it is still active. */
+interface TeacherLink {
+  id: string;
+  is_active: boolean;
+  date_of_leaving: string | null;
+}
+
+/** A `teachers` row with no staff member behind it. */
+interface OrphanTeacher {
+  id: string;
+  full_name: string;
+  employee_id: string | null;
+  is_active: boolean;
+}
+
+const STAFF_TABS: { key: StaffGroup; label: string }[] = [
+  { key: "teaching", label: "Teachers" },
+  { key: "office", label: "Management & Office" },
+  { key: "support", label: "Drivers & Helpers" },
+];
 
 const CATEGORY_OPTIONS: { value: StaffCategory; label: string }[] = [
   { value: "management", label: "Management" },
@@ -122,7 +163,7 @@ const ERROR_INPUT = "border-red-500 focus-visible:ring-red-500";
 
 function FieldError({ message }: { message?: string }) {
   if (!message) return null;
-  return <p className="text-xs text-red-600">{message}</p>;
+  return <p className="text-xs text-red-600 dark:text-red-400">{message}</p>;
 }
 
 // Zod's flatten() gives every message per field; the form has room for one, so
@@ -145,53 +186,32 @@ function summarizeErrors(errors: StaffFieldErrors): string {
   return `Please fix: ${labels.join(", ")}`;
 }
 
-// Filter dropdown = the same options plus an "all" sentinel; derive it so the
-// two lists can never drift out of sync.
-const CATEGORIES: { value: StaffCategory | "all"; label: string }[] = [
-  { value: "all", label: "All Categories" },
-  ...CATEGORY_OPTIONS,
-];
-
-const categoryBadgeColors: Record<StaffCategory, string> = {
-  management: "bg-purple-100 text-purple-700",
-  admin: "bg-red-100 text-red-700",
-  pgt: "bg-blue-100 text-blue-700",
-  tgt: "bg-emerald-100 text-emerald-700",
-  prt: "bg-amber-100 text-amber-700",
-  motherTeachers: "bg-violet-100 text-violet-700",
-  prePrimaryCoordinator: "bg-pink-100 text-pink-700",
-  primaryCoordinator: "bg-sky-100 text-sky-700",
-  middleCoordinator: "bg-lime-100 text-lime-700",
-  seniorCoordinator: "bg-indigo-100 text-indigo-700",
-  additionalStaff: "bg-teal-100 text-teal-700",
-  busDriver: "bg-orange-100 text-orange-700",
-  peon: "bg-gray-100 text-gray-700",
-};
-
-const AVATAR_COLORS = [
-  "from-navy-800 to-navy-900",
-  "from-blue-500 to-blue-700",
-  "from-gold-500 to-gold-600",
-  "from-emerald-500 to-emerald-700",
-  "from-violet-500 to-violet-700",
-  "from-rose-500 to-rose-700",
-  "from-cyan-500 to-cyan-700",
-  "from-amber-500 to-amber-700",
-];
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0][0].toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+// Filter dropdown = the active tab's categories plus an "all" sentinel; derived
+// from CATEGORY_OPTIONS so the two lists can never drift out of sync.
+function categoriesForGroup(
+  group: StaffGroup
+): { value: StaffCategory | "all"; label: string }[] {
+  return [
+    { value: "all", label: "All Categories" },
+    ...CATEGORY_OPTIONS.filter((c) => staffCategoryGroup(c.value) === group),
+  ];
 }
 
-function getAvatarColor(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
+// Staff categories used to carry thirteen hand-picked hues — purple, red,
+// blue, emerald, amber, violet, pink, sky, lime, indigo, teal, orange, gray —
+// and five of those families existed in the whole repo for this map alone.
+// None of them carried information: the badge always renders its own label
+// beside the colour, so nobody was reading "pink" to mean "Pre-Primary
+// Coordinator", they were reading the words. And nobody holds thirteen
+// colour-to-category mappings anyway.
+//
+// It was also the worst dark-mode bug in the app: not one of the thirteen had
+// a `dark:` pair, so every badge rendered as a near-white chip on the dark
+// table. The Badge's own `secondary` variant is theme-aware, which is the
+// whole reason it exists.
+//
+// If these ever want colour again, the axis worth colouring is the group —
+// teaching / coordination / office / support — not the thirteen leaves.
 
 export default function AdminStaffPage() {
   // Creating portal login accounts is admin-only (enforced server-side in
@@ -203,15 +223,45 @@ export default function AdminStaffPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Which staff family is showing. Kept in the URL (?group=) so the tab is
+  // linkable — the transport Drivers page points straight at the drivers tab.
+  const [groupParam, setGroupParam] = useUrlState("group");
+  const activeGroup: StaffGroup = STAFF_TABS.some((t) => t.key === groupParam)
+    ? (groupParam as StaffGroup)
+    : "teaching";
+  const groupCategories = useMemo(
+    () => categoriesForGroup(activeGroup),
+    [activeGroup]
+  );
+  // First real category of the active tab — what "Add Staff" pre-selects, so
+  // adding from the drivers tab doesn't default to PGT.
+  const defaultCategory = (groupCategories[1]?.value ?? "pgt") as StaffCategory;
   const [filterCategory, setFilterCategory] = useState<StaffCategory | "all">("all");
   const [search, setSearch] = useState("");
+  // Row whose read-only detail view is open (opened from the name).
+  const [detailMember, setDetailMember] = useState<StaffMember | null>(null);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  const showStaffBulkUpload = useMountOnceOpen(bulkUploadOpen);
   const [portalDialogOpen, setPortalDialogOpen] = useState(false);
-  // H16-B — track which staff_members are already linked to a teachers row
-  // so the "Convert to teacher" action can hide for already-linked rows.
-  const [teacherLinkedIds, setTeacherLinkedIds] = useState<Set<string>>(
-    new Set()
-  );
+  // Every teaching staff member's `teachers` row, keyed by staff_member_id.
+  // This used to be a Set of ids answering only "already linked?", which was
+  // all the Convert action needed. The Teacher record column needs to know
+  // whether that row is active or retired as well.
+  const [teacherByStaffId, setTeacherByStaffId] = useState<
+    Map<string, TeacherLink>
+  >(new Map());
+  // `teachers` rows pointing at no staff member at all. These are the ghosts:
+  // invisible on this page before, still active, still offered in every
+  // timetable and assignment picker. They have no staff row to hang off, so
+  // they get their own banner rather than a table row.
+  const [orphanTeachers, setOrphanTeachers] = useState<OrphanTeacher[]>([]);
+  const [orphanDialogOpen, setOrphanDialogOpen] = useState(false);
+  // The list was hard-filtered to active staff, with no way to see the rest —
+  // so a deactivated staff member could not be found, let alone reactivated,
+  // and the Active column below could only ever print "Yes". Folding the
+  // teacher lifecycle in here made that matter: bringing back a retired
+  // teacher means finding their row first.
+  const [showInactive, setShowInactive] = useState(false);
   const [convertingId, setConvertingId] = useState<string | null>(null);
   // Lowercased emails of staff members who already have a portal login, so the
   // per-row "Create login" action can hide for anyone already provisioned.
@@ -223,6 +273,14 @@ export default function AdminStaffPage() {
   // Selection & bulk actions
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  // A category filter or selection from one tab means nothing on another, so
+  // both reset with the tab.
+  const switchGroup = (group: string) => {
+    setGroupParam(group);
+    setFilterCategory("all");
+    setSelectedIds(new Set());
+  };
 
   // Form state
   const [name, setName] = useState("");
@@ -250,20 +308,18 @@ export default function AdminStaffPage() {
 
   const fetchStaff = useCallback(async () => {
     const [staffRes, teacherLinkRes] = await Promise.all([
-      supabase
-        .from("staff_members")
-        .select("*")
-        .eq("is_active", true)
+      (showInactive
+        ? supabase.from("staff_members").select("*")
+        : supabase.from("staff_members").select("*").eq("is_active", true)
+      )
         .order("category")
         .order("sort_order")
         .order("name"),
-      // H16-B — every teacher row links back to a staff_members row via
-      // staff_member_id; this set tells us which staff already have a
-      // linked teacher so we can hide the "Convert to teacher" action.
+      // Every teacher row, linked or not. The linked ones drive the Teacher
+      // record column; the unlinked ones are the ghosts the banner warns about.
       supabase
         .from("teachers")
-        .select("staff_member_id")
-        .not("staff_member_id", "is", null),
+        .select("id, full_name, employee_id, is_active, date_of_leaving, staff_member_id"),
     ]);
 
     if (staffRes.error) {
@@ -300,15 +356,80 @@ export default function AdminStaffPage() {
       }
     }
     if (!teacherLinkRes.error) {
-      const ids = new Set<string>();
+      const byStaff = new Map<string, TeacherLink>();
+      const orphans: OrphanTeacher[] = [];
       for (const row of teacherLinkRes.data ?? []) {
         const sid = row.staff_member_id as string | null;
-        if (sid) ids.add(sid);
+        if (sid) {
+          byStaff.set(sid, {
+            id: row.id as string,
+            is_active: row.is_active !== false,
+            date_of_leaving: (row.date_of_leaving as string | null) ?? null,
+          });
+        } else if (row.is_active !== false) {
+          // Only ACTIVE orphans are worth flagging. A retired one with no staff
+          // row is simply someone who left and was tidied up properly.
+          orphans.push({
+            id: row.id as string,
+            full_name: (row.full_name as string) ?? "—",
+            employee_id: (row.employee_id as string | null) ?? null,
+            is_active: true,
+          });
+        }
       }
-      setTeacherLinkedIds(ids);
+      orphans.sort((a, b) => a.full_name.localeCompare(b.full_name));
+      setTeacherByStaffId(byStaff);
+      setOrphanTeachers(orphans);
     }
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, showInactive]);
+
+  // Retire or bring back a teacher record. This is the lifecycle the standalone
+  // People → Teachers page used to own; it lives here now so one person is one
+  // row on one screen. The route is unchanged, so the rules it enforces —
+  // retire, never delete, because deleting someone who has ever been
+  // timetabled fails outright and would erase who taught what — still apply.
+  const setTeacherActive = async (
+    link: TeacherLink,
+    name: string,
+    active: boolean
+  ) => {
+    if (
+      !active &&
+      !confirm(
+        `Retire ${name}'s teacher record? They stop appearing in every timetable and subject-assignment dropdown. Their history is kept, and you can bring them back here.`
+      )
+    ) {
+      return;
+    }
+    setConvertingId(link.id);
+    try {
+      const res = await adminFetch("/api/teachers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          active
+            ? { id: link.id, is_active: true }
+            : {
+                id: link.id,
+                is_active: false,
+                date_of_leaving: new Date().toISOString().slice(0, 10),
+              }
+        ),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Could not update the teacher record");
+        return;
+      }
+      toast.success(
+        active ? `${name} is a teacher again` : `${name}'s teacher record retired`
+      );
+      await fetchStaff();
+    } finally {
+      setConvertingId(null);
+    }
+  };
 
   // H16-B — promote a staff_members row to also be a teachers row. The
   // helper is idempotent, so a stale UI click on an already-linked row
@@ -418,7 +539,7 @@ export default function AdminStaffPage() {
   const resetForm = () => {
     setName("");
     setSubject("");
-    setCategory("pgt");
+    setCategory(defaultCategory);
     setEmail("");
     setPhone("");
     setDateOfBirth("");
@@ -628,6 +749,10 @@ export default function AdminStaffPage() {
         } else {
           toast.success("Staff member added");
         }
+        // Follow the new person to their tab, so a driver added from the
+        // Teachers tab doesn't vanish the moment the dialog closes.
+        const group = staffCategoryGroup(category);
+        if (group !== activeGroup) switchGroup(group);
       }
 
       setDialogOpen(false);
@@ -663,8 +788,19 @@ export default function AdminStaffPage() {
     }
   };
 
+  // Everyone on the active tab, before the category/search filters below.
+  const groupStaff = useMemo(
+    () => staff.filter((m) => staffCategoryGroup(m.category) === activeGroup),
+    [staff, activeGroup]
+  );
+  const tabCounts = useMemo(() => {
+    const counts: Record<StaffGroup, number> = { teaching: 0, office: 0, support: 0 };
+    for (const m of staff) counts[staffCategoryGroup(m.category)]++;
+    return counts;
+  }, [staff]);
+
   // Filter and search
-  const filtered = staff.filter((member) => {
+  const filtered = groupStaff.filter((member) => {
     const matchesCategory = filterCategory === "all" || member.category === filterCategory;
     const matchesSearch = member.name.toLowerCase().includes(search.toLowerCase()) ||
       member.subject.toLowerCase().includes(search.toLowerCase());
@@ -684,8 +820,69 @@ export default function AdminStaffPage() {
         label: "Category",
         value: (m) => getCategoryLabel(m.category),
       },
+      // Already in the payload — the table just never showed them, which made
+      // a three-column list of the entire staff harder to use than it needed
+      // to be, and left a contact sheet impossible to produce.
+      email: {
+        label: "Email",
+        value: (m) => m.email || null,
+        filter: "text",
+      },
+      phone: {
+        label: "Phone",
+        value: (m) => m.phone || null,
+        filter: "text",
+      },
+      is_active: {
+        label: "Active",
+        value: (m) => m.is_active,
+      },
+      // Whether this person can be given classes, subjects and timetable
+      // periods. Distinct from the Active column above, which is about their
+      // employment: `staff_members` is the HR record, `teachers` is the row
+      // every assignment dropdown reads, and they can disagree. That gap is
+      // exactly what let three departed teachers keep appearing in pickers.
+      teacher_record: {
+        label: "Teacher record",
+        value: (m) => {
+          const link = teacherByStaffId.get(m.id);
+          if (!link) return staffPortalRole(m.category) === "teacher" ? "Not created" : null;
+          return link.is_active ? "Active" : "Retired";
+        },
+        filter: "select",
+      },
+      date_of_birth: {
+        label: "Date of Birth",
+        value: (m) =>
+          m.date_of_birth
+            ? new Date(m.date_of_birth).toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })
+            : null,
+        sortValue: (m) => m.date_of_birth,
+        exportFormat: "date",
+        // Offered in exports (a birthday list is a real request) without
+        // adding a ninth column to an already-wide table.
+        exportOnly: true,
+      },
+      qualifications: {
+        label: "Qualifications",
+        value: (m) => m.qualifications || null,
+        filter: "text",
+        exportOnly: true,
+      },
+      address: {
+        label: "Address",
+        value: (m) => m.address || null,
+        filter: "text",
+        exportOnly: true,
+      },
     }),
-    []
+    // teacher_record reads this map; with [] the column would render against
+    // the empty one captured on the first pass.
+    [teacherByStaffId]
   );
 
   const table = useTableControls({ rows: filtered, columns });
@@ -745,9 +942,9 @@ export default function AdminStaffPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="erp-page-bar">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
             <UserCog className="h-6 w-6" />
             Staff Management
           </h1>
@@ -755,7 +952,7 @@ export default function AdminStaffPage() {
             Add, edit, and manage school staff members and their profile photos
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="erp-page-actions">
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button variant="outline" className="gap-2" />}
@@ -764,16 +961,6 @@ export default function AdminStaffPage() {
               <ChevronDown className="h-4 w-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem
-                disabled={filtered.length === 0}
-                onClick={() => {
-                  downloadCSV(filtered, STAFF_CSV_COLUMNS, `staff-${new Date().toISOString().split("T")[0]}`);
-                  toast.success(`Downloaded ${filtered.length} staff members`);
-                }}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Download CSV
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setBulkUploadOpen(true)}>
                 <Upload className="h-4 w-4 mr-2" />
                 Upload Excel
@@ -786,6 +973,54 @@ export default function AdminStaffPage() {
           </Button>
         </div>
       </div>
+
+      {/* Group tabs */}
+      <Tabs
+        value={activeGroup}
+        onValueChange={(v: unknown) => v && switchGroup(String(v))}
+      >
+        <TabsList variant="line">
+          {STAFF_TABS.map((t) => (
+            <TabsTrigger key={t.key} value={t.key}>
+              {t.label}
+              <span className="ml-1.5 text-[11px] text-muted-foreground">
+                {tabCounts[t.key]}
+              </span>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {/* Teacher records with nobody behind them. These are the ghosts: a staff
+          member was deleted, the ON DELETE SET NULL cut the link, and the
+          teacher row carried on — active, invisible on this page, and still
+          offered in every timetable and assignment dropdown. Three departed
+          teachers were reported by name before anyone worked out why. They have
+          no staff row to sit on, so they get a banner. */}
+      {activeGroup === "teaching" && orphanTeachers.length > 0 && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <GraduationCap className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-700 dark:text-amber-400" />
+          <div className="text-xs text-amber-900 dark:text-amber-300">
+            <p>
+              <span className="font-medium">
+                {orphanTeachers.length} teacher{" "}
+                {orphanTeachers.length === 1 ? "record has" : "records have"} no
+                staff profile.
+              </span>{" "}
+              They are still offered in every timetable and subject-assignment
+              dropdown. This usually means the staff member was deleted rather
+              than marked inactive.
+            </p>
+            <button
+              type="button"
+              onClick={() => setOrphanDialogOpen(true)}
+              className="mt-1 font-medium underline underline-offset-2 hover:text-amber-950 dark:hover:text-amber-200"
+            >
+              Review {orphanTeachers.length === 1 ? "it" : "them"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -806,22 +1041,32 @@ export default function AdminStaffPage() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {CATEGORIES.map((c) => (
+            {groupCategories.map((c) => (
               <SelectItem key={c.value} value={c.value} label={c.label}>
                 {c.label}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <Checkbox
+            checked={showInactive}
+            onCheckedChange={(v: boolean) => {
+              setShowInactive(v === true);
+              setSelectedIds(new Set());
+            }}
+          />
+          Show inactive
+        </label>
       </div>
 
       {/* Stats */}
       <div className="flex gap-4 text-sm text-gray-500">
-        <span>{filtered.length} of {staff.length} staff members</span>
+        <span>{filtered.length} of {groupStaff.length} on this tab</span>
         {filterCategory !== "all" && (
           <button
             onClick={() => setFilterCategory("all")}
-            className="text-blue-600 hover:underline"
+            className="text-blue-600 dark:text-blue-400 hover:underline"
           >
             Clear filter
           </button>
@@ -830,8 +1075,8 @@ export default function AdminStaffPage() {
 
       {/* Bulk action bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 p-3 bg-red-50 rounded-lg border border-red-200">
-          <span className="text-sm font-medium text-red-700">
+        <div className="flex items-center gap-3 p-3 bg-red-50 dark:bg-red-950/30 rounded-lg border border-red-200">
+          <span className="text-sm font-medium text-red-700 dark:text-red-400">
             {selectedIds.size} selected
           </span>
           {isAdmin && (
@@ -845,7 +1090,7 @@ export default function AdminStaffPage() {
                 <UserPlus className="h-3.5 w-3.5" />
                 Create Users
               </Button>
-              <div className="w-px h-6 bg-red-200" />
+              <div className="w-px h-6 bg-red-200 dark:bg-red-900/30" />
             </>
           )}
           <Button
@@ -877,21 +1122,30 @@ export default function AdminStaffPage() {
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
           <Users className="h-10 w-10 mb-3" />
           <p className="text-sm font-medium">
-            {staff.length === 0 ? "No staff members yet" : "No results found"}
+            {groupStaff.length === 0 ? "Nobody on this tab yet" : "No results found"}
           </p>
           <p className="text-xs mt-1">
-            {staff.length === 0
+            {groupStaff.length === 0
               ? "Click 'Add Staff' to get started"
               : "Try adjusting your search or filter"}
           </p>
         </div>
       ) : (
         <div>
-          <TableFilterSummary
-            ctl={table}
-            total={filtered.length}
-            shown={visible.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={filtered.length}
+              shown={visible.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="staff"
+              title="Staff"
+              featureKey="staff"
+            />
+          </div>
           <div className="border rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
@@ -906,13 +1160,19 @@ export default function AdminStaffPage() {
                 <SortFilterHead ctl={table} col="name" />
                 <SortFilterHead ctl={table} col="subject" />
                 <SortFilterHead ctl={table} col="category" />
+                <SortFilterHead ctl={table} col="email" />
+                <SortFilterHead ctl={table} col="phone" />
+                <SortFilterHead ctl={table} col="is_active" />
+                {activeGroup === "teaching" && (
+                  <SortFilterHead ctl={table} col="teacher_record" />
+                )}
                 <TableHead className="w-24 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {visible.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-gray-500 dark:text-gray-400">
+                  <TableCell colSpan={activeGroup === "teaching" ? 10 : 9} className="py-10 text-center text-gray-500 dark:text-gray-400">
                     No staff match the column filters.
                   </TableCell>
                 </TableRow>
@@ -926,36 +1186,93 @@ export default function AdminStaffPage() {
                     />
                   </TableCell>
                   <TableCell>
-                    {member.photo_url ? (
-                      <div className="w-10 aspect-[4/5] rounded-md overflow-hidden relative bg-gray-50">
-                        <Image
-                          src={member.photo_url}
-                          alt={member.name}
-                          fill
-                          className="object-contain"
-                          sizes="40px"
-                        />
-                      </div>
-                    ) : (
-                      <div
-                        className={`w-10 aspect-[4/5] rounded-md bg-gradient-to-br flex items-center justify-center ${getAvatarColor(member.name)}`}
-                      >
-                        <span className="text-xs font-bold text-white">
-                          {getInitials(member.name)}
-                        </span>
-                      </div>
-                    )}
+                    <StaffAvatar name={member.name} photoUrl={member.photo_url} />
                   </TableCell>
-                  <TableCell className="font-medium">{member.name}</TableCell>
+                  <TableCell>
+                    {/* The name opens the full read-only profile; Edit stays
+                        on the actions side so viewing never risks a change. */}
+                    <button
+                      type="button"
+                      onClick={() => setDetailMember(member)}
+                      className="text-left font-medium text-navy-900 hover:text-blue-600 hover:underline underline-offset-2 dark:text-gray-100 dark:hover:text-blue-400"
+                    >
+                      {member.name}
+                    </button>
+                  </TableCell>
                   <TableCell className="text-gray-500">{member.subject}</TableCell>
                   <TableCell>
-                    <Badge
-                      variant="secondary"
-                      className={categoryBadgeColors[member.category]}
-                    >
+                    <Badge variant="secondary">
                       {getCategoryLabel(member.category)}
                     </Badge>
                   </TableCell>
+                  <TableCell className="text-gray-500">
+                    {member.email || "—"}
+                  </TableCell>
+                  <TableCell className="text-gray-500">
+                    {member.phone || "—"}
+                  </TableCell>
+                  <TableCell>
+                    {member.is_active ? (
+                      "Yes"
+                    ) : (
+                      <span className="text-gray-400">No</span>
+                    )}
+                  </TableCell>
+                  {/* Can this person be given classes and timetable periods?
+                      Separate from Active above, which is about employment. */}
+                  {activeGroup === "teaching" && (
+                    <TableCell>
+                      {(() => {
+                        const link = teacherByStaffId.get(member.id);
+                        if (!link) {
+                          return (
+                            <span className="text-xs text-gray-400 dark:text-gray-500">
+                              Not created
+                            </span>
+                          );
+                        }
+                        return link.is_active ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Badge className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
+                              Active
+                            </Badge>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTeacherActive(link, member.name, false)
+                              }
+                              disabled={convertingId === link.id}
+                              className="text-[11px] text-gray-500 underline underline-offset-2 hover:text-red-700 disabled:opacity-50 dark:text-gray-400 dark:hover:text-red-400"
+                            >
+                              Retire
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Badge
+                              variant="outline"
+                              className="text-gray-500 dark:text-gray-400"
+                            >
+                              Retired
+                              {link.date_of_leaving
+                                ? ` ${link.date_of_leaving}`
+                                : ""}
+                            </Badge>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTeacherActive(link, member.name, true)
+                              }
+                              disabled={convertingId === link.id}
+                              className="text-[11px] text-gray-500 underline underline-offset-2 hover:text-navy-900 disabled:opacity-50 dark:text-gray-400 dark:hover:text-white"
+                            >
+                              Bring back
+                            </button>
+                          </span>
+                        );
+                      })()}
+                    </TableCell>
+                  )}
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       {/* Portal login (admins only, and only for categories
@@ -967,7 +1284,7 @@ export default function AdminStaffPage() {
                       {hasLogin(member) ? (
                         <span
                           title="Has a portal login"
-                          className="inline-flex h-9 w-9 items-center justify-center text-green-600"
+                          className="inline-flex h-9 w-9 items-center justify-center text-green-600 dark:text-green-400"
                         >
                           <UserCheck className="h-4 w-4" />
                         </span>
@@ -984,7 +1301,7 @@ export default function AdminStaffPage() {
                                 ? "teacher"
                                 : "staff"
                             } login (sends a welcome email)`}
-                            className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"
+                            className="text-green-600 dark:text-green-400 hover:text-green-700 hover:bg-green-50"
                           >
                             {creatingLoginId === member.id ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1004,7 +1321,7 @@ export default function AdminStaffPage() {
                       {/* Convert-to-teacher: only for teaching categories that
                           aren't already linked to a teachers row. */}
                       {isTeachingStaffCategory(member.category) &&
-                        !teacherLinkedIds.has(member.id) && (
+                        !teacherByStaffId.has(member.id) && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1012,7 +1329,7 @@ export default function AdminStaffPage() {
                           disabled={convertingId === member.id}
                           aria-label="Convert to teacher"
                           title="Convert to teacher (creates a linked teachers record)"
-                          className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          className="text-blue-600 dark:text-blue-400 hover:text-blue-700 hover:bg-blue-50"
                         >
                           {convertingId === member.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -1059,7 +1376,7 @@ export default function AdminStaffPage() {
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-2 max-h-[70vh] overflow-y-auto pr-1">
+          <div className="space-y-4 py-2 max-h-[70dvh] overflow-y-auto pr-1">
             <div className="space-y-2">
               <Label>Full Name *</Label>
               <Input
@@ -1107,7 +1424,7 @@ export default function AdminStaffPage() {
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Email</Label>
                 <Input
@@ -1138,7 +1455,7 @@ export default function AdminStaffPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Date of Birth</Label>
                 <Input
@@ -1215,7 +1532,7 @@ export default function AdminStaffPage() {
                   {/* Show cropped preview or existing photo at 4:5 portrait */}
                   {photoFile && croppedPreviewUrl ? (
                     <div className="flex items-center gap-3 mb-2">
-                      <div className="w-16 aspect-[4/5] overflow-hidden relative border-2 border-green-400 rounded-md bg-gray-50">
+                      <div className="w-16 aspect-[4/5] overflow-hidden relative border-2 border-green-400 rounded-md bg-gray-50 dark:bg-muted">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={croppedPreviewUrl}
@@ -1224,7 +1541,7 @@ export default function AdminStaffPage() {
                         />
                       </div>
                       <div>
-                        <p className="text-xs text-green-600 font-medium">Photo cropped & ready</p>
+                        <p className="text-xs text-green-600 dark:text-green-400 font-medium">Photo cropped & ready</p>
                         <button
                           type="button"
                           onClick={() => {
@@ -1241,7 +1558,7 @@ export default function AdminStaffPage() {
                     </div>
                   ) : editingId && existingPhotoUrl ? (
                     <div className="flex items-center gap-3 mb-2">
-                      <div className="w-14 aspect-[4/5] overflow-hidden relative rounded-md bg-gray-50">
+                      <div className="w-14 aspect-[4/5] overflow-hidden relative rounded-md bg-gray-50 dark:bg-muted">
                         <Image
                           src={existingPhotoUrl}
                           alt="Current photo"
@@ -1288,12 +1605,27 @@ export default function AdminStaffPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Read-only detail view, opened from the name */}
+      <StaffDetailDialog
+        member={detailMember}
+        onClose={() => setDetailMember(null)}
+        onEdit={(m) => {
+          setDetailMember(null);
+          openEditDialog(m);
+        }}
+        hasLogin={detailMember ? hasLogin(detailMember) : false}
+        teacherLinked={detailMember ? teacherByStaffId.has(detailMember.id) : false}
+        categoryLabel={detailMember ? getCategoryLabel(detailMember.category) : ""}
+      />
+
       {/* Bulk Upload Dialog */}
+      {showStaffBulkUpload && (
       <StaffBulkUpload
         open={bulkUploadOpen}
         onOpenChange={setBulkUploadOpen}
         onSuccess={fetchStaff}
       />
+      )}
 
       {/* Create Portal Users Dialog */}
       <CreatePortalUsersDialog
@@ -1312,6 +1644,70 @@ export default function AdminStaffPage() {
           .map((m) => ({ id: m.id, name: m.name, email: m.email, phone: m.phone }))}
         onComplete={fetchStaff}
       />
+
+      {/* The ghosts, listed. Retiring is the only exit offered: deleting a
+          teacher who has ever been timetabled fails outright, and if it
+          succeeded it would erase the record of who taught what. */}
+      <Dialog open={orphanDialogOpen} onOpenChange={setOrphanDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Teacher records with no staff profile</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Each of these can still be picked in the timetable and in subject
+            assignments. Retire anyone who has left — their history stays, and
+            they disappear from every dropdown. If someone here still works at
+            the school, add them back under Staff instead and the records will
+            re-link.
+          </p>
+          <div className="max-h-80 space-y-1.5 overflow-y-auto">
+            {orphanTeachers.map((t) => (
+              <div
+                key={t.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-gray-200 px-3 py-2 dark:border-border"
+              >
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-navy-900 dark:text-white">
+                    {t.full_name}
+                  </div>
+                  {t.employee_id && (
+                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                      {t.employee_id}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={convertingId === t.id}
+                  onClick={() =>
+                    setTeacherActive(
+                      { id: t.id, is_active: true, date_of_leaving: null },
+                      t.full_name,
+                      false
+                    )
+                  }
+                >
+                  {convertingId === t.id && (
+                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                  )}
+                  Retire
+                </Button>
+              </div>
+            ))}
+            {orphanTeachers.length === 0 && (
+              <p className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                All clear — every teacher record has a staff profile.
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOrphanDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

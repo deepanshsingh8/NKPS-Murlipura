@@ -395,7 +395,15 @@ function Copy({
       {data.transaction_ref ? (
         <View style={styles.gridRow}>
           <Text style={styles.gridLabel}>Transaction Ref.</Text>
-          <Text style={styles.gridValue}>{data.transaction_ref}</Text>
+          {/* cheque_date is the instrument date generally, not only a cheque's:
+              a non-cash Day Book receipt carries the date the transfer was
+              executed. Shown here so an imported online receipt prints whole
+              instead of dropping the date on the floor. Native online payments
+              do not set it, so nothing changes for them. */}
+          <Text style={styles.gridValue}>
+            {data.transaction_ref}
+            {data.cheque_date ? `   ·   ${formatDate(data.cheque_date)}` : ""}
+          </Text>
         </View>
       ) : null}
 

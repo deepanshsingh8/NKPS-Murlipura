@@ -8,32 +8,54 @@ import {
   Layers,
   ScrollText,
   Newspaper,
-  FolderOpen,
 } from "lucide-react";
 import {
   SidebarShell,
-  type SidebarItem,
+  type SidebarSection,
 } from "@nkps/shared/components/SidebarShell";
 import { AppSwitcher } from "@nkps/shared/components/AppSwitcher";
 import { useSidebar } from "@nkps/shared/components/providers/SidebarProvider";
+import { getErpUrl } from "@nkps/shared/lib/cross-app";
 
-const cmsItems: SidebarItem[] = [
-  { kind: "link", icon: LayoutDashboard, label: "Dashboard", href: "/" },
+// Sections rather than one "CMS" heading with a "Content" accordion inside it.
+// The CMS is small enough that the accordion was pure overhead — it hid four of
+// the six destinations behind a tap to save two rows of height.
+const cmsSections: SidebarSection[] = [
   {
-    kind: "group",
-    icon: FolderOpen,
+    label: "Overview",
+    items: [{ kind: "link", icon: LayoutDashboard, label: "Dashboard", href: "/" }],
+  },
+  {
     label: "Content",
-    landingHref: "/",
-    hideOverview: true,
-    children: [
+    items: [
       { kind: "link", icon: ImageIcon, label: "Gallery", href: "/gallery" },
       { kind: "link", icon: Newspaper, label: "Articles", href: "/articles" },
       { kind: "link", icon: Layers, label: "Site Media", href: "/site-media" },
       { kind: "link", icon: ScrollText, label: "Disclosure", href: "/disclosure" },
     ],
   },
-  { kind: "link", icon: FileText, label: "Transfer Certificates", href: "/transfer-certificates" },
-  { kind: "link", icon: MessageSquare, label: "Contact Messages", href: "/contact" },
+  {
+    label: "Records",
+    items: [
+      {
+        kind: "link",
+        icon: FileText,
+        label: "Transfer Certificates",
+        href: "/transfer-certificates",
+      },
+    ],
+  },
+  {
+    label: "Inbox",
+    items: [
+      {
+        kind: "link",
+        icon: MessageSquare,
+        label: "Contact Messages",
+        href: "/contact",
+      },
+    ],
+  },
 ];
 
 const EDITOR_ALWAYS_ALLOWED = new Set(["/"]);
@@ -43,12 +65,15 @@ export function CmsSidebar() {
   const { collapsed } = useSidebar();
   return (
     <SidebarShell
-      sections={[{ label: "CMS", items: cmsItems }]}
+      homeHref="/"
+      sections={cmsSections}
       headerTitle="NKPS CMS"
       headerSubtitle="Content"
       editorAlwaysAllowedHrefs={EDITOR_ALWAYS_ALLOWED}
       unreadBadgeHrefs={UNREAD_BADGE_HREFS}
-      settingsHref="/portal/settings?from=cms"
+      // Portal routes are served by the ERP app, not this one — a relative
+      // /portal/settings here is a 404, which is what it had been.
+      settingsHref={getErpUrl("/portal/settings?from=cms")}
       logoutRedirect="/login"
       footerExtra={<AppSwitcher scope="cms" collapsed={collapsed} />}
     />

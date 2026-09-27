@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { headers } from "next/headers";
-import { createAdminClient } from "@nkps/shared/lib/supabase/admin";
+import { verifyPortalUser } from "@nkps/shared/lib/verify-portal";
 import { transportChangeRequestSchema } from "@nkps/shared/lib/validations";
 
 const APPLICATIONS_BUCKET = "transport-applications";
@@ -13,30 +12,11 @@ const ALLOWED = new Set(["application/pdf", "image/jpeg", "image/png"]);
 // direction_change (one-side) is school-only and is rejected here.
 export async function POST(request: NextRequest) {
   try {
-    const headersList = await headers();
-    const authHeader = headersList.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
+    const portal = await verifyPortalUser({ allow: ["parent"] });
+    if (!portal || !portal.parentId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const accessToken = authHeader.slice(7);
-    const admin = createAdminClient();
-
-    const {
-      data: { user },
-      error: authError,
-    } = await admin.auth.getUser(accessToken);
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("role, parent_id, must_change_password")
-      .eq("id", user.id)
-      .single();
-    if (!profile || profile.must_change_password || profile.role !== "parent" || !profile.parent_id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const { admin } = portal;
 
     const formData = await request.formData();
     const payload = {
@@ -79,7 +59,7 @@ export async function POST(request: NextRequest) {
     const { data: link } = await admin
       .from("student_parents")
       .select("student_id")
-      .eq("parent_id", profile.parent_id)
+      .eq("parent_id", portal.parentId)
       .eq("student_id", enrollment.student_id)
       .maybeSingle();
     if (!link) {
@@ -128,7 +108,7 @@ export async function POST(request: NextRequest) {
         application_url: applicationPath,
         source: "parent",
         status: "pending",
-        requested_by: user.id,
+        requested_by: portal.userId,
       })
       .select()
       .single();

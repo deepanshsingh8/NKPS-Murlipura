@@ -368,8 +368,12 @@ CREATE INDEX IF NOT EXISTS idx_student_subjects_class_subject ON student_subject
 
 ALTER TABLE student_subjects ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public can read student_subjects"
-  ON student_subjects FOR SELECT USING (true);
+-- migration-098: authenticated-only. Keyed on student_id, so anon read
+-- allowed enumeration of every student UUID and their subject choices.
+CREATE POLICY "Authenticated can read student_subjects"
+  ON student_subjects FOR SELECT
+  TO authenticated
+  USING (true);
 
 CREATE POLICY "Admins can insert student_subjects"
   ON student_subjects FOR INSERT
@@ -549,7 +553,10 @@ CREATE INDEX IF NOT EXISTS fee_payments_import_batch_idx
 CREATE TABLE timetable_periods (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   class_id uuid REFERENCES classes(id) ON DELETE CASCADE NOT NULL,
-  subject_id uuid REFERENCES subjects(id),
+  -- CASCADE matches every other FK into subjects(id). Left as the default
+  -- NO ACTION it blocked subject deletion outright (migration 088). Break
+  -- periods carry subject_id NULL and are unaffected.
+  subject_id uuid REFERENCES subjects(id) ON DELETE CASCADE,
   teacher_id uuid REFERENCES teachers(id),
   day_of_week integer NOT NULL CHECK (day_of_week BETWEEN 1 AND 6),
   period_number integer NOT NULL,
@@ -557,8 +564,21 @@ CREATE TABLE timetable_periods (
   end_time time NOT NULL,
   room text,
   is_break boolean DEFAULT false,
-  UNIQUE(class_id, day_of_week, period_number)
+  -- migration 119 — parallel teaching groups within one cell. group_no 0 is the
+  -- primary group (everything that existed before), 1..n are the extra tracks
+  -- that make a Games period or an XI/XII optional slot. is_shared marks a
+  -- combined activity running across several classes at once.
+  group_no smallint NOT NULL DEFAULT 0,
+  group_label text,
+  is_shared boolean NOT NULL DEFAULT false,
+  UNIQUE(class_id, day_of_week, period_number, group_no)
 );
+
+-- Still exactly one PRIMARY group per cell, so every reader that assumes a cell
+-- has one main row keeps that guarantee.
+CREATE UNIQUE INDEX IF NOT EXISTS timetable_periods_primary_group_uniq
+  ON timetable_periods(class_id, day_of_week, period_number)
+  WHERE group_no = 0;
 
 -- 2t. Calendar Events
 CREATE TABLE calendar_events (
@@ -769,7 +789,14 @@ ALTER TABLE timetable_periods
     teacher_id WITH =,
     day_of_week WITH =,
     tsrange('2000-01-01'::date + start_time, '2000-01-01'::date + end_time) WITH &&
-  ) WHERE (teacher_id IS NOT NULL AND is_break IS NOT TRUE AND start_time < end_time);
+  -- migration 119: is_shared exempts a combined activity, because a games coach
+  -- genuinely is on the field for four classes at the same time.
+  ) WHERE (
+    teacher_id IS NOT NULL
+    AND is_break IS NOT TRUE
+    AND start_time < end_time
+    AND is_shared IS NOT TRUE
+  );
 
 -- Calendar Events
 CREATE INDEX idx_calendar_events_dates ON calendar_events(start_date, end_date);
@@ -1276,8 +1303,13 @@ CREATE POLICY "Staff can delete section_cards"
 -- Staff Members
 ALTER TABLE staff_members ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public can view staff members"
+-- migration-098: authenticated-only, for the same reason as `teachers`
+-- (date_of_birth, address, phone, email, license_number). The public staff
+-- directory reads the `public_staff_directory` view instead — defined at the
+-- end of this file.
+CREATE POLICY "Authenticated can read staff members"
   ON staff_members FOR SELECT
+  TO authenticated
   USING (true);
 
 CREATE POLICY "Staff can insert staff members"
@@ -1422,8 +1454,12 @@ CREATE POLICY "Admins can delete profiles"
 -- ── Teachers ────────────────────────────────────────────────────────────────
 ALTER TABLE teachers ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public can read teachers"
+-- migration-098: authenticated-only. This policy previously read
+-- `USING (true)` with no TO clause, which includes anon — exposing
+-- aadhar_number, date_of_birth, address, phone and email to the internet.
+CREATE POLICY "Authenticated can read teachers"
   ON teachers FOR SELECT
+  TO authenticated
   USING (true);
 
 CREATE POLICY "Admins can insert teachers"
@@ -1764,9 +1800,11 @@ CREATE POLICY "Teachers can insert results for their class-subject combos"
   ON results FOR INSERT
   WITH CHECK (
     public.get_user_role() = 'teacher'
-    AND class_id IN (SELECT public.get_my_class_ids())
-    AND subject_id IN (
-      SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
+    AND EXISTS (
+      SELECT 1 FROM public.class_subjects cs
+       WHERE cs.class_id   = results.class_id
+         AND cs.subject_id = results.subject_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -1774,9 +1812,11 @@ CREATE POLICY "Teachers can update results for their class-subject combos"
   ON results FOR UPDATE
   USING (
     public.get_user_role() = 'teacher'
-    AND class_id IN (SELECT public.get_my_class_ids())
-    AND subject_id IN (
-      SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
+    AND EXISTS (
+      SELECT 1 FROM public.class_subjects cs
+       WHERE cs.class_id   = results.class_id
+         AND cs.subject_id = results.subject_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -2070,7 +2110,7 @@ UPDATE storage.buckets
       file_size_limit = 10485760
   WHERE id IN ('transfer-certificates','disclosure-documents');
 
--- Migration 087 — the prospectus and holiday-homework buckets were created by
+-- Migration 901 — the prospectus and holiday-homework buckets were created by
 -- hand (migrations 059/060) and missed migration 061 entirely, so they had no
 -- MIME allowlist, no size cap and no version-controlled policies. Created here
 -- so a fresh project doesn't depend on the manual Dashboard step.
@@ -2131,7 +2171,7 @@ CREATE POLICY "Admins can delete editor permissions"
   USING (public.get_user_role() = 'admin');
 
 -- ============================================
--- TEMPORARY PASSWORD VAULT (migration 088)
+-- TEMPORARY PASSWORD VAULT (migration 902)
 -- ============================================
 -- Holds the generated password of an account that has not yet set its own, so
 -- an admin can read it back and pass it on when the welcome email doesn't
@@ -2950,9 +2990,11 @@ CREATE POLICY "Teachers can insert class_tests for their class-subject combos"
   ON class_tests FOR INSERT
   WITH CHECK (
     public.get_user_role() = 'teacher'
-    AND class_id IN (SELECT public.get_my_class_ids())
-    AND subject_id IN (
-      SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
+    AND EXISTS (
+      SELECT 1 FROM public.class_subjects cs
+       WHERE cs.class_id   = class_tests.class_id
+         AND cs.subject_id = class_tests.subject_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -2961,9 +3003,11 @@ CREATE POLICY "Teachers can update class_tests for their class-subject combos"
   ON class_tests FOR UPDATE
   USING (
     public.get_user_role() = 'teacher'
-    AND class_id IN (SELECT public.get_my_class_ids())
-    AND subject_id IN (
-      SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
+    AND EXISTS (
+      SELECT 1 FROM public.class_subjects cs
+       WHERE cs.class_id   = class_tests.class_id
+         AND cs.subject_id = class_tests.subject_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -2972,9 +3016,11 @@ CREATE POLICY "Teachers can delete class_tests for their class-subject combos"
   ON class_tests FOR DELETE
   USING (
     public.get_user_role() = 'teacher'
-    AND class_id IN (SELECT public.get_my_class_ids())
-    AND subject_id IN (
-      SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
+    AND EXISTS (
+      SELECT 1 FROM public.class_subjects cs
+       WHERE cs.class_id   = class_tests.class_id
+         AND cs.subject_id = class_tests.subject_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -3025,12 +3071,14 @@ CREATE POLICY "Teachers can insert class_test_results for their class-subject co
   ON class_test_results FOR INSERT
   WITH CHECK (
     public.get_user_role() = 'teacher'
-    AND class_test_id IN (
-      SELECT id FROM class_tests
-      WHERE class_id IN (SELECT public.get_my_class_ids())
-        AND subject_id IN (
-          SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
-        )
+    AND EXISTS (
+      SELECT 1
+        FROM public.class_tests ct
+        JOIN public.class_subjects cs
+          ON cs.class_id   = ct.class_id
+         AND cs.subject_id = ct.subject_id
+       WHERE ct.id = class_test_results.class_test_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -3039,12 +3087,14 @@ CREATE POLICY "Teachers can update class_test_results for their class-subject co
   ON class_test_results FOR UPDATE
   USING (
     public.get_user_role() = 'teacher'
-    AND class_test_id IN (
-      SELECT id FROM class_tests
-      WHERE class_id IN (SELECT public.get_my_class_ids())
-        AND subject_id IN (
-          SELECT subject_id FROM class_subjects WHERE teacher_id = public.get_my_teacher_id()
-        )
+    AND EXISTS (
+      SELECT 1
+        FROM public.class_tests ct
+        JOIN public.class_subjects cs
+          ON cs.class_id   = ct.class_id
+         AND cs.subject_id = ct.subject_id
+       WHERE ct.id = class_test_results.class_test_id
+         AND cs.teacher_id = public.get_my_teacher_id()
     )
   );
 
@@ -3967,7 +4017,8 @@ CREATE POLICY "Parents read supplementary_attempts for own children"
   USING (student_id IN (SELECT public.get_my_children_ids()));
 
 -- ============================================
--- TEACHER ABSENCES + SUBSTITUTIONS (migration 031)
+-- TEACHER ABSENCES + SUBSTITUTIONS (migration 094)
+-- (mirrored from scripts/migrations/erp/migration-094-teacher-substitutions.sql)
 -- ============================================
 -- Planning layer on top of timetable_periods. teacher_absences records who
 -- is absent on which date (with optional half_day flag). substitutions
@@ -4196,7 +4247,13 @@ ALTER TABLE fee_payments DROP CONSTRAINT IF EXISTS fee_payments_payment_method_c
 ALTER TABLE fee_payments ADD CONSTRAINT fee_payments_payment_method_check
   CHECK (
     payment_method IN (
-      'cash', 'online', 'cheque', 'bank_transfer', 'upi', 'gateway', 'waiver'
+      'cash', 'online', 'cheque', 'bank_transfer', 'upi', 'gateway', 'waiver',
+      -- migration-054: the historical Day Book import records payments whose
+      -- original tender type the previous software never stored. Omitted from
+      -- this mirror until now, so a school provisioned from this file (rather
+      -- than by replaying migrations) failed every historical import on this
+      -- CHECK. Existing deployments already have it via migration 054.
+      'historical_unknown'
     )
   );
 
@@ -4427,10 +4484,27 @@ CREATE POLICY "Admins manage elective_slot_options"
   USING (public.get_user_role() = 'admin')
   WITH CHECK (public.get_user_role() = 'admin');
 
--- §5 Per-student elective picks. Dedicated table — the legacy student_subjects
--- table was removed by the ERP redesign because subjects are inferred from
--- class enrollment + class_subjects. Electives are per-student overrides, so
--- they get their own narrow table.
+-- §5 Per-student elective picks.
+--
+-- CORRECTION: this comment used to claim "the legacy student_subjects table was
+-- removed by the ERP redesign". That is false and was actively misleading —
+-- student_subjects is alive (see §2k above) and is the ONLY table every report
+-- and export reads to answer "what does this student study":
+-- lib/student-roster.ts, lib/report-query.ts, api/students/[id]/export.
+--
+-- The two tables are not alternatives, they are intent and materialization:
+--   student_elective_picks  — the choice, carrying `slot`, which
+--                             student_subjects cannot express, plus the
+--                             UNIQUE(student_id, slot) rule that stops two
+--                             picks landing in one slot.
+--   student_subjects        — the resolved subject list, keyed by
+--                             class_subject_id so reporting can join through
+--                             to the class and teacher.
+--
+-- api/electives/students now writes BOTH in step. Before that it wrote only
+-- the pick, so an in-app elective was invisible to every report and export,
+-- and filtering a report by an elective silently excluded every student who
+-- had chosen it.
 CREATE TABLE IF NOT EXISTS student_elective_picks (
   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
   student_id uuid REFERENCES students(id) ON DELETE CASCADE NOT NULL,
@@ -4446,8 +4520,12 @@ CREATE INDEX IF NOT EXISTS idx_student_elective_picks_subject ON student_electiv
 
 ALTER TABLE student_elective_picks ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Public can read student_elective_picks"
-  ON student_elective_picks FOR SELECT USING (true);
+-- migration-098: authenticated-only. Keyed on student_id, so anon read
+-- allowed enumeration of every student UUID and their subject choices.
+CREATE POLICY "Authenticated can read student_elective_picks"
+  ON student_elective_picks FOR SELECT
+  TO authenticated
+  USING (true);
 
 CREATE POLICY "Admins manage student_elective_picks"
   ON student_elective_picks FOR ALL
@@ -5329,7 +5407,14 @@ CREATE OR REPLACE VIEW public.timetable_assignment_drift AS
   LEFT JOIN public.teachers tt ON tt.id = tp.teacher_id
   LEFT JOIN public.teachers ct ON ct.id = cs.teacher_id
   WHERE tp.is_break IS NOT TRUE
+    -- migration 119: groups 1..n are parallel tracks with their own teachers.
+    -- They differ from the canonical assignment by design, not by drift.
+    AND tp.group_no = 0
     AND tp.teacher_id IS DISTINCT FROM cs.teacher_id;
+
+-- Owner-rights view keyed on a teacher; see timetable_teacher_clashes.
+REVOKE ALL ON public.timetable_assignment_drift FROM PUBLIC, anon;
+GRANT SELECT ON public.timetable_assignment_drift TO authenticated;
 
 COMMENT ON VIEW public.timetable_assignment_drift IS
   'Timetable periods whose teacher differs from the canonical class_subjects '
@@ -5477,3 +5562,2486 @@ DROP POLICY IF EXISTS "Admins have full access to call_logs" ON call_logs;
 CREATE POLICY "Admins have full access to call_logs"
   ON call_logs FOR ALL
   USING (public.get_user_role() = 'admin');
+
+-- =============================================================================
+-- Migration 086 — enrollment history integrity
+-- (mirrored from scripts/migrations/erp/migration-086-enrollment-history-integrity.sql)
+-- =============================================================================
+-- `created_at` had never existed on this table, yet report-card.ts,
+-- results/by-student and final-result.ts all ORDER BY it and discard the
+-- error — so every enrollment lookup silently returned null, stripping class,
+-- roll number, grade scale and attendance from every report card and making
+-- computeFinalResult() return null for every student.
+--
+-- `source` / `import_batch_id` mirror results + fee_payments so a backfilled
+-- past-year enrollment is distinguishable and a whole batch stays revertible.
+--
+-- UNIQUE(student_id, academic_year_id) encodes the school's rule: one class
+-- per student per session. The pre-existing UNIQUE(student_id, class_id)
+-- cannot express this — `classes` are year-scoped, so it blocks the same
+-- class twice but permits two different classes within one year.
+
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS created_at timestamptz;
+
+UPDATE student_enrollments
+  SET created_at = COALESCE(updated_at, now())
+  WHERE created_at IS NULL;
+
+ALTER TABLE student_enrollments
+  ALTER COLUMN created_at SET DEFAULT now(),
+  ALTER COLUMN created_at SET NOT NULL;
+
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'erp_native'
+    CHECK (source IN ('erp_native', 'historical_import', 'bulk_backfill')),
+  ADD COLUMN IF NOT EXISTS import_batch_id uuid;
+
+CREATE INDEX IF NOT EXISTS student_enrollments_import_batch_idx
+  ON student_enrollments(import_batch_id)
+  WHERE import_batch_id IS NOT NULL;
+
+ALTER TABLE student_enrollments
+  DROP CONSTRAINT IF EXISTS student_enrollments_student_year_unique;
+
+ALTER TABLE student_enrollments
+  ADD CONSTRAINT student_enrollments_student_year_unique
+  UNIQUE (student_id, academic_year_id);
+
+-- =============================================================================
+-- Migration 087 — student status history
+-- (mirrored from scripts/migrations/erp/migration-087-student-status-history.sql)
+-- =============================================================================
+-- ─── 1. The history table ───────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS student_status_history (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id       uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  -- SET NULL, not CASCADE: an audit row must outlive the enrollment it
+  -- describes (same reasoning as migration 046's audit-log FK sweep).
+  enrollment_id    uuid REFERENCES student_enrollments(id) ON DELETE SET NULL,
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+  class_id         uuid REFERENCES classes(id) ON DELETE SET NULL,
+  from_status text CHECK (from_status IN ('active','passed','failed','terminated','exited')),
+  to_status   text NOT NULL
+    CHECK (to_status IN ('active','passed','failed','terminated','exited')),
+  reason      text,
+  source      text NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual','bulk','promotion','bulk_import','historical_import','system')),
+  changed_by  uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  changed_at  timestamptz NOT NULL DEFAULT now(),
+  -- The requirement, enforced at the lowest level so no future writer — route,
+  -- script or console session — can record an exit without saying why.
+  CONSTRAINT student_status_history_reason_required CHECK (
+    to_status NOT IN ('terminated','exited')
+    OR (reason IS NOT NULL AND length(btrim(reason)) >= 5)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_ssh_student
+  ON student_status_history(student_id, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ssh_enrollment
+  ON student_status_history(enrollment_id, changed_at DESC);
+
+ALTER TABLE student_status_history ENABLE ROW LEVEL SECURITY;
+
+-- Reads are admin-only. Writes go exclusively through the service-role client
+-- (the RPC below), so no INSERT/UPDATE/DELETE policy is granted to anyone.
+DROP POLICY IF EXISTS "Admins read student_status_history" ON student_status_history;
+CREATE POLICY "Admins read student_status_history"
+  ON student_status_history FOR SELECT
+  USING (public.get_user_role() = 'admin');
+
+-- ─── 2. Denormalised latest-value cache ─────────────────────────────────────
+-- Lets the students table render the reason inline without joining history per
+-- row. The table above stays the source of truth.
+
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS status_reason     text,
+  ADD COLUMN IF NOT EXISTS status_changed_at timestamptz,
+  ADD COLUMN IF NOT EXISTS status_changed_by uuid REFERENCES profiles(id) ON DELETE SET NULL;
+
+-- ─── 3. Atomic status change ────────────────────────────────────────────────
+-- p_updates: [{"enrollment_id": uuid, "status": text, "reason": text|null}, …]
+--
+-- Per element: reads the current row, skips no-ops, inserts a history row,
+-- updates the status plus the cache columns, and finally flips
+-- students.is_active for the affected students in two set-based statements.
+--
+-- The reason CHECK on student_status_history is what actually enforces the
+-- "terminated/exited must have a reason" rule; the API validates too, for a
+-- readable error, but the DB is the backstop.
+
+CREATE OR REPLACE FUNCTION public.change_enrollment_status(
+  p_updates jsonb,
+  p_actor   uuid DEFAULT NULL,
+  p_source  text DEFAULT 'manual'
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_item        jsonb;
+  v_enrollment  record;
+  v_new_status  text;
+  v_reason      text;
+  v_updated     int := 0;
+  v_skipped     int := 0;
+  v_inactive    uuid[] := ARRAY[]::uuid[];
+  v_reactivated uuid[] := ARRAY[]::uuid[];
+BEGIN
+  IF jsonb_typeof(p_updates) <> 'array' THEN
+    RAISE EXCEPTION 'p_updates must be a JSON array';
+  END IF;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_updates)
+  LOOP
+    v_new_status := v_item ->> 'status';
+    v_reason     := NULLIF(btrim(COALESCE(v_item ->> 'reason', '')), '');
+
+    SELECT se.id, se.student_id, se.class_id, se.academic_year_id, se.status
+      INTO v_enrollment
+      FROM student_enrollments se
+      WHERE se.id = (v_item ->> 'enrollment_id')::uuid
+      FOR UPDATE;
+
+    IF NOT FOUND THEN
+      v_skipped := v_skipped + 1;
+      CONTINUE;
+    END IF;
+
+    -- A no-op still counts as skipped rather than writing a history row that
+    -- records no transition.
+    IF v_enrollment.status IS NOT DISTINCT FROM v_new_status THEN
+      v_skipped := v_skipped + 1;
+      CONTINUE;
+    END IF;
+
+    INSERT INTO student_status_history (
+      student_id, enrollment_id, academic_year_id, class_id,
+      from_status, to_status, reason, source, changed_by
+    ) VALUES (
+      v_enrollment.student_id, v_enrollment.id, v_enrollment.academic_year_id,
+      v_enrollment.class_id, v_enrollment.status, v_new_status, v_reason,
+      p_source, p_actor
+    );
+
+    UPDATE student_enrollments
+      SET status            = v_new_status,
+          status_reason     = v_reason,
+          status_changed_at = now(),
+          status_changed_by = p_actor,
+          updated_at        = now()
+      WHERE id = v_enrollment.id;
+
+    IF v_new_status IN ('terminated', 'exited') THEN
+      v_inactive := v_inactive || v_enrollment.student_id;
+    ELSE
+      v_reactivated := v_reactivated || v_enrollment.student_id;
+    END IF;
+
+    v_updated := v_updated + 1;
+  END LOOP;
+
+  -- students.is_active gates the admin listing, so it has to track the
+  -- enrollment status. Set-based, after the loop, so a student appearing twice
+  -- in one payload settles on their final state.
+  IF array_length(v_inactive, 1) > 0 THEN
+    UPDATE students
+      SET is_active = false, updated_at = now()
+      WHERE id = ANY(v_inactive) AND is_active IS DISTINCT FROM false;
+  END IF;
+
+  IF array_length(v_reactivated, 1) > 0 THEN
+    UPDATE students
+      SET is_active = true, updated_at = now()
+      WHERE id = ANY(v_reactivated)
+        AND id <> ALL(v_inactive)
+        AND is_active IS DISTINCT FROM true;
+  END IF;
+
+  RETURN jsonb_build_object('updated', v_updated, 'skipped', v_skipped);
+END;
+$$;
+
+-- Callable only by the service-role client (the API route). No grant to
+-- anon/authenticated: status changes are authorised in the route via
+-- verifyAdminOrEditorWithUser("students").
+REVOKE ALL ON FUNCTION public.change_enrollment_status(jsonb, uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.change_enrollment_status(jsonb, uuid, text) FROM anon, authenticated;
+
+-- ─── 4. Backfill ────────────────────────────────────────────────────────────
+-- Seed one history row per enrollment that is already in a non-active state,
+-- so the timeline isn't blank for students who left before this shipped. The
+-- reason is explicitly marked unknown rather than invented; `source='system'`
+-- keeps these distinguishable from real recorded transitions, and the CHECK
+-- above is satisfied because the placeholder is a genuine ≥5-char string.
+
+INSERT INTO student_status_history (
+  student_id, enrollment_id, academic_year_id, class_id,
+  from_status, to_status, reason, source, changed_by, changed_at
+)
+SELECT se.student_id, se.id, se.academic_year_id, se.class_id,
+       NULL, se.status,
+       'Recorded before reason tracking existed — original reason unknown',
+       'system', NULL, COALESCE(se.updated_at, now())
+FROM student_enrollments se
+WHERE se.status <> 'active'
+  AND NOT EXISTS (
+    SELECT 1 FROM student_status_history h WHERE h.enrollment_id = se.id
+  );
+
+-- =============================================================================
+-- Migration 089 — student custom-report fields
+-- (mirrored from scripts/migrations/erp/migration-089-student-report-fields.sql)
+-- =============================================================================
+-- Columns needed for the Custom Report Builder to reach parity with the old
+-- ERP's 111-field student report: government/board identifiers, contact &
+-- identity extras, admissions-desk fields, previous-school marks. All flat on
+-- `students` because each is one printable value per student; the moment one
+-- needs workflow it earns its own table. House is deliberately NOT here — it
+-- is per-session, so it lives on student_enrollments (migration 090).
+
+ALTER TABLE students
+  -- Government / board identifiers (PEN + APAAR are UDISE+ mandated).
+  ADD COLUMN IF NOT EXISTS pen_number text,
+  ADD COLUMN IF NOT EXISTS apaar_number text,
+  ADD COLUMN IF NOT EXISTS cbse_registration_no text,
+  ADD COLUMN IF NOT EXISTS nic_number text,
+  -- Contact & identity extras.
+  ADD COLUMN IF NOT EXISTS father_salutation text,
+  ADD COLUMN IF NOT EXISTS mother_salutation text,
+  ADD COLUMN IF NOT EXISTS district text,
+  ADD COLUMN IF NOT EXISTS state text,
+  ADD COLUMN IF NOT EXISTS place_of_birth text,
+  ADD COLUMN IF NOT EXISTS office_address text,
+  ADD COLUMN IF NOT EXISTS mother_office_address text,
+  ADD COLUMN IF NOT EXISTS mailing_address text,
+  -- A pointer to whichever mobile column receives SMS, not a copy of it.
+  ADD COLUMN IF NOT EXISTS sms_mobile_source text,
+  -- Community name; distinct from `category`, the reservation bucket.
+  ADD COLUMN IF NOT EXISTS caste text,
+  ADD COLUMN IF NOT EXISTS area_type text,
+  -- Admissions desk — flat reporting columns, not an admissions CRM.
+  ADD COLUMN IF NOT EXISTS registration_no text,
+  ADD COLUMN IF NOT EXISTS registration_date date,
+  ADD COLUMN IF NOT EXISTS form_no text,
+  ADD COLUMN IF NOT EXISTS admission_confirm_date date,
+  ADD COLUMN IF NOT EXISTS counsellor_name text,
+  ADD COLUMN IF NOT EXISTS counsellor_remark text,
+  ADD COLUMN IF NOT EXISTS staff_reference text,
+  -- Manual override for the New/Old classification derived from admission_date.
+  ADD COLUMN IF NOT EXISTS student_type text,
+  ADD COLUMN IF NOT EXISTS caution_money_receipt_no text,
+  ADD COLUMN IF NOT EXISTS caution_money_receipt_date date,
+  ADD COLUMN IF NOT EXISTS caution_money_amount numeric(12, 2),
+  -- Previous-school marks; completes the group that stopped at board_percentage.
+  ADD COLUMN IF NOT EXISTS previous_school_max_marks numeric(7, 2),
+  ADD COLUMN IF NOT EXISTS previous_school_obtained_marks numeric(7, 2),
+  ADD COLUMN IF NOT EXISTS previous_school_result text;
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_father_salutation;
+ALTER TABLE students ADD CONSTRAINT chk_students_father_salutation CHECK (
+  father_salutation IS NULL
+  OR father_salutation IN ('mr', 'shri', 'dr', 'prof', 'late', 'capt', 'col')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_mother_salutation;
+ALTER TABLE students ADD CONSTRAINT chk_students_mother_salutation CHECK (
+  mother_salutation IS NULL
+  OR mother_salutation IN ('mrs', 'ms', 'smt', 'dr', 'prof', 'late')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_sms_mobile_source;
+ALTER TABLE students ADD CONSTRAINT chk_students_sms_mobile_source CHECK (
+  sms_mobile_source IS NULL
+  OR sms_mobile_source IN ('student', 'father', 'mother', 'guardian')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_area_type;
+ALTER TABLE students ADD CONSTRAINT chk_students_area_type CHECK (
+  area_type IS NULL OR area_type IN ('rural', 'urban')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_student_type;
+ALTER TABLE students ADD CONSTRAINT chk_students_student_type CHECK (
+  student_type IS NULL OR student_type IN ('new', 'old', 'transfer')
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_previous_marks;
+ALTER TABLE students ADD CONSTRAINT chk_students_previous_marks CHECK (
+  (previous_school_max_marks IS NULL OR previous_school_max_marks >= 0)
+  AND (previous_school_obtained_marks IS NULL OR previous_school_obtained_marks >= 0)
+  AND (
+    previous_school_max_marks IS NULL
+    OR previous_school_obtained_marks IS NULL
+    OR previous_school_obtained_marks <= previous_school_max_marks
+  )
+);
+
+ALTER TABLE students DROP CONSTRAINT IF EXISTS chk_students_caution_money_amount;
+ALTER TABLE students ADD CONSTRAINT chk_students_caution_money_amount CHECK (
+  caution_money_amount IS NULL OR caution_money_amount >= 0
+);
+
+-- PEN and APAAR are national identifiers: a duplicate is always a data-entry
+-- error, and it surfaces years later as a rejected board return. Partial so
+-- the common NULL stays unconstrained and the index stays small.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_students_pen_number_unique
+  ON students (pen_number) WHERE pen_number IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_students_apaar_number_unique
+  ON students (apaar_number) WHERE apaar_number IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_students_form_no
+  ON students (form_no) WHERE form_no IS NOT NULL;
+
+-- =============================================================================
+-- Migration 090 — houses master + per-session assignment
+-- (mirrored from scripts/migrations/erp/migration-090-houses.sql)
+-- =============================================================================
+-- house_id sits on student_enrollments, not students: a student's house is
+-- per-session, so a students-level column would print today's house against a
+-- three-year-old cohort in any historical report. A master table rather than
+-- free text because the old ERP's free-text list holds nine rows for four
+-- houses (YELLOW / "Yellow House" / "Ble" / GREEN / …), which made every
+-- house-wise total untrustworthy.
+
+CREATE TABLE IF NOT EXISTS houses (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       text NOT NULL,
+  code       text,
+  colour     text,
+  sort_order integer NOT NULL DEFAULT 0,
+  is_active  boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Case-insensitive: the whole point is to stop "RED" and "Red House" coexisting.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_houses_name_unique
+  ON houses (lower(btrim(name)));
+
+ALTER TABLE houses DROP CONSTRAINT IF EXISTS chk_houses_colour;
+ALTER TABLE houses ADD CONSTRAINT chk_houses_colour CHECK (
+  colour IS NULL OR colour ~ '^#[0-9A-Fa-f]{6}$'
+);
+
+-- SET NULL, not CASCADE: deleting a house must never delete an enrollment.
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS house_id uuid REFERENCES houses(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_student_enrollments_house
+  ON student_enrollments (house_id) WHERE house_id IS NOT NULL;
+
+ALTER TABLE houses ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public can read houses" ON houses;
+CREATE POLICY "Public can read houses"
+  ON houses FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Admins can insert houses" ON houses;
+CREATE POLICY "Admins can insert houses"
+  ON houses FOR INSERT
+  WITH CHECK (public.get_user_role() = 'admin');
+
+DROP POLICY IF EXISTS "Admins can update houses" ON houses;
+CREATE POLICY "Admins can update houses"
+  ON houses FOR UPDATE
+  USING (public.get_user_role() = 'admin');
+
+DROP POLICY IF EXISTS "Admins can delete houses" ON houses;
+CREATE POLICY "Admins can delete houses"
+  ON houses FOR DELETE
+  USING (public.get_user_role() = 'admin');
+
+INSERT INTO houses (name, code, colour, sort_order)
+VALUES
+  ('Red House',    'RED', '#DC2626', 1),
+  ('Blue House',   'BLU', '#2563EB', 2),
+  ('Green House',  'GRN', '#16A34A', 3),
+  ('Yellow House', 'YEL', '#CA8A04', 4)
+ON CONFLICT DO NOTHING;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- EXPORT AUDIT (migration 091)
+-- (mirrored from scripts/migrations/erp/migration-091-export-events.sql)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Who downloaded which admin list, in what format, how many rows, under which
+-- filters, and whether contact/identity fields were included. Written only by
+-- the server-side export routes on the service-role client; admin-read-only,
+-- append-only.
+
+-- ── What actually writes here ──────────────────────────────────────────────
+-- Today: 'students' (the one dataset the server can answer better than the
+-- browser — past sessions include students who have since left, and the
+-- subject filter needs a two-hop join the list payload does not carry) and
+-- 'table_pdf' (every PDF, from any list, since rendering is server-side).
+--
+-- The other dataset values are reserved. They are listed now so that moving a
+-- dataset server-side later is a route change rather than a CHECK-constraint
+-- migration — but note that moving one only makes sense when the server can
+-- supply something the page cannot. Where the browser already holds every row
+-- (staff, users), a server route could withhold nothing and would log an act
+-- the page can perform anyway, which is the "complete-looking but hollow"
+-- outcome this table is meant to avoid.
+
+CREATE TABLE IF NOT EXISTS export_events (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  actor_id         uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  actor_role       text,
+  dataset          text NOT NULL CHECK (dataset IN (
+                     'students', 'staff', 'fees_dues', 'transport_assignments',
+                     'users', 'registrations', 'table_pdf')),
+  feature_key      text,
+  format           text NOT NULL CHECK (format IN ('csv', 'xlsx', 'pdf')),
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+  row_count        integer NOT NULL DEFAULT 0,
+  column_count     integer NOT NULL DEFAULT 0,
+  fields           text[] NOT NULL DEFAULT '{}',
+  sensitive        boolean NOT NULL DEFAULT false,
+  filter_summary   text,
+  filter_spec      jsonb,
+  source_app       text CHECK (source_app IN ('erp', 'cms')),
+  source_path      text,
+  -- text, not inet: a malformed X-Forwarded-For must not be able to fail the
+  -- download this row describes.
+  client_ip        text,
+  user_agent       text,
+  -- How the export was produced. Deliberately a separate axis from `dataset`:
+  -- an AI-produced student sheet is still the student corpus, so reclassifying
+  -- it out of 'students' would make every existing per-dataset count wrong.
+  source           text NOT NULL DEFAULT 'manual'
+                     CHECK (source IN ('manual', 'ai')),
+  -- ai_query_runs.id that produced the sheet, when source = 'ai'.
+  ai_run_id        uuid,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_export_events_actor
+  ON export_events(actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_export_events_ai
+  ON export_events(created_at DESC) WHERE source = 'ai';
+CREATE INDEX IF NOT EXISTS idx_export_events_dataset
+  ON export_events(dataset, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_export_events_sensitive
+  ON export_events(created_at DESC) WHERE sensitive;
+
+ALTER TABLE export_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins read export_events" ON export_events;
+CREATE POLICY "Admins read export_events"
+  ON export_events FOR SELECT
+  USING (public.get_user_role() = 'admin');
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- HISTORICAL CORRECTIONS (migration 092)
+-- (mirrored from scripts/migrations/erp/migration-092-historical-corrections.sql)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+-- Every edit made to a CLOSED academic session: who, which session, which row,
+-- which columns, the before/after snapshots and a required reason. A past
+-- session opens read-only in the admin UI and an edit requires an explicit
+-- unlock, which writes one row here. Admin-read, service-role-write,
+-- append-only.
+
+CREATE TABLE IF NOT EXISTS historical_corrections (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- SET NULL, not CASCADE: the record of a correction must outlive the account
+  -- that made it (migration 046 set this convention for the audit tables).
+  actor_id         uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  actor_role       text,
+  -- The session that was edited. This is the whole point of the table: it
+  -- distinguishes an ordinary edit from one reaching into a closed year.
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+  student_id       uuid REFERENCES students(id) ON DELETE SET NULL,
+  enrollment_id    uuid REFERENCES student_enrollments(id) ON DELETE SET NULL,
+  target_table     text NOT NULL,
+  target_id        uuid,
+  -- Only the columns that actually changed, so reading the log does not mean
+  -- diffing two fifty-column blobs by eye.
+  changed_columns  text[] NOT NULL DEFAULT '{}',
+  before_snapshot  jsonb,
+  after_snapshot   jsonb,
+  -- Required, and long enough to be a sentence rather than a shrug. The DB
+  -- enforces it because the reason is the only thing that makes this edit
+  -- reviewable later, and a UI-only check is a suggestion.
+  reason           text NOT NULL CHECK (length(btrim(reason)) >= 10),
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_historical_corrections_year
+  ON historical_corrections(academic_year_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_historical_corrections_student
+  ON historical_corrections(student_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_historical_corrections_actor
+  ON historical_corrections(actor_id, created_at DESC);
+
+ALTER TABLE historical_corrections ENABLE ROW LEVEL SECURITY;
+
+-- Admin-read only. Writes go exclusively through the service-role client in the
+-- correction path, so no INSERT/UPDATE/DELETE policy is granted to any role —
+-- same posture as student_status_history (087) and export_events (091). An
+-- audit row that the actor it describes could edit would be worthless.
+DROP POLICY IF EXISTS "Admins read historical_corrections" ON historical_corrections;
+CREATE POLICY "Admins read historical_corrections"
+  ON historical_corrections FOR SELECT
+  USING (public.get_user_role() = 'admin');
+
+-- =============================================================================
+-- Migration 093 — report presets
+-- (mirrored from scripts/migrations/erp/migration-093-report-presets.sql)
+-- =============================================================================
+-- Saved column/filter selections for the Custom Report Builder. The old ERP
+-- saved nothing, so the office re-ticked the same boxes out of 111 every time.
+-- Private by default; `is_shared` publishes a preset and only admins may set
+-- it. created_by IS NULL marks a system preset (the two seeded below).
+
+CREATE TABLE IF NOT EXISTS report_presets (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       text NOT NULL,
+  -- Room for the planned fee / attendance / result reports without a second
+  -- table; each one gets its own field registry but the same preset shape.
+  entity     text NOT NULL DEFAULT 'students',
+  -- The whole ReportFilters object (packages/shared/src/lib/report-filters.ts).
+  filters    jsonb NOT NULL DEFAULT '{}'::jsonb,
+  -- Ordered ReportField keys. Unknown keys are dropped on load rather than
+  -- erroring, so retiring a field does not break every saved preset.
+  fields     text[] NOT NULL DEFAULT '{}',
+  is_shared  boolean NOT NULL DEFAULT false,
+  created_by uuid REFERENCES profiles(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT report_presets_name_not_blank CHECK (length(btrim(name)) > 0),
+  CONSTRAINT report_presets_entity_known CHECK (entity IN ('students'))
+);
+
+-- ON DELETE CASCADE above, not SET NULL: a deleted user's private presets
+-- should go with them. SET NULL would silently promote them to system presets,
+-- which is the opposite of what anyone intends.
+
+-- One name per owner. Partial, because NULL owners (system presets) need
+-- their own global uniqueness — and in Postgres NULL <> NULL, so a single
+-- composite unique index would let duplicate system presets through.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_report_presets_owner_name
+  ON report_presets (created_by, lower(btrim(name)))
+  WHERE created_by IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_report_presets_system_name
+  ON report_presets (lower(btrim(name)))
+  WHERE created_by IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_report_presets_visible
+  ON report_presets (entity, is_shared, created_by);
+
+-- ─── RLS ────────────────────────────────────────────────────────────────────
+-- Defence in depth: the API also checks ownership explicitly, but a preset is
+-- per-user data and the table should be safe on its own.
+
+ALTER TABLE report_presets ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Read own or shared report_presets" ON report_presets;
+CREATE POLICY "Read own or shared report_presets"
+  ON report_presets FOR SELECT
+  USING (created_by = auth.uid() OR is_shared OR public.get_user_role() = 'admin');
+
+-- A caller may only create presets owned by themselves, and may not publish
+-- one unless they are an admin.
+DROP POLICY IF EXISTS "Insert own report_presets" ON report_presets;
+CREATE POLICY "Insert own report_presets"
+  ON report_presets FOR INSERT
+  WITH CHECK (
+    created_by = auth.uid()
+    AND (is_shared = false OR public.get_user_role() = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Update own report_presets" ON report_presets;
+CREATE POLICY "Update own report_presets"
+  ON report_presets FOR UPDATE
+  USING (created_by = auth.uid() OR public.get_user_role() = 'admin')
+  WITH CHECK (
+    (created_by = auth.uid() OR public.get_user_role() = 'admin')
+    AND (is_shared = false OR public.get_user_role() = 'admin')
+  );
+
+DROP POLICY IF EXISTS "Delete own report_presets" ON report_presets;
+CREATE POLICY "Delete own report_presets"
+  ON report_presets FOR DELETE
+  USING (created_by = auth.uid() OR public.get_user_role() = 'admin');
+
+-- ─── Seed: two system presets ───────────────────────────────────────────────
+-- So the screen is not empty on day one, and so the two reports the office
+-- actually runs are one click.
+--
+-- Field keys must exist in packages/shared/src/lib/report-fields.ts. Unknown
+-- keys are dropped silently on load, so a typo here degrades to a missing
+-- column rather than an error — scripts/_verify-report-fields.mts is what
+-- catches that.
+--
+-- `serial` and `student_name` are omitted deliberately: they are always-on and
+-- get prepended by resolveFields().
+
+INSERT INTO report_presets (name, entity, filters, fields, is_shared, created_by)
+VALUES
+  (
+    'Contact Sheet',
+    'students',
+    '{"statuses":["active"],"sort_by":"class_section","then_by":"student_name"}'::jsonb,
+    ARRAY[
+      'admission_no', 'class_section', 'roll_number',
+      'father_name', 'father_mobile', 'mother_mobile', 'phone'
+    ],
+    true,
+    NULL
+  ),
+  (
+    'UDISE+ Extract',
+    'students',
+    '{"statuses":["active"],"sort_by":"class_section","then_by":"student_name"}'::jsonb,
+    ARRAY[
+      'admission_no', 'class_name', 'section', 'gender', 'date_of_birth',
+      'father_name', 'mother_name', 'category', 'minority_group',
+      'is_bpl', 'is_ews', 'is_cwsn', 'is_rte', 'medium_of_instruction',
+      'pen_number', 'apaar_number', 'aadhar_number', 'distance_band',
+      'parent_highest_education'
+    ],
+    true,
+    NULL
+  )
+ON CONFLICT DO NOTHING;
+
+COMMENT ON COLUMN report_presets.created_by IS
+  'NULL means a system preset: shared, owned by nobody, admin-only to modify.';
+
+-- ============================================================
+-- Missing FK indexes (migration-095-missing-fk-indexes.sql)
+-- Postgres indexes PRIMARY KEY and UNIQUE automatically, but not
+-- foreign keys. These FK columns carry hot query traffic and had no
+-- index; see the migration file for why these and not the other 17.
+-- ============================================================
+CREATE INDEX IF NOT EXISTS idx_fee_payments_academic_year_id
+  ON fee_payments(academic_year_id);
+
+CREATE INDEX IF NOT EXISTS idx_class_tests_class_id
+  ON class_tests(class_id);
+CREATE INDEX IF NOT EXISTS idx_class_tests_subject_id
+  ON class_tests(subject_id);
+
+CREATE INDEX IF NOT EXISTS idx_class_subjects_subject_id
+  ON class_subjects(subject_id);
+
+CREATE INDEX IF NOT EXISTS idx_timetable_periods_subject_id
+  ON timetable_periods(subject_id);
+
+CREATE INDEX IF NOT EXISTS idx_exam_schedules_subject_id
+  ON exam_schedules(subject_id);
+
+CREATE INDEX IF NOT EXISTS idx_student_enrollments_stream_id
+  ON student_enrollments(stream_id);
+
+CREATE INDEX IF NOT EXISTS idx_marksheet_publications_exam_type_id
+  ON marksheet_publications(exam_type_id);
+
+CREATE INDEX IF NOT EXISTS idx_student_status_history_academic_year_id
+  ON student_status_history(academic_year_id);
+CREATE INDEX IF NOT EXISTS idx_student_status_history_class_id
+  ON student_status_history(class_id);
+
+
+-- ============================================================================
+-- SCHOOL PROFILE (migration 110)
+-- ============================================================================
+-- The school's own identity, moved out of packages/shared/src/lib/constants.ts
+-- so the assistant surfaces and the WhatsApp sender read it from the database
+-- instead of hardcoding it. Exactly one row, enforced by the singleton column.
+-- NOT a multi-tenancy migration: no other table carries a school_id.
+
+CREATE TABLE IF NOT EXISTS school_profile (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Exactly one row. See the note above.
+  singleton boolean NOT NULL DEFAULT true,
+
+  -- Identity
+  name text NOT NULL,
+  short_name text,
+  tagline text,
+  description text,
+  founded_year integer,
+  motto text,
+
+  -- Affiliation (CBSE and equivalents)
+  board text,
+  affiliation_number text,
+  school_code text,
+  udise_code text,
+
+  -- Contact
+  address_line1 text,
+  city text,
+  state text,
+  pin_code text,
+  phones text[] NOT NULL DEFAULT '{}',
+  emails text[] NOT NULL DEFAULT '{}',
+  website_url text,
+  office_hours text,
+
+  -- Geo, for transport and map surfaces. Nullable: a school that has not set
+  -- a pin should read as "unknown", never as (0, 0) off the coast of Africa.
+  latitude numeric(10, 7),
+  longitude numeric(10, 7),
+
+  -- Social
+  social jsonb NOT NULL DEFAULT '{}'::jsonb,
+
+  -- Assistant configuration
+  ai_enabled boolean NOT NULL DEFAULT false,
+  ai_tone text NOT NULL DEFAULT 'warm',
+  ai_languages text[] NOT NULL DEFAULT ARRAY['en'],
+  ai_disclaimer text,
+
+  -- WhatsApp Business (Meta Cloud API). Ids, not secrets — the access token
+  -- stays in the environment, never in a table an admin screen can read.
+  whatsapp_phone_number_id text,
+  whatsapp_waba_id text,
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT school_profile_singleton_true CHECK (singleton = true),
+  CONSTRAINT school_profile_name_not_blank CHECK (length(btrim(name)) > 0),
+  CONSTRAINT school_profile_ai_tone_known CHECK (ai_tone IN ('warm', 'formal', 'neutral')),
+  CONSTRAINT school_profile_languages_not_empty CHECK (cardinality(ai_languages) > 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS school_profile_one_row
+  ON school_profile (singleton);
+
+DROP TRIGGER IF EXISTS set_updated_at_school_profile ON school_profile;
+CREATE TRIGGER set_updated_at_school_profile
+  BEFORE UPDATE ON school_profile
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ── RLS ─────────────────────────────────────────────────────────────────────
+-- Readable by everyone including anonymous visitors: the public website and
+-- the visitor-facing assistant both render from this row, and every column
+-- here is already published on the school's own website or its CBSE
+-- disclosure page. Nothing private belongs in this table — note the WhatsApp
+-- access token is deliberately absent.
+--
+-- Writes are admin-only.
+ALTER TABLE school_profile ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone can read school profile" ON school_profile;
+CREATE POLICY "Anyone can read school profile"
+  ON school_profile FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Admins manage school profile" ON school_profile;
+CREATE POLICY "Admins manage school profile"
+  ON school_profile FOR ALL
+  USING (public.get_user_role() = 'admin')
+  WITH CHECK (public.get_user_role() = 'admin');
+
+-- ── Seed ────────────────────────────────────────────────────────────────────
+-- Mirrors packages/shared/src/lib/constants.ts SCHOOL as of 2026-09-09, so
+-- nothing visible changes when readers switch over. ai_enabled stays false:
+-- the assistant surfaces are turned on deliberately, not by running a
+-- migration.
+INSERT INTO school_profile (
+  name, short_name, tagline, description, founded_year,
+  board, affiliation_number,
+  address_line1, city, state, pin_code,
+  phones, emails, office_hours,
+  latitude, longitude,
+  social, ai_enabled, ai_tone, ai_languages
+)
+SELECT
+  'NK Public School, Murlipura',
+  'NKPS Murlipura',
+  'A Relentless Quest for Excellence',
+  'NK Public School Murlipura, the founding campus of the NKPS group, has been nurturing young minds in Jaipur since 1985. We offer holistic education from Nursery to Class XII with Science and Commerce streams at the senior-secondary level.',
+  1985,
+  'RBSE',
+  NULL,
+  'Arya Nagar, Murlipura',
+  'Jaipur',
+  'Rajasthan',
+  '302039',
+  ARRAY['+91-9785500042', '+91-9785500061'],
+  ARRAY['nkpsem@gmail.com', 'nkpsjaipur@gmail.com'],
+  'Mon–Sat, 9:00 AM – 3:00 PM',
+  26.9774,
+  75.7884,
+  '{}'::jsonb,
+  false,
+  'warm',
+  ARRAY['en', 'hi']
+WHERE NOT EXISTS (SELECT 1 FROM school_profile);
+
+-- ============================================================
+-- Public staff directory (migration-098-restrict-staff-pii.sql)
+-- The ONLY staff data readable without logging in. Columns are deliberately
+-- limited; staff_members also holds date_of_birth, address, phone, email and
+-- license_number, none of which may ever be added here.
+-- ============================================================
+CREATE OR REPLACE VIEW public_staff_directory AS
+  SELECT id, name, subject, category, photo_url, qualifications, sort_order
+  FROM staff_members
+  WHERE is_active = true
+    AND category IN (
+      'management', 'pgt', 'tgt', 'prt', 'motherTeachers', 'admin'
+    );
+
+GRANT SELECT ON public_staff_directory TO anon, authenticated;
+
+
+-- ============================================================================
+-- AI AUDIT (migration 112)
+-- ============================================================================
+-- The assistant's audit trail. Four tables because "did the assistant read
+-- something the caller was not entitled to?" needs the model's request and the
+-- server's rewrite of it side by side, per tool call.
+--
+-- All four: RLS enabled with ZERO policies, intentionally — service-role only.
+-- Stores counts, field keys and filter shapes. Never row contents.
+
+-- ── Conversations ───────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_conversations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Where the request came in. whatsapp has no Supabase session, so user_id
+  -- is null there and parent_id carries the identity.
+  channel text NOT NULL CHECK (channel IN ('erp_web', 'portal_web', 'whatsapp')),
+  -- migration-114 added 'guide': the in-app help assistant, which answers
+  -- questions about the software and reads no student data.
+  feature text NOT NULL CHECK (feature IN ('ask', 'remarks', 'parent', 'guide')),
+
+  -- Actor. SET NULL so the trail outlives the account, matching export_events
+  -- and historical_corrections.
+  actor_id uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  actor_role text,
+  parent_id uuid REFERENCES parents(id) ON DELETE SET NULL,
+  teacher_id uuid REFERENCES teachers(id) ON DELETE SET NULL,
+
+  -- The scope this conversation ran under, denormalised so an auditor can
+  -- filter without joining every tool call. scope_hash is the fingerprint the
+  -- export path re-checks before letting a download proceed.
+  scope_kind text NOT NULL CHECK (scope_kind IN ('all', 'classes', 'students')),
+  scope_hash text NOT NULL,
+
+  model text NOT NULL,
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+
+  status text NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'completed', 'error', 'aborted')),
+  error_code text,
+
+  started_at timestamptz NOT NULL DEFAULT now(),
+  last_at timestamptz NOT NULL DEFAULT now(),
+
+  -- migration-114: what makes this listable as a chat rather than only
+  -- auditable. 'auto' titles are machine-written and safe to overwrite;
+  -- 'user' means a human renamed it and the titler must never clobber it.
+  title text,
+  title_source text CHECK (title_source IN ('auto', 'user')),
+
+  -- Soft delete. A hard DELETE cascades ai_messages AND ai_tool_calls, which
+  -- would let anyone erase the record of what the assistant read simply by
+  -- tidying their chat list. The audit outlives the conversation.
+  deleted_at timestamptz,
+  deleted_by uuid REFERENCES profiles(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_actor
+  ON ai_conversations (actor_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_channel
+  ON ai_conversations (channel, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_parent
+  ON ai_conversations (parent_id, started_at DESC) WHERE parent_id IS NOT NULL;
+-- migration-114: the chat sidebar query, exactly. The index above is on
+-- started_at, which is the wrong column for a list that reorders every time a
+-- reply lands.
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_actor_recent
+  ON ai_conversations (actor_id, feature, last_at DESC)
+  WHERE deleted_at IS NULL;
+
+-- ── Messages ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+  seq integer NOT NULL,
+
+  role text NOT NULL CHECK (role IN ('user', 'assistant')),
+
+  -- The human's own words, and — since migration-114 — the assistant's reply
+  -- too. 112 deliberately withheld the reply; that was right for an audit
+  -- table and wrong for a chat, because reopening one showed your questions
+  -- above blank bubbles. See the table COMMENT for what that costs.
+  content text,
+
+  input_tokens integer,
+  output_tokens integer,
+  cache_read_tokens integer,
+  cache_write_tokens integer,
+  stop_reason text,
+  latency_ms integer,
+
+  -- migration-114. Why this turn ended badly: status on the conversation
+  -- carried it when a conversation was a single turn, and one aborted turn
+  -- must not make a whole chat read as aborted.
+  error_code text,
+  -- Set when content was blanked by a delete. Distinguishes "the words are
+  -- gone" from "the assistant produced no text", which is a real state on the
+  -- Stop and budget-exhausted paths.
+  redacted_at timestamptz,
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+
+  UNIQUE (conversation_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation
+  ON ai_messages (conversation_id, seq);
+
+-- ── Tool calls ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS ai_tool_calls (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+  message_seq integer,
+
+  tool_name text NOT NULL,
+
+  -- The pair that makes this table worth having. See the header.
+  args_raw jsonb,
+  args_scoped jsonb,
+  scope_applied jsonb,
+
+  -- Shape of what came back, never the contents.
+  row_count integer,
+  preview_row_count integer,
+  field_keys text[] NOT NULL DEFAULT '{}',
+  sensitive_included boolean NOT NULL DEFAULT false,
+
+  duration_ms integer,
+  error_code text,
+
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_tool_calls_conversation
+  ON ai_tool_calls (conversation_id, created_at);
+-- The alert query: scope violations, newest first.
+CREATE INDEX IF NOT EXISTS idx_ai_tool_calls_errors
+  ON ai_tool_calls (created_at DESC) WHERE error_code IS NOT NULL;
+
+-- ── Query runs ──────────────────────────────────────────────────────────────
+-- The handle behind an answer. Holds the SCOPED filters, so re-running is
+-- guaranteed to reproduce what the caller was entitled to and nothing wider.
+--
+-- Deliberately stores no rows: the on-screen table and the CSV re-execute
+-- under a fresh authorization check rather than serving a cached result. That
+-- costs a second query and means the export re-states its own total, but it
+-- keeps a teacher who lost a class between preview and download from
+-- exporting stale rows.
+CREATE TABLE IF NOT EXISTS ai_query_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid REFERENCES ai_conversations(id) ON DELETE SET NULL,
+
+  filters jsonb NOT NULL,
+  field_keys text[] NOT NULL DEFAULT '{}',
+  total integer NOT NULL DEFAULT 0,
+  capped boolean NOT NULL DEFAULT false,
+
+  -- Re-derived on every read; a mismatch is a 403, not a stale download.
+  scope_hash text NOT NULL,
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+
+  -- migration-114. Which answer owns this run: without it a reopened chat
+  -- cannot put a result chip under the answer that produced it.
+  message_seq integer,
+  -- The model's stated intent, denormalised off ai_tool_calls.args_raw, which
+  -- cannot be read back unambiguously — two parallel report calls in one round
+  -- share (conversation_id, message_seq) and nothing links a tool-call row to
+  -- the run row it produced.
+  purpose text,
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Checked lazily at read. There is no cron anywhere in this repo, so
+  -- nothing here may depend on a sweeper existing.
+  --
+  -- migration-114 widened this from 2 hours to 24: two hours is shorter than a
+  -- school working day, so reopening this morning's chat found every result
+  -- already expired. Anything older goes through the explicit re-run path,
+  -- which mints a fresh row under a fresh authorization check.
+  expires_at timestamptz NOT NULL DEFAULT (now() + interval '24 hours'),
+  exported_at timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_query_runs_conversation
+  ON ai_query_runs (conversation_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_query_runs_expiry
+  ON ai_query_runs (expires_at);
+CREATE INDEX IF NOT EXISTS idx_ai_query_runs_message
+  ON ai_query_runs (conversation_id, message_seq)
+  WHERE conversation_id IS NOT NULL;
+
+-- Close the loop opened in migration 097: an exported sheet points back at the
+-- question that produced it. Added here because the target table exists now.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'export_events_ai_run_id_fkey'
+  ) THEN
+    ALTER TABLE export_events
+      ADD CONSTRAINT export_events_ai_run_id_fkey
+      FOREIGN KEY (ai_run_id) REFERENCES ai_query_runs(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+-- ── RLS ─────────────────────────────────────────────────────────────────────
+ALTER TABLE ai_conversations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_tool_calls ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_query_runs ENABLE ROW LEVEL SECURITY;
+
+COMMENT ON TABLE ai_conversations IS
+  'RLS enabled with NO policies, intentionally: service-role access only. Any '
+  'client credential reads this as empty. Do not add a policy without deciding '
+  'what a non-admin should be able to learn about other people''s questions. '
+  'Deletion is SOFT (deleted_at): a hard delete would cascade ai_messages and '
+  'ai_tool_calls, letting anyone erase the record of what the assistant read '
+  'by tidying their chat list.';
+COMMENT ON TABLE ai_messages IS
+  'RLS enabled with NO policies, intentionally: service-role access only. '
+  'CHANGED IN 114: assistant content IS stored, because a chat you cannot '
+  'read back is not a chat. This table therefore holds an unstructured '
+  'partial copy of student facts — names, counts, and, where the caller '
+  'unlocked sensitive columns, quoted contact details. Treat it as student '
+  'data for retention, DSAR and breach purposes. Deleting a conversation '
+  'NULLs content and stamps redacted_at; the audit skeleton (seq, tokens, '
+  'tool calls, query runs) survives, the words do not.';
+COMMENT ON TABLE ai_tool_calls IS
+  'RLS enabled with NO policies, intentionally: service-role access only. '
+  'args_raw vs args_scoped is the scope-widening signal; keep both.';
+COMMENT ON TABLE ai_query_runs IS
+  'RLS enabled with NO policies, intentionally: service-role access only. '
+  'Stores scoped filters, never rows — readers re-execute under a fresh '
+  'authorization check.';
+
+
+-- ============================================================================
+-- WHATSAPP CHANNEL (migration 113)
+-- ============================================================================
+-- Phone enrolment, sessions, message log, and a DB-owned rate limiter.
+-- A phone number is not identity: Meta's signature authenticates the provider,
+-- not the handset, so a number must be enrolled once before it sees any child's
+-- data. All five tables are RLS-enabled with zero policies, intentionally.
+
+-- ── Enrolled numbers ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS parent_phone_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  parent_id uuid NOT NULL REFERENCES parents(id) ON DELETE CASCADE,
+
+  -- E.164, always. Normalised by normalizeIndianMobile() before it gets here.
+  phone_e164 text NOT NULL,
+
+  verified_at timestamptz,
+  revoked_at timestamptz,
+  -- How the number came to be trusted, for the audit trail.
+  verified_via text CHECK (verified_via IN ('otp', 'portal', 'admin')),
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT parent_phone_links_e164 CHECK (phone_e164 ~ '^\+[1-9][0-9]{7,14}$')
+);
+
+-- One live claim per number. Partial so a revoked link does not block a
+-- family that legitimately inherits a recycled number later.
+CREATE UNIQUE INDEX IF NOT EXISTS parent_phone_links_active
+  ON parent_phone_links (phone_e164)
+  WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_parent_phone_links_parent
+  ON parent_phone_links (parent_id) WHERE revoked_at IS NULL;
+
+-- ── Verification codes ──────────────────────────────────────────────────────
+-- Codes are stored HASHED. A leaked table should not hand someone a working
+-- second factor, and we never need the plaintext back — only to compare.
+CREATE TABLE IF NOT EXISTS parent_phone_otps (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  phone_e164 text NOT NULL,
+  code_hash text NOT NULL,
+  parent_id uuid REFERENCES parents(id) ON DELETE CASCADE,
+  attempts integer NOT NULL DEFAULT 0,
+  consumed_at timestamptz,
+  expires_at timestamptz NOT NULL DEFAULT (now() + interval '10 minutes'),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_parent_phone_otps_lookup
+  ON parent_phone_otps (phone_e164, created_at DESC);
+
+-- ── Sessions ────────────────────────────────────────────────────────────────
+-- A rolling window of trust after enrolment, checked at read. There is no cron
+-- anywhere in this repo, so nothing may depend on a sweeper deleting these.
+CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  parent_id uuid NOT NULL REFERENCES parents(id) ON DELETE CASCADE,
+  phone_e164 text NOT NULL,
+  verified_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL DEFAULT (now() + interval '30 days'),
+  revoked_at timestamptz,
+  last_seen_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_sessions_active
+  ON whatsapp_sessions (phone_e164)
+  WHERE revoked_at IS NULL;
+
+-- ── Message log ─────────────────────────────────────────────────────────────
+-- No raw phone numbers, following the call_logs precedent: the relationship is
+-- what matters operationally, and storing the number again just widens what a
+-- leak costs. `phone_last4` is enough for a human to reconcile "was that me?"
+CREATE TABLE IF NOT EXISTS whatsapp_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  direction text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+
+  parent_id uuid REFERENCES parents(id) ON DELETE SET NULL,
+  phone_last4 text,
+
+  wa_message_id text,
+  -- Which billing category this message falls in. Service messages became
+  -- billable on 2026-10-01, so this is a cost column, not trivia.
+  category text CHECK (category IN ('service', 'utility', 'marketing', 'authentication')),
+  template_name text,
+
+  status text NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'sent', 'delivered', 'read', 'failed', 'received')),
+  error_code text,
+
+  conversation_id uuid REFERENCES ai_conversations(id) ON DELETE SET NULL,
+
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_parent
+  ON whatsapp_messages (parent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_wa_id
+  ON whatsapp_messages (wa_message_id) WHERE wa_message_id IS NOT NULL;
+
+-- ── Rate limiting that actually holds ───────────────────────────────────────
+-- The in-memory rateLimit() helper is per-process: on a multi-instance deploy
+-- the effective limit is max x instances, and it resets on every deploy. That
+-- is fine as politeness on an authenticated screen. It is useless as a control
+-- on a public, unauthenticated ingress that costs money per message, so this
+-- channel gets a counter the database owns.
+CREATE TABLE IF NOT EXISTS ai_rate_limits (
+  bucket text NOT NULL,
+  window_start timestamptz NOT NULL,
+  count integer NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, window_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_rate_limits_window
+  ON ai_rate_limits (window_start);
+
+/**
+ * Atomically bump a counter and report whether the caller is still under the
+ * limit. One statement, so two concurrent messages cannot both read 4 and both
+ * write 5.
+ */
+CREATE OR REPLACE FUNCTION public.bump_rate_limit(
+  p_bucket text,
+  p_window_seconds integer,
+  p_max integer
+) RETURNS boolean AS $$
+DECLARE
+  v_window timestamptz;
+  v_count integer;
+BEGIN
+  v_window := to_timestamp(floor(extract(epoch FROM now()) / p_window_seconds) * p_window_seconds);
+
+  INSERT INTO ai_rate_limits (bucket, window_start, count)
+  VALUES (p_bucket, v_window, 1)
+  ON CONFLICT (bucket, window_start)
+  DO UPDATE SET count = ai_rate_limits.count + 1
+  RETURNING count INTO v_count;
+
+  RETURN v_count <= p_max;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS set_updated_at_parent_phone_links ON parent_phone_links;
+CREATE TRIGGER set_updated_at_parent_phone_links
+  BEFORE UPDATE ON parent_phone_links
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS set_updated_at_whatsapp_messages ON whatsapp_messages;
+CREATE TRIGGER set_updated_at_whatsapp_messages
+  BEFORE UPDATE ON whatsapp_messages
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ── RLS ─────────────────────────────────────────────────────────────────────
+-- Enabled with NO policies on every table here, intentionally: all five are
+-- service-role only. The webhook has no user session at all, and nothing a
+-- browser holds should be able to read another family's enrolment or messages.
+--
+-- The explicit comments matter. An unpolicied table under RLS reads as empty
+-- rather than erroring, so without them the next person cannot tell "locked
+-- down deliberately" from "someone forgot" — which is how bus_stops came to
+-- silently understate transport fees.
+ALTER TABLE parent_phone_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE parent_phone_otps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE whatsapp_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE whatsapp_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_rate_limits ENABLE ROW LEVEL SECURITY;
+
+COMMENT ON TABLE parent_phone_links IS
+  'RLS enabled with NO policies, intentionally: service-role only.';
+COMMENT ON TABLE parent_phone_otps IS
+  'RLS enabled with NO policies, intentionally: service-role only. Codes are '
+  'stored hashed; the plaintext is never persisted.';
+COMMENT ON TABLE whatsapp_sessions IS
+  'RLS enabled with NO policies, intentionally: service-role only.';
+COMMENT ON TABLE whatsapp_messages IS
+  'RLS enabled with NO policies, intentionally: service-role only. Stores '
+  'phone_last4 only, never the full number — see call_logs for the precedent.';
+COMMENT ON TABLE ai_rate_limits IS
+  'RLS enabled with NO policies, intentionally: service-role only.';
+
+
+-- ============================================================================
+-- RLS PER-ROW CALL HOISTING (migration 102)
+-- ============================================================================
+-- Mirrored as the DO block rather than as rewritten CREATE POLICY statements,
+-- and that is deliberate. The CREATE POLICY statements ABOVE in this file are
+-- known to be stale — migration-erp-redesign.sql renamed ~50 of them without
+-- updating this mirror. Rewriting them here would encode names that may not
+-- exist. The DO block transforms whatever policies actually got created, so a
+-- database rebuilt from this file ends up correct either way. It is
+-- idempotent: re-running it is a no-op.
+--
+-- See scripts/audit/schema-mirror-audit.sql to reconcile the drift properly.
+
+BEGIN;
+
+DO $mig$
+DECLARE
+  r        record;
+  q        text;
+  w        text;
+  stmt     text;
+  changed  int := 0;
+  scanned  int := 0;
+  -- Scalar, zero-argument, STABLE helpers. Set-returning helpers
+  -- (get_my_class_ids, get_my_children_ids) are excluded on purpose.
+  fns text[] := ARRAY[
+    'get_user_role',
+    'get_my_student_id',
+    'get_my_teacher_id',
+    'get_my_parent_id'
+  ];
+  fn   text;
+  tabs text[] := ARRAY[
+    'profiles','students','student_enrollments','results','attendance',
+    'fee_payments','parents','report_presets','student_subjects',
+    'class_tests','class_test_results','non_scholastic_assessments',
+    'student_remarks','ptm_notes','supplementary_attempts'
+  ];
+BEGIN
+  FOR r IN
+    SELECT tablename, policyname, qual, with_check
+      FROM pg_policies
+     WHERE schemaname = 'public'
+       AND tablename = ANY(tabs)
+     ORDER BY tablename, policyname
+  LOOP
+    scanned := scanned + 1;
+    q := r.qual;
+    w := r.with_check;
+
+    FOREACH fn IN ARRAY fns LOOP
+      -- Order matters. Park already-wrapped and schema-qualified forms behind
+      -- sentinels first, so the bare replacement cannot corrupt them into
+      -- `public.(SELECT f())` or double-wrap an existing `(SELECT f())`.
+      q := replace(q, '( SELECT '||fn||'()',        '@@W@@'||fn);
+      q := replace(q, '(SELECT '||fn||'()',         '@@W@@'||fn);
+      q := replace(q, '( SELECT public.'||fn||'()', '@@P@@'||fn);
+      q := replace(q, '(SELECT public.'||fn||'()',  '@@P@@'||fn);
+      q := replace(q, 'public.'||fn||'()',          '@@Q@@'||fn);
+      q := replace(q, fn||'()',            '(SELECT '||fn||'())');
+      q := replace(q, '@@Q@@'||fn,         '(SELECT public.'||fn||'())');
+      q := replace(q, '@@P@@'||fn,         '(SELECT public.'||fn||'()');
+      q := replace(q, '@@W@@'||fn,         '(SELECT '||fn||'()');
+
+      w := replace(w, '( SELECT '||fn||'()',        '@@W@@'||fn);
+      w := replace(w, '(SELECT '||fn||'()',         '@@W@@'||fn);
+      w := replace(w, '( SELECT public.'||fn||'()', '@@P@@'||fn);
+      w := replace(w, '(SELECT public.'||fn||'()',  '@@P@@'||fn);
+      w := replace(w, 'public.'||fn||'()',          '@@Q@@'||fn);
+      w := replace(w, fn||'()',            '(SELECT '||fn||'())');
+      w := replace(w, '@@Q@@'||fn,         '(SELECT public.'||fn||'())');
+      w := replace(w, '@@P@@'||fn,         '(SELECT public.'||fn||'()');
+      w := replace(w, '@@W@@'||fn,         '(SELECT '||fn||'()');
+    END LOOP;
+
+    -- auth.uid() gets the same treatment.
+    q := replace(q, '( SELECT auth.uid()', '@@A@@');
+    q := replace(q, '(SELECT auth.uid()',  '@@A@@');
+    q := replace(q, 'auth.uid()',          '(SELECT auth.uid())');
+    q := replace(q, '@@A@@',               '(SELECT auth.uid()');
+    w := replace(w, '( SELECT auth.uid()', '@@A@@');
+    w := replace(w, '(SELECT auth.uid()',  '@@A@@');
+    w := replace(w, 'auth.uid()',          '(SELECT auth.uid())');
+    w := replace(w, '@@A@@',               '(SELECT auth.uid()');
+
+    CONTINUE WHEN q IS NOT DISTINCT FROM r.qual
+              AND w IS NOT DISTINCT FROM r.with_check;
+
+    stmt := format('ALTER POLICY %I ON public.%I', r.policyname, r.tablename);
+    IF q IS NOT NULL THEN stmt := stmt || format(' USING (%s)', q); END IF;
+    IF w IS NOT NULL THEN stmt := stmt || format(' WITH CHECK (%s)', w); END IF;
+
+    RAISE NOTICE '%;', stmt;
+    EXECUTE stmt;
+    changed := changed + 1;
+  END LOOP;
+
+  RAISE NOTICE 'migration-102: scanned % policies, rewrote %.', scanned, changed;
+
+  IF changed = 0 THEN
+    RAISE WARNING 'migration-102 changed nothing. Either it has already been '
+                  'applied, or the helper names differ from those expected.';
+  END IF;
+END
+$mig$;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- BUG FIX (a real behaviour change, not a rewrite)
+--
+-- The teacher policy on student_subjects compares class_subjects.teacher_id
+-- against auth.uid(). But class_subjects.teacher_id REFERENCES teachers(id),
+-- while auth.uid() is profiles.id / auth.users.id - two different UUID
+-- spaces. The predicate is ALWAYS FALSE, so teachers see ZERO
+-- student_subjects rows today. Every other policy in the schema correctly
+-- uses get_my_teacher_id() for this.
+--
+-- Written defensively: the redesign may have renamed this policy, so we fix
+-- whichever policy on student_subjects still carries the broken comparison.
+-- ─────────────────────────────────────────────────────────────────────────
+DO $fix$
+DECLARE r record; q text; n int := 0;
+BEGIN
+  FOR r IN
+    SELECT policyname, qual FROM pg_policies
+     WHERE schemaname='public' AND tablename='student_subjects'
+       AND qual LIKE '%teacher_id%' AND qual LIKE '%auth.uid()%'
+  LOOP
+    q := replace(r.qual, 'teacher_id = (SELECT auth.uid())',
+                         'teacher_id = (SELECT get_my_teacher_id())');
+    q := replace(q,      'teacher_id = auth.uid()',
+                         'teacher_id = (SELECT get_my_teacher_id())');
+    CONTINUE WHEN q = r.qual;
+    RAISE NOTICE 'BUGFIX ALTER POLICY %I ON student_subjects USING (%)', r.policyname, q;
+    EXECUTE format('ALTER POLICY %I ON public.student_subjects USING (%s)', r.policyname, q);
+    n := n + 1;
+  END LOOP;
+  RAISE NOTICE 'migration-102 bugfix: repaired % student_subjects policy(ies).', n;
+END
+$fix$;
+
+COMMIT;
+
+
+-- ============================================================================
+-- INDEX COVERAGE (migration 103)
+-- ============================================================================
+-- Postgres indexes PRIMARY KEY and UNIQUE automatically but never a foreign
+-- key, so each of these was a parent DELETE that seq-scanned its child table.
+-- The composites match the .eq()/.order() chains the app actually issues.
+-- Additive only: the 34 redundant-index candidates are NOT dropped, because
+-- deciding that from this mirror is unsafe while the mirror is known stale.
+
+BEGIN;
+
+-- ── Tier 1: unindexed FKs on tables that grow without bound ──────────────
+-- Every DELETE FROM profiles / buses / bus_stops currently seq-scans these.
+
+-- transport_change_requests carries six unindexed FKs.
+CREATE INDEX IF NOT EXISTS idx_tcr_requested_by      ON transport_change_requests(requested_by);
+CREATE INDEX IF NOT EXISTS idx_tcr_reviewed_by       ON transport_change_requests(reviewed_by);
+CREATE INDEX IF NOT EXISTS idx_tcr_previous_bus_id   ON transport_change_requests(previous_bus_id);
+CREATE INDEX IF NOT EXISTS idx_tcr_amended_bus_id    ON transport_change_requests(amended_bus_id);
+CREATE INDEX IF NOT EXISTS idx_tcr_previous_stop_id  ON transport_change_requests(previous_stop_id);
+CREATE INDEX IF NOT EXISTS idx_tcr_amended_stop_id   ON transport_change_requests(amended_stop_id);
+
+-- Append-only audit tables. migration-095 skipped these on the grounds that
+-- they "sit on small master tables"; they are not master tables and they do
+-- not stay small - student_status_history gains a row per student per
+-- promotion run.
+CREATE INDEX IF NOT EXISTS idx_student_enrollments_status_changed_by
+  ON student_enrollments(status_changed_by);
+CREATE INDEX IF NOT EXISTS idx_student_status_history_changed_by
+  ON student_status_history(changed_by);
+CREATE INDEX IF NOT EXISTS idx_teacher_absences_marked_by
+  ON teacher_absences(marked_by);
+CREATE INDEX IF NOT EXISTS idx_fee_change_requests_reviewed_by
+  ON fee_change_requests(reviewed_by);
+CREATE INDEX IF NOT EXISTS idx_historical_corrections_enrollment
+  ON historical_corrections(enrollment_id);
+CREATE INDEX IF NOT EXISTS idx_fee_change_audit_source_request
+  ON fee_change_audit_log(source_request_id);
+
+-- ── Tier 2: remaining unindexed join columns ─────────────────────────────
+-- migration-095 added exam_schedules(subject_id) but missed class_id, which
+-- is only ever the SECOND column of idx_exam_schedules_exam_class and so has
+-- no leading index of its own.
+CREATE INDEX IF NOT EXISTS idx_exam_schedules_class_id
+  ON exam_schedules(class_id);
+CREATE INDEX IF NOT EXISTS idx_result_masters_grade_scale_id
+  ON result_masters(grade_scale_id);
+CREATE INDEX IF NOT EXISTS idx_students_alumni_academic_year_id
+  ON students(alumni_academic_year_id);
+CREATE INDEX IF NOT EXISTS idx_export_events_academic_year_id
+  ON export_events(academic_year_id);
+CREATE INDEX IF NOT EXISTS idx_buses_conductor_id
+  ON buses(conductor_id);
+CREATE INDEX IF NOT EXISTS idx_elective_slot_options_subject_id
+  ON elective_slot_options(subject_id);
+
+-- ── Composites matching the query shapes the app actually issues ─────────
+-- Each was cross-checked against the .eq()/.in()/.order() chains in apps/erp.
+
+-- The hottest shape in the codebase: 15 call sites do
+--   .eq("class_id", ...).eq("status","active").order("roll_number")
+-- idx_enrollments_active is (student_id, class_id, academic_year_id) WHERE
+-- status='active' - it leads with student_id, so a class-roster read cannot
+-- use it and falls back to the single-column class_id index plus a sort.
+CREATE INDEX IF NOT EXISTS idx_enrollments_class_status_roll
+  ON student_enrollments(class_id, status, roll_number);
+
+-- 14 sites: .eq(student_id)[.eq(academic_year_id)].order(enrollment_date DESC).
+-- UNIQUE(student_id, class_id) cannot serve the ordering, so this sorts today.
+CREATE INDEX IF NOT EXISTS idx_enrollments_student_year_date
+  ON student_enrollments(student_id, academic_year_id, enrollment_date DESC);
+
+-- 7 sites on the marksheet path. Only (class_id, subject_id) and a separate
+-- (exam_type_id) exist, so neither serves this pair.
+CREATE INDEX IF NOT EXISTS idx_results_class_exam
+  ON results(class_id, exam_type_id);
+
+-- 6 sites: the student fee ledger.
+CREATE INDEX IF NOT EXISTS idx_fee_payments_student_year_date
+  ON fee_payments(student_id, academic_year_id, payment_date DESC);
+
+-- The two /api/students list endpoints, which order by full_name and split on
+-- is_alumni. Partial so each index only carries the rows its endpoint reads.
+CREATE INDEX IF NOT EXISTS idx_students_active_name
+  ON students(full_name) WHERE is_alumni = false;
+CREATE INDEX IF NOT EXISTS idx_students_alumni_year_name
+  ON students(alumni_passing_year, full_name) WHERE is_alumni = true;
+
+ANALYZE;
+
+COMMIT;
+
+
+-- ============================================================================
+-- TRANSPORT READS RESTRICTED TO AUTHENTICATED (migration 104)
+-- ============================================================================
+-- The four transport tables above are created with "Public can read …"
+-- policies that have no TO clause, so they applied to PUBLIC — including the
+-- anon role, whose key ships in the marketing site's JS bundle. That exposed
+-- every pickup point, route, fee and bus registration number to the internet.
+-- Verified against production with real anon-key requests before the fix.
+--
+-- Applied after those CREATE POLICY statements so a database rebuilt from
+-- this file ends up correct.
+
+BEGIN;
+
+-- ── bus_stops ───────────────────────────────────────────────────────────────
+DROP POLICY IF EXISTS "Public can read bus_stops" ON public.bus_stops;
+CREATE POLICY "Authenticated can read bus_stops"
+  ON public.bus_stops FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- ── bus_route_stops ─────────────────────────────────────────────────────────
+DROP POLICY IF EXISTS "Public can read bus_route_stops" ON public.bus_route_stops;
+CREATE POLICY "Authenticated can read bus_route_stops"
+  ON public.bus_route_stops FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- ── bus_stop_fees ───────────────────────────────────────────────────────────
+DROP POLICY IF EXISTS "Public can read bus_stop_fees" ON public.bus_stop_fees;
+CREATE POLICY "Authenticated can read bus_stop_fees"
+  ON public.bus_stop_fees FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- ── buses ───────────────────────────────────────────────────────────────────
+DROP POLICY IF EXISTS "Public can read buses" ON public.buses;
+CREATE POLICY "Authenticated can read buses"
+  ON public.buses FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- ── Assertion: no anonymous read may survive on these four ─────────────────
+-- Catches both a policy name that did not match the DROPs above and any future
+-- policy that re-opens one of these tables to anon. Aborts the transaction.
+DO $assert$
+DECLARE leaked text;
+BEGIN
+  SELECT string_agg(format('%s."%s"', tablename, policyname), ', ')
+    INTO leaked
+    FROM pg_policies
+   WHERE schemaname = 'public'
+     AND tablename IN ('bus_stops','bus_route_stops','bus_stop_fees','buses')
+     AND cmd IN ('SELECT','ALL')
+     AND permissive = 'PERMISSIVE'
+     -- roles containing public/anon means unauthenticated callers are included
+     AND (roles::text[] && ARRAY['public','anon'])
+     -- ...and the predicate does not itself exclude them
+     AND coalesce(qual, 'true') = 'true';
+
+  IF leaked IS NOT NULL THEN
+    RAISE EXCEPTION
+      'migration-104 aborted: these policies still allow anonymous reads of transport data: %',
+      leaked;
+  END IF;
+
+  RAISE NOTICE 'migration-104: transport tables are no longer readable by anon.';
+END
+$assert$;
+
+COMMIT;
+
+
+-- ============================================================================
+-- MIRROR REPAIR: student_enrollments.pickup_address
+-- ============================================================================
+-- This column has been live since migration-053 and is read by production code
+-- (lib/admin-tables.ts, api/transport/assignments, the transport assignments
+-- page, validations.ts, types/index.ts) but it was never mirrored here. A
+-- database rebuilt from this file alone was missing it, and the transport
+-- assignments page would 400.
+--
+-- Confirmed against the live catalog: of every column on students,
+-- student_enrollments and fee_payments, this was the ONLY one missing from
+-- this file.
+--
+-- migration-053 also added pickup_lat / pickup_lng / pickup_verified_at /
+-- pickup_verified_by; migration-074 DROPPED all four along with the rest of the
+-- distance-based transport pricing model, and deliberately KEPT this one,
+-- repurposed. Only this column is restored here — the other four are correctly
+-- absent.
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS pickup_address text;
+
+-- Superseded comment: migration-053 described this as the "source of truth for
+-- billing distance", which stopped being true when migration-074 replaced
+-- road-distance slabs with flat per-stop fees. It is now a landmark that helps
+-- a driver find the child, and nothing prices off it.
+COMMENT ON COLUMN student_enrollments.pickup_address IS
+  'Free-text pickup landmark supplied by the parent, to help the driver locate '
+  'the child. NOT a pricing input: migration-074 replaced distance-based '
+  'transport fees with flat per-stop fees on bus_stop_fees.';
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Migration 115 — Day Book (Head wise) import support
+-- (mirrored from scripts/migrations/erp/migration-115-day-book-import.sql)
+--
+-- `source_receipt_no` is the old software's own receipt number, and it is the
+-- idempotency key for the day-book importer. receipt_number cannot be: the
+-- importer splits one source receipt across the instalments it settles, so the
+-- slice suffix moves whenever the fee schedule is edited, and a re-uploaded
+-- overlapping export would insert a duplicate set instead of conflicting.
+--
+-- The unique index keys on COALESCE(fee_structure_id, bus_stop_id) because
+-- fee_payments_target_xor (migration 074) sets exactly one of the two, and a
+-- transport day book lands on bus_stop_id with fee_structure_id NULL — NULLs
+-- compare distinct, so keying on fee_structure_id alone would leave those rows
+-- undeduplicated.
+--
+-- `import_batches` gives the bare import_batch_id uuid on fee_payments,
+-- results and student_enrollments a parent row: what the batch was, who ran
+-- it, what it reconciled to, and whether it has been reverted. Deliberately
+-- NOT an FK — rows predating this migration have no parent, and ON DELETE
+-- semantics would then decide the fate of receipts.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE fee_payments
+  ADD COLUMN IF NOT EXISTS source_receipt_no text;
+
+COMMENT ON COLUMN fee_payments.source_receipt_no IS
+  'Receipt number as printed by the previous ERP software. Stable across '
+  're-imports (unlike receipt_number, whose slice suffix moves when the fee '
+  'schedule changes), so it is the idempotency key for the day-book importer '
+  'and the number the office searches by.';
+
+CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_source_receipt_unique
+  ON fee_payments (
+    academic_year_id,
+    source_receipt_no,
+    COALESCE(fee_structure_id, bus_stop_id)
+  )
+  WHERE source_receipt_no IS NOT NULL;
+
+-- The Day Book records one instrument date for every non-cash receipt: the
+-- date on the cheque, or the date the online transfer went through. Both land
+-- in cheque_date, so widen what the column claims to mean. Nothing reads it as
+-- cheque-only -- the receipt PDF prints it beside whichever reference the row
+-- carries.
+COMMENT ON COLUMN fee_payments.cheque_date IS
+  'Date on the payment instrument: the date written on the cheque, or the '
+  'date an online transfer/UTR was executed. Often differs from payment_date, '
+  'which is always the date the school received the money.';
+
+CREATE INDEX IF NOT EXISTS idx_fee_payments_source_receipt
+  ON fee_payments (academic_year_id, source_receipt_no)
+  WHERE source_receipt_no IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS import_batches (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind text NOT NULL CHECK (kind IN (
+    'fees_day_book',
+    'fees_account_wise',
+    'results_greensheet',
+    'students_backfill'
+  )),
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+  file_name        text,
+  file_size_bytes  integer CHECK (file_size_bytes IS NULL OR file_size_bytes >= 0),
+  source_period_start date,
+  source_period_end   date,
+  row_count      integer NOT NULL DEFAULT 0 CHECK (row_count >= 0),
+  created_count  integer NOT NULL DEFAULT 0 CHECK (created_count >= 0),
+  skipped_count  integer NOT NULL DEFAULT 0 CHECK (skipped_count >= 0),
+  amount_total   numeric(14, 2),
+  control_totals jsonb,
+  notes      text,
+  created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  reverted_at timestamptz,
+  reverted_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  CONSTRAINT import_batches_revert_consistent CHECK (
+    (reverted_at IS NULL AND reverted_by IS NULL)
+    OR reverted_at IS NOT NULL
+  ),
+  CONSTRAINT import_batches_period_ordered CHECK (
+    source_period_start IS NULL
+    OR source_period_end IS NULL
+    OR source_period_end >= source_period_start
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_batches_kind_created
+  ON import_batches (kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_import_batches_academic_year
+  ON import_batches (academic_year_id);
+CREATE INDEX IF NOT EXISTS idx_import_batches_created_by
+  ON import_batches (created_by);
+CREATE INDEX IF NOT EXISTS idx_import_batches_reverted_by
+  ON import_batches (reverted_by);
+
+ALTER TABLE import_batches ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Admins have full access to import batches" ON import_batches;
+CREATE POLICY "Admins have full access to import batches"
+  ON import_batches FOR ALL
+  USING (public.get_user_role() = 'admin')
+  WITH CHECK (public.get_user_role() = 'admin');
+
+-- The backfill of parent rows for pre-existing batches lives only in the
+-- migration file: a database built fresh from this schema has no batches to
+-- reconstruct.
+
+-- ============================================================================
+-- MIGRATION 116 — Teacher lifecycle (retire, don't orphan)
+-- Mirrors scripts/migrations/erp/migration-116-teacher-lifecycle.sql
+-- ============================================================================
+-- `teachers.staff_member_id` is ON DELETE SET NULL, so deleting someone from
+-- People → Staff leaves their teacher row behind, still is_active = true, in a
+-- table no ERP screen could edit. Departed staff therefore kept appearing in
+-- every teacher dropdown — the dropdowns filter is_active correctly, the data
+-- was wrong. These columns plus the review view are what /people/teachers
+-- needs to retire a teacher explicitly and reversibly.
+
+ALTER TABLE teachers
+  ADD COLUMN IF NOT EXISTS date_of_leaving date,
+  ADD COLUMN IF NOT EXISTS leaving_reason  text;
+
+COMMENT ON COLUMN teachers.date_of_leaving IS
+  'Date the teacher left the school. Set when is_active flips to false; kept '
+  'when they are reactivated so a rejoin is visible in the record.';
+COMMENT ON COLUMN teachers.leaving_reason IS
+  'Free-text note on why the teacher was retired (resigned, transferred, …).';
+
+CREATE INDEX IF NOT EXISTS idx_teachers_active_name
+  ON teachers(full_name) WHERE is_active;
+
+-- Active teacher rows with neither a staff record nor a portal login: the
+-- shape left behind by a staff deletion. A review queue, not an
+-- auto-deactivate — a teacher created by bulk import and never linked looks
+-- identical, so a human decides.
+CREATE OR REPLACE VIEW public.teachers_needing_review AS
+  SELECT t.id,
+         t.employee_id,
+         t.full_name,
+         t.email,
+         t.phone,
+         t.date_of_joining,
+         t.created_at,
+         (SELECT count(*) FROM public.timetable_periods tp WHERE tp.teacher_id = t.id)
+           AS timetable_period_count,
+         (SELECT count(*) FROM public.class_subjects cs   WHERE cs.teacher_id = t.id)
+           AS class_subject_count,
+         (SELECT count(*) FROM public.classes c    WHERE c.class_teacher_id = t.id)
+           AS class_teacher_count
+  FROM public.teachers t
+  WHERE t.is_active
+    AND t.staff_member_id IS NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.teacher_id = t.id
+    );
+
+COMMENT ON VIEW public.teachers_needing_review IS
+  'Active teacher records with no linked staff_members row and no portal '
+  'profile — the shape left behind when a staff member is deleted from '
+  'People → Staff (teachers.staff_member_id is ON DELETE SET NULL). Review '
+  'queue for /people/teachers; retiring is an explicit admin action, never '
+  'automatic.';
+
+-- ============================================================================
+-- MIGRATION 117 — teacher_subjects (which subjects a teacher can teach)
+-- Mirrors scripts/migrations/erp/migration-117-teacher-subjects.sql
+-- ============================================================================
+-- Distinct from class_subjects: that answers "who teaches Maths to VI-B" (one
+-- teacher per class+subject); this answers "who can teach Maths at all" (many
+-- teachers, no class). It is what lets the assign-subject dropdown surface the
+-- school's three maths teachers instead of all sixty staff.
+
+CREATE TABLE IF NOT EXISTS teacher_subjects (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  teacher_id uuid REFERENCES teachers(id) ON DELETE CASCADE NOT NULL,
+  subject_id uuid REFERENCES subjects(id) ON DELETE CASCADE NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(teacher_id, subject_id)
+);
+
+COMMENT ON TABLE teacher_subjects IS
+  'Which subjects a teacher is qualified to teach. Drives the "teachers of '
+  'this subject first" ordering in the assign-subject dropdown. Distinct from '
+  'class_subjects, which records who actually teaches a subject in one class.';
+
+CREATE INDEX IF NOT EXISTS idx_teacher_subjects_teacher
+  ON teacher_subjects(teacher_id);
+CREATE INDEX IF NOT EXISTS idx_teacher_subjects_subject
+  ON teacher_subjects(subject_id);
+
+-- Authenticated read, not public: keyed on teacher_id, so an anon read would
+-- enumerate every teacher UUID in the school (cf. migration 098). Writes are
+-- admin-only; editors reach the table through the admin proxy's `subjects`
+-- feature gate, as with class_subjects.
+ALTER TABLE teacher_subjects ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Authenticated can read teacher_subjects"
+  ON teacher_subjects FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "Admins manage teacher_subjects"
+  ON teacher_subjects FOR ALL
+  USING (public.get_user_role() = 'admin')
+  WITH CHECK (public.get_user_role() = 'admin');
+
+-- Assigning a teacher to a class subject teaches the system that they know
+-- that subject. A trigger rather than app code because class_subjects.teacher_id
+-- has five writers and adminApi() is a single-table proxy that cannot carry a
+-- side effect. Add-only: un-assigning someone from VI-B Maths does not mean
+-- they stopped knowing Maths.
+CREATE OR REPLACE FUNCTION public.trg_learn_teacher_subject()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.subject_id IS NOT NULL THEN
+    INSERT INTO public.teacher_subjects (teacher_id, subject_id)
+    VALUES (NEW.teacher_id, NEW.subject_id)
+    ON CONFLICT (teacher_id, subject_id) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS class_subject_learns_teacher_subject ON class_subjects;
+CREATE TRIGGER class_subject_learns_teacher_subject
+  AFTER INSERT OR UPDATE OF teacher_id ON class_subjects
+  FOR EACH ROW
+  WHEN (NEW.teacher_id IS NOT NULL)
+  EXECUTE FUNCTION public.trg_learn_teacher_subject();
+
+-- The one-time seed from class_subjects and timetable_periods lives only in
+-- the migration file: a database built fresh from this schema has nothing to
+-- seed from.
+
+-- ============================================================================
+-- MIGRATION 118 — wings (a reusable class band with its own subject set)
+-- Mirrors scripts/migrations/erp/migration-118-stream-wings.sql
+-- ============================================================================
+-- The school groups classes into wings — Middle Wing = VI–VIII and so on — and
+-- wants a subject set defined once and pushed onto every class and section in
+-- the band. `streams` is the only table that already owns a subject set
+-- (stream_subjects), so wings live here under a discriminator.
+--
+-- `kind` is load-bearing, not cosmetic. classes.stream_id,
+-- student_enrollments.stream_id and fee_structures.stream_id all read this
+-- table and fee resolution keys off it, so a wing loose in that machinery would
+-- change what students are charged. Wings are never attached to
+-- classes.stream_id at all — they carry their band in `class_names` — and every
+-- picker and importer name-lookup filters to kind='stream'. The two lookups
+-- that resolve a STORED stream_id back to a name (api/export/students,
+-- lib/report-query) are deliberately left unfiltered so a stored id always
+-- renders.
+
+ALTER TABLE streams
+  ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'stream',
+  ADD COLUMN IF NOT EXISTS class_names text[] NOT NULL DEFAULT '{}';
+
+ALTER TABLE streams DROP CONSTRAINT IF EXISTS streams_kind_check;
+ALTER TABLE streams
+  ADD CONSTRAINT streams_kind_check CHECK (kind IN ('stream', 'wing'));
+
+COMMENT ON COLUMN streams.kind IS
+  'stream = an academic stream for XI/XII (Science, Commerce, Humanities), the '
+  'original meaning: attachable to classes.stream_id and read by fee '
+  'resolution. wing = a band of classes with a shared subject set, used only to '
+  'push subjects onto classes. Wings are filtered out of every stream picker '
+  'and every importer name-lookup.';
+COMMENT ON COLUMN streams.class_names IS
+  'For kind=wing: the class names the wing covers, e.g. {VI,VII,VIII}. Names '
+  'rather than class ids so the wing survives the academic-year rollover. '
+  'Always empty for kind=stream.';
+
+CREATE INDEX IF NOT EXISTS idx_streams_kind ON streams(kind);
+
+-- ============================================================================
+-- MIGRATION 119 — parallel teaching groups in one timetable period
+-- Mirrors scripts/migrations/erp/migration-119-timetable-period-groups.sql
+-- ============================================================================
+-- The columns, the four-column unique key, the primary-group index and the
+-- is_shared exemption on timetable_teacher_no_overlap are all applied inline
+-- above, at the timetable_periods definition and at migration 071's constraint.
+-- What remains here is the companion view.
+--
+-- A shared activity is exempt from the double-booking constraint, so what the
+-- constraint no longer blocks has to stay visible somewhere. In a healthy
+-- timetable every row of this view is an intentional combined activity; a row
+-- where neither side is shared is a bug.
+
+CREATE OR REPLACE VIEW public.timetable_teacher_clashes AS
+  SELECT a.teacher_id,
+         t.full_name        AS teacher_name,
+         a.day_of_week,
+         a.id               AS period_a,
+         ca.name || COALESCE('-' || ca.section, '') AS class_a,
+         a.start_time       AS a_start,
+         a.end_time         AS a_end,
+         a.is_shared        AS a_shared,
+         b.id               AS period_b,
+         cb.name || COALESCE('-' || cb.section, '') AS class_b,
+         b.start_time       AS b_start,
+         b.end_time         AS b_end,
+         b.is_shared        AS b_shared
+  FROM public.timetable_periods a
+  JOIN public.timetable_periods b
+    ON a.teacher_id = b.teacher_id
+   AND a.day_of_week = b.day_of_week
+   AND a.id < b.id
+  LEFT JOIN public.teachers t  ON t.id  = a.teacher_id
+  LEFT JOIN public.classes  ca ON ca.id = a.class_id
+  LEFT JOIN public.classes  cb ON cb.id = b.class_id
+  WHERE a.teacher_id IS NOT NULL
+    AND a.is_break IS NOT TRUE AND b.is_break IS NOT TRUE
+    AND a.start_time < b.end_time
+    AND a.end_time > b.start_time;
+
+-- A view runs with its OWNER's rights, so it is not held back by the RLS on
+-- timetable_periods and teachers. This diagnostic is keyed on a teacher and
+-- would enumerate staff UUIDs, so name who may read it rather than inheriting
+-- the schema's default grants — the leak migration 098 was written to close.
+REVOKE ALL ON public.timetable_teacher_clashes FROM PUBLIC, anon;
+GRANT SELECT ON public.timetable_teacher_clashes TO authenticated;
+
+COMMENT ON VIEW public.timetable_teacher_clashes IS
+  'Teachers occupying two time-overlapping periods on one weekday. The DB '
+  'constraint blocks these unless a row is marked is_shared, so in a healthy '
+  'timetable every row here is an intentional combined activity. A row where '
+  'neither side is shared is a bug. Surfaced at /timetable/clashes.';
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Migration 123 — enrollment exit date (billing cutoff for leavers)
+-- (mirrored from scripts/migrations/erp/migration-123-enrollment-exit-date.sql)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Dues are computed, not stored: amountBilledToDate() charges every instalment
+-- whose due date has passed. It reads the clock and never the roster, so a
+-- student who left after the first quarter kept acquiring the second quarter's
+-- instalment and every one after it.
+--
+-- `exit_date` is the missing fact — the last day the student was on the roll.
+-- The dues maths clamps its "as of" date to it, so an instalment falling due
+-- after that date is never billed. It is consulted ONLY when the enrollment is
+-- in an exit status, which is why no CHECK ties the two together: a stale date
+-- on a re-activated enrollment is inert, and a constraint would break the bulk
+-- importers that write `status` directly.
+
+ALTER TABLE student_enrollments
+  ADD COLUMN IF NOT EXISTS exit_date date;
+
+COMMENT ON COLUMN student_enrollments.exit_date IS
+  'Last day the student was on the roll. Read ONLY when status is exited or '
+  'terminated, and then it is the billing cutoff: an instalment due after this '
+  'date is never charged. NULL on an exit means the dues maths falls back to '
+  'status_changed_at. Set by change_enrollment_status(); see '
+  'apps/erp/src/lib/fees.ts resolveBillingCutoff().';
+
+CREATE INDEX IF NOT EXISTS idx_student_enrollments_exit_date
+  ON student_enrollments (exit_date)
+  WHERE exit_date IS NOT NULL;
+
+ALTER TABLE student_status_history
+  ADD COLUMN IF NOT EXISTS effective_date date;
+
+COMMENT ON COLUMN student_status_history.effective_date IS
+  'The exit_date recorded with this transition, when one was supplied. Lets a '
+  'later correction to a leaving date be distinguished from the original exit.';
+
+-- change_enrollment_status(), superseding the migration-087 definition above.
+-- Same signature — p_updates gains an optional "exit_date" key per element, so
+-- callers that omit it keep working. Entering an exit status without a date
+-- defaults to CURRENT_DATE rather than leaving NULL, because a NULL would
+-- silently restore the unbounded billing this exists to stop; leaving an exit
+-- status clears the date so a re-admitted student resumes billing. The date is
+-- clamped to the academic year's end: billing for a year stops when the year
+-- does, whatever the office typed.
+
+CREATE OR REPLACE FUNCTION public.change_enrollment_status(
+  p_updates jsonb,
+  p_actor   uuid DEFAULT NULL,
+  p_source  text DEFAULT 'manual'
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_item        jsonb;
+  v_enrollment  record;
+  v_new_status  text;
+  v_reason      text;
+  v_exit_date   date;
+  v_year_end    date;
+  v_updated     int := 0;
+  v_skipped     int := 0;
+  v_inactive    uuid[] := ARRAY[]::uuid[];
+  v_reactivated uuid[] := ARRAY[]::uuid[];
+BEGIN
+  IF jsonb_typeof(p_updates) <> 'array' THEN
+    RAISE EXCEPTION 'p_updates must be a JSON array';
+  END IF;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_updates)
+  LOOP
+    v_new_status := v_item ->> 'status';
+    v_reason     := NULLIF(btrim(COALESCE(v_item ->> 'reason', '')), '');
+
+    SELECT se.id, se.student_id, se.class_id, se.academic_year_id, se.status
+      INTO v_enrollment
+      FROM student_enrollments se
+      WHERE se.id = (v_item ->> 'enrollment_id')::uuid
+      FOR UPDATE;
+
+    IF NOT FOUND THEN
+      v_skipped := v_skipped + 1;
+      CONTINUE;
+    END IF;
+
+    IF v_enrollment.status IS NOT DISTINCT FROM v_new_status THEN
+      v_skipped := v_skipped + 1;
+      CONTINUE;
+    END IF;
+
+    IF v_new_status IN ('terminated', 'exited') THEN
+      v_exit_date := COALESCE(
+        NULLIF(btrim(COALESCE(v_item ->> 'exit_date', '')), '')::date,
+        CURRENT_DATE
+      );
+      SELECT ay.end_date INTO v_year_end
+        FROM academic_years ay
+        WHERE ay.id = v_enrollment.academic_year_id;
+      IF v_year_end IS NOT NULL AND v_exit_date > v_year_end THEN
+        v_exit_date := v_year_end;
+      END IF;
+    ELSE
+      v_exit_date := NULL;
+    END IF;
+
+    INSERT INTO student_status_history (
+      student_id, enrollment_id, academic_year_id, class_id,
+      from_status, to_status, reason, source, changed_by, effective_date
+    ) VALUES (
+      v_enrollment.student_id, v_enrollment.id, v_enrollment.academic_year_id,
+      v_enrollment.class_id, v_enrollment.status, v_new_status, v_reason,
+      p_source, p_actor, v_exit_date
+    );
+
+    UPDATE student_enrollments
+      SET status            = v_new_status,
+          status_reason     = v_reason,
+          status_changed_at = now(),
+          status_changed_by = p_actor,
+          exit_date         = v_exit_date,
+          updated_at        = now()
+      WHERE id = v_enrollment.id;
+
+    IF v_new_status IN ('terminated', 'exited') THEN
+      v_inactive := v_inactive || v_enrollment.student_id;
+    ELSE
+      v_reactivated := v_reactivated || v_enrollment.student_id;
+    END IF;
+
+    v_updated := v_updated + 1;
+  END LOOP;
+
+  IF array_length(v_inactive, 1) > 0 THEN
+    UPDATE students
+      SET is_active = false, updated_at = now()
+      WHERE id = ANY(v_inactive) AND is_active IS DISTINCT FROM false;
+  END IF;
+
+  IF array_length(v_reactivated, 1) > 0 THEN
+    UPDATE students
+      SET is_active = true, updated_at = now()
+      WHERE id = ANY(v_reactivated)
+        AND id <> ALL(v_inactive)
+        AND is_active IS DISTINCT FROM true;
+  END IF;
+
+  RETURN jsonb_build_object('updated', v_updated, 'skipped', v_skipped);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.change_enrollment_status(jsonb, uuid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.change_enrollment_status(jsonb, uuid, text) FROM anon, authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Migration 124 — editor-aware RLS; fee_payments readable by a Fees editor
+-- (mirrored from scripts/migrations/erp/migration-124-fee-payments-editor-rls.sql)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The fee screens read fee_payments straight from the browser, so Postgres
+-- applies RLS — and the only SELECT paths were admin, the student, and their
+-- parents. A staff account holding the 'fees' editor grant matched none of
+-- them, so every read came back empty: "No payments recorded yet" against a
+-- student who had paid, the Dues register pricing the whole school at paid=0,
+-- and writes still succeeding through the service-role API routes, which
+-- invites recording the same receipt twice.
+--
+-- Same fault migration 084 fixed for students/student_enrollments; the money
+-- table was missed. Fixed feature-aware rather than role-coarse: with the
+-- (SELECT …) wrapping from migration 102 the check is one InitPlan per query,
+-- so precision costs nothing and no staff account gets every family's payment
+-- history just for being staff.
+--
+-- has_editor_capability() is the hook this database never had for
+-- editor_permissions. The tables still carrying the same gap — attendance,
+-- results, non_scholastic_assessments, marksheet_publications — each become a
+-- six-line follow-up now that it exists.
+
+CREATE OR REPLACE FUNCTION public.has_editor_capability(p_feature text)
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+      FROM public.profiles p
+     WHERE p.id = auth.uid()
+       AND (
+         p.role = 'admin'
+         OR EXISTS (
+           SELECT 1
+             FROM public.editor_permissions ep
+            WHERE ep.editor_id = p.id
+              AND ep.feature_key = p_feature
+         )
+       )
+  );
+$$;
+
+COMMENT ON FUNCTION public.has_editor_capability(text) IS
+  'True when the calling user holds this feature key: admins always, everyone '
+  'else via editor_permissions. The RLS-side counterpart of '
+  'verifyAdminOrEditor() in packages/shared/src/lib/verify-admin.ts. Call it '
+  'wrapped as (SELECT has_editor_capability(''key'')) so it is evaluated once '
+  'per query as an InitPlan rather than once per row — see migration 102.';
+
+-- PUBLIC's default EXECUTE is deliberately left in place: with no session the
+-- function returns false, and revoking it would turn an anonymous read of any
+-- table carrying this policy into a hard error instead of an empty result.
+GRANT EXECUTE ON FUNCTION public.has_editor_capability(text) TO authenticated;
+
+-- SELECT only. Every write already goes through a server route on the
+-- service-role client behind verifyAdminOrEditor('fees'); granting writes here
+-- would add a weaker second path that bypasses the change-request workflow.
+DROP POLICY IF EXISTS "fee_payments_select_fee_editor" ON public.fee_payments;
+CREATE POLICY "fee_payments_select_fee_editor"
+  ON public.fee_payments FOR SELECT
+  USING ((SELECT public.has_editor_capability('fees')));
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Migration 125 — editor-aware RLS for the remaining screens
+-- (mirrored from scripts/migrations/erp/migration-125-editor-rls-remaining-tables.sql)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Admin screens read from the browser, so RLS applies, and where no policy
+-- admits the caller it FILTERS ROWS RATHER THAN RAISING — the page renders
+-- empty with nothing anywhere to say the granted feature does not work.
+--
+-- 084 fixed students/student_enrollments; 124 fixed fee_payments and added
+-- has_editor_capability(). These five were the remainder: each was admin +
+-- teacher + student + parent with no staff path at all. Every other table an
+-- admin screen reads client-side was audited and already admits staff (most
+-- are read-by-anyone master data; students/enrollments/profiles carry explicit
+-- staff policies; fee_payments is feature-gated by 124).
+--
+--   attendance                  /attendance                        'attendance'
+--   results                     /exams/results                     'results'
+--   non_scholastic_assessments  /exams/non-scholastic-assessments  'non_scholastic_entry'
+--   marksheet_publications      /exams/publish                     'publish_results'
+--   ptm_notes                   /exams/ptm-notes                   'ptm_notes'
+--
+-- Each key is the one the middleware gate already requires for that path, so a
+-- policy grants exactly what ticking that box promises and nothing else — a
+-- staff member granted Attendance still cannot read marks.
+--
+-- SELECT only: none of the five is written from the browser. Marks entry,
+-- attendance marking, publishing and PTM notes all post to server routes
+-- running verifyAdminOrEditor() on the service-role client, and adding writes
+-- here would be a weaker second way in. No is_published filter, unlike the
+-- student/parent policies: an editor checking marks must see them before they
+-- are published, which is why the admin policy has no filter either.
+
+DROP POLICY IF EXISTS "attendance_select_editor" ON public.attendance;
+CREATE POLICY "attendance_select_editor"
+  ON public.attendance FOR SELECT
+  USING ((SELECT public.has_editor_capability('attendance')));
+
+DROP POLICY IF EXISTS "results_select_editor" ON public.results;
+CREATE POLICY "results_select_editor"
+  ON public.results FOR SELECT
+  USING ((SELECT public.has_editor_capability('results')));
+
+DROP POLICY IF EXISTS "non_scholastic_assessments_select_editor"
+  ON public.non_scholastic_assessments;
+CREATE POLICY "non_scholastic_assessments_select_editor"
+  ON public.non_scholastic_assessments FOR SELECT
+  USING ((SELECT public.has_editor_capability('non_scholastic_entry')));
+
+DROP POLICY IF EXISTS "marksheet_publications_select_editor"
+  ON public.marksheet_publications;
+CREATE POLICY "marksheet_publications_select_editor"
+  ON public.marksheet_publications FOR SELECT
+  USING ((SELECT public.has_editor_capability('publish_results')));
+
+DROP POLICY IF EXISTS "ptm_notes_select_editor" ON public.ptm_notes;
+CREATE POLICY "ptm_notes_select_editor"
+  ON public.ptm_notes FOR SELECT
+  USING ((SELECT public.has_editor_capability('ptm_notes')));
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Migration 126 — correct a leaving date after the fact
+-- (mirrored from scripts/migrations/erp/migration-126-set-enrollment-exit-date.sql)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- exit_date is the fee billing cutoff (migration 123). It is collected when a
+-- student is marked Exited/Terminated and backfilled for everyone who left
+-- before it existed — but where the paperwork lagged, that backfill lands on
+-- the day the exit was TYPED, and the student keeps instalments they were
+-- never meant to owe. Nothing could correct it: the date field only appears
+-- when moving INTO an exit status, and re-selecting a status a student already
+-- holds is a no-op change_enrollment_status() skips.
+--
+-- An RPC for the same reason migration 087's is one: the audit row and the
+-- write must not come apart, and PostgREST gives the route no transaction. The
+-- history row records from_status = to_status — the status did not change,
+-- only the date on it — with effective_date carrying the new value, so a
+-- correction reads differently from the original exit. status_changed_at,
+-- status_changed_by and status_reason are deliberately left alone.
+
+CREATE OR REPLACE FUNCTION public.set_enrollment_exit_date(
+  p_enrollment_id uuid,
+  p_exit_date     date,
+  p_note          text DEFAULT NULL,
+  p_actor         uuid DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_enrollment record;
+  v_year_end   date;
+  v_new        date;
+  v_note       text;
+  v_reason     text;
+BEGIN
+  IF p_exit_date IS NULL THEN
+    RAISE EXCEPTION 'A leaving date is required';
+  END IF;
+
+  SELECT se.id, se.student_id, se.class_id, se.academic_year_id,
+         se.status, se.exit_date
+    INTO v_enrollment
+    FROM student_enrollments se
+   WHERE se.id = p_enrollment_id
+     FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Enrollment not found';
+  END IF;
+
+  -- A leaving date only means anything for someone who has left. On an active
+  -- enrollment it would sit inert until some future status change, and the
+  -- dues maths would ignore it — so refuse rather than store a value that
+  -- looks set and does nothing.
+  IF v_enrollment.status NOT IN ('exited', 'terminated') THEN
+    RAISE EXCEPTION
+      'Only a student marked Exited or Terminated has a leaving date (this one is %)',
+      v_enrollment.status;
+  END IF;
+
+  -- A future date would bill instalments that have not been raised yet.
+  IF p_exit_date > CURRENT_DATE THEN
+    RAISE EXCEPTION 'A leaving date cannot be in the future';
+  END IF;
+
+  -- Billing for a session stops when the session does, whatever was typed.
+  SELECT ay.end_date INTO v_year_end
+    FROM academic_years ay
+   WHERE ay.id = v_enrollment.academic_year_id;
+
+  v_new := p_exit_date;
+  IF v_year_end IS NOT NULL AND v_new > v_year_end THEN
+    v_new := v_year_end;
+  END IF;
+
+  IF v_enrollment.exit_date IS NOT DISTINCT FROM v_new THEN
+    RETURN jsonb_build_object(
+      'changed', false,
+      'exit_date', v_new
+    );
+  END IF;
+
+  v_note := NULLIF(btrim(COALESCE(p_note, '')), '');
+
+  -- Self-describing, so the history row stands on its own a year later — and
+  -- long enough to satisfy the >= 5 character reason CHECK without forcing the
+  -- office to type a justification for a typo fix. A note, when given, is
+  -- appended rather than replacing it.
+  v_reason := 'Leaving date corrected from '
+           || COALESCE(v_enrollment.exit_date::text, '(not recorded)')
+           || ' to ' || v_new::text
+           || COALESCE(' — ' || v_note, '');
+
+  INSERT INTO student_status_history (
+    student_id, enrollment_id, academic_year_id, class_id,
+    from_status, to_status, reason, source, changed_by, effective_date
+  ) VALUES (
+    v_enrollment.student_id, v_enrollment.id, v_enrollment.academic_year_id,
+    v_enrollment.class_id,
+    v_enrollment.status, v_enrollment.status,  -- a correction, not a transition
+    v_reason, 'manual', p_actor, v_new
+  );
+
+  UPDATE student_enrollments
+     SET exit_date  = v_new,
+         updated_at = now()
+   WHERE id = v_enrollment.id;
+
+  RETURN jsonb_build_object(
+    'changed', true,
+    'exit_date', v_new,
+    'previous_exit_date', v_enrollment.exit_date
+  );
+END;
+$$;
+
+COMMENT ON FUNCTION public.set_enrollment_exit_date(uuid, date, text, uuid) IS
+  'Correct the leaving date on an enrollment that is already Exited or '
+  'Terminated, writing the matching student_status_history row in the same '
+  'transaction. The date is the fee billing cutoff (migration 123). Status, '
+  'status_reason and status_changed_at are left untouched — this records a '
+  'correction, not a transition.';
+
+-- Authorised in the route via verifyAdminOrEditorWithUser("students"), exactly
+-- as change_enrollment_status is. No grant to anon/authenticated.
+REVOKE ALL ON FUNCTION public.set_enrollment_exit_date(uuid, date, text, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_enrollment_exit_date(uuid, date, text, uuid) FROM anon, authenticated;
+
+-- ============================================================
+-- CLASS DIARY (Murlipura-local, migration-903-class-diary.sql)
+-- Homework, holiday homework, notices, fee reminders and photos
+-- posted to a class (or the whole school when class_id IS NULL).
+-- Reads/writes go through /api/class-diary (service role); the
+-- SELECT policies mirror the API scope.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS class_diary_posts (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- NULL = whole school.
+  class_id         uuid REFERENCES classes(id) ON DELETE CASCADE,
+  academic_year_id uuid REFERENCES academic_years(id) ON DELETE SET NULL,
+  subject_id       uuid REFERENCES subjects(id) ON DELETE SET NULL,
+  kind             text NOT NULL,
+  title            text NOT NULL,
+  body             text NOT NULL DEFAULT '',
+  -- The school day the post is for, in IST — not created_at, which is UTC and
+  -- lands on the previous day for anything posted before 05:30.
+  post_date        date NOT NULL DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')::date,
+  due_date         date,
+  attachments      jsonb NOT NULL DEFAULT '[]'::jsonb,
+  is_pinned        boolean NOT NULL DEFAULT false,
+  -- Rows sharing a batch_id were posted together to several classes.
+  batch_id         uuid,
+  -- SET NULL, not CASCADE: a teacher's posts outlive their login.
+  created_by       uuid REFERENCES profiles(id) ON DELETE SET NULL,
+  -- Denormalised so the feed still names the author after the profile goes.
+  author_name      text,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT class_diary_kind_known CHECK (
+    kind IN ('homework', 'holiday_homework', 'notice', 'fee_reminder', 'photos')
+  ),
+  CONSTRAINT class_diary_title_len CHECK (length(btrim(title)) BETWEEN 1 AND 200),
+  CONSTRAINT class_diary_body_len CHECK (length(body) <= 5000),
+  CONSTRAINT class_diary_attachments_array CHECK (jsonb_typeof(attachments) = 'array'),
+  CONSTRAINT class_diary_due_after_post CHECK (due_date IS NULL OR due_date >= post_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_diary_class_date
+  ON class_diary_posts (class_id, post_date DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_class_diary_school_wide
+  ON class_diary_posts (post_date DESC, created_at DESC) WHERE class_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_class_diary_created_by
+  ON class_diary_posts (created_by);
+CREATE INDEX IF NOT EXISTS idx_class_diary_subject
+  ON class_diary_posts (subject_id);
+CREATE INDEX IF NOT EXISTS idx_class_diary_year
+  ON class_diary_posts (academic_year_id);
+CREATE INDEX IF NOT EXISTS idx_class_diary_batch
+  ON class_diary_posts (batch_id) WHERE batch_id IS NOT NULL;
+
+DROP TRIGGER IF EXISTS set_updated_at_class_diary_posts ON class_diary_posts;
+CREATE TRIGGER set_updated_at_class_diary_posts
+  BEFORE UPDATE ON class_diary_posts
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Read receipts — the ERP's version of WhatsApp's blue ticks. One row per
+-- (post, reader); the teacher sees a count, never a list of who has not read.
+CREATE TABLE IF NOT EXISTS class_diary_reads (
+  post_id    uuid NOT NULL REFERENCES class_diary_posts(id) ON DELETE CASCADE,
+  profile_id uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  read_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (post_id, profile_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_diary_reads_profile
+  ON class_diary_reads (profile_id);
+
+-- ── RLS ─────────────────────────────────────────────────────────────────────
+ALTER TABLE class_diary_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE class_diary_reads ENABLE ROW LEVEL SECURITY;
+
+-- (select …) wrappers so each helper is evaluated once per statement rather
+-- than once per row (migration 102).
+DROP POLICY IF EXISTS "Admins and diary editors read class diary" ON class_diary_posts;
+CREATE POLICY "Admins and diary editors read class diary"
+  ON class_diary_posts FOR SELECT
+  USING (
+    (select public.get_user_role()) = 'admin'
+    OR (select public.has_editor_feature('class_diary'))
+  );
+
+DROP POLICY IF EXISTS "Teachers read their classes' diary" ON class_diary_posts;
+CREATE POLICY "Teachers read their classes' diary"
+  ON class_diary_posts FOR SELECT
+  USING (
+    (select public.get_user_role()) = 'teacher'
+    AND (
+      class_id IS NULL
+      OR class_id IN (SELECT public.get_my_class_ids())
+      OR created_by = (select auth.uid())
+    )
+  );
+
+DROP POLICY IF EXISTS "Students read their class diary" ON class_diary_posts;
+CREATE POLICY "Students read their class diary"
+  ON class_diary_posts FOR SELECT
+  USING (
+    (select public.get_user_role()) = 'student'
+    AND (
+      class_id IS NULL
+      OR class_id IN (
+        SELECT e.class_id
+        FROM student_enrollments e
+        JOIN academic_years y ON y.id = e.academic_year_id AND y.is_current
+        WHERE e.student_id = (select public.get_my_student_id())
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS "Parents read their children's class diary" ON class_diary_posts;
+CREATE POLICY "Parents read their children's class diary"
+  ON class_diary_posts FOR SELECT
+  USING (
+    (select public.get_user_role()) = 'parent'
+    AND (
+      class_id IS NULL
+      OR class_id IN (
+        SELECT e.class_id
+        FROM student_enrollments e
+        JOIN academic_years y ON y.id = e.academic_year_id AND y.is_current
+        WHERE e.student_id IN (SELECT public.get_my_children_ids())
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS "Users read their own diary receipts" ON class_diary_reads;
+CREATE POLICY "Users read their own diary receipts"
+  ON class_diary_reads FOR SELECT
+  USING (profile_id = (select auth.uid()));
+
+-- ── Storage ─────────────────────────────────────────────────────────────────
+-- Private. No storage.objects policies on purpose: uploads use signed upload
+-- URLs minted by /api/class-diary/upload-url after the scope check, and
+-- downloads use signed URLs minted by the feed route.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'class-diary', 'class-diary', false, 10485760,
+  ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf']
+)
+ON CONFLICT (id) DO UPDATE
+  SET public = EXCLUDED.public,
+      file_size_limit = EXCLUDED.file_size_limit,
+      allowed_mime_types = EXCLUDED.allowed_mime_types;
+

@@ -159,7 +159,9 @@ export function AdvancedTab({
         const { data, error } = await supabase
           .from("exam_types")
           .select(
-            "id, name, kind, max_marks, sort_order, academic_year_id"
+            // weightage seeds a class that has not set its own — without it
+            // the grid renders an empty box that the engine reads as zero.
+            "id, name, kind, max_marks, sort_order, academic_year_id, weightage"
           )
           .eq("academic_year_id", master.academic_year_id)
           .order("sort_order", { ascending: true });

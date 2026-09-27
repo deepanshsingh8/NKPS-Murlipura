@@ -16,6 +16,8 @@ export interface TeacherPeriod {
   id: string;
   day_of_week: number;
   period_number: number;
+  /** migration 119 — names the parallel track, e.g. "Basketball". */
+  group_label?: string | null;
   start_time: string;
   end_time: string;
   room: string | null;
@@ -71,9 +73,17 @@ export function TeacherWeekGrid({ periods, onMarkAbsent }: Props) {
     new Set(periods.map((p) => p.period_number))
   ).sort((a, b) => a - b);
 
-  const cellByDayPeriod = new Map<string, TeacherPeriod>();
+  // Array-valued, not one-per-slot. A cell can hold parallel groups
+  // (migration 119), and when it is marked shared the same teacher legitimately
+  // appears for several classes at once — a Map of single values silently drops
+  // all but the last, on the very screen an admin opens to check whether a
+  // teacher is free.
+  const cellByDayPeriod = new Map<string, TeacherPeriod[]>();
   for (const p of periods) {
-    cellByDayPeriod.set(`${p.day_of_week}|${p.period_number}`, p);
+    const key = `${p.day_of_week}|${p.period_number}`;
+    const bucket = cellByDayPeriod.get(key);
+    if (bucket) bucket.push(p);
+    else cellByDayPeriod.set(key, [p]);
   }
 
   return (
@@ -118,8 +128,8 @@ export function TeacherWeekGrid({ periods, onMarkAbsent }: Props) {
                 <div className="font-medium">P{pNum}</div>
               </td>
               {DAYS.map((d) => {
-                const cell = cellByDayPeriod.get(`${d.value}|${pNum}`);
-                if (!cell) {
+                const cells = cellByDayPeriod.get(`${d.value}|${pNum}`) ?? [];
+                if (cells.length === 0) {
                   return (
                     <td key={d.value} className="px-1 py-1">
                       <div className="w-full rounded-lg px-2 py-2 text-xs min-h-[56px] bg-gray-50 dark:bg-muted border border-dashed border-gray-200 dark:border-border text-gray-400 dark:text-gray-500 flex items-center justify-center">
@@ -128,39 +138,47 @@ export function TeacherWeekGrid({ periods, onMarkAbsent }: Props) {
                     </td>
                   );
                 }
-                const cls = pickOne(cell.classes);
-                const subj = pickOne(cell.subjects);
-                const className = cls
-                  ? `${cls.name}${cls.section ? "-" + cls.section : ""}`
-                  : "?";
                 return (
-                  <td key={d.value} className="px-1 py-1">
-                    <div
-                      className={`w-full rounded-lg px-2 py-2 text-xs min-h-[56px] ${
-                        cell.is_break
-                          ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"
-                          : "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
-                      }`}
-                    >
-                      {cell.is_break ? (
-                        <div className="font-medium text-amber-900 dark:text-amber-200">
-                          Break
-                        </div>
-                      ) : (
-                        <>
-                          <div className="font-medium text-navy-900 dark:text-white">
-                            {className}
+                  <td key={d.value} className="px-1 py-1 align-top">
+                    <div className="space-y-1">
+                      {cells.map((cell) => {
+                        const cls = pickOne(cell.classes);
+                        const subj = pickOne(cell.subjects);
+                        const className = cls
+                          ? `${cls.name}${cls.section ? "-" + cls.section : ""}`
+                          : "?";
+                        return (
+                          <div
+                            key={cell.id}
+                            className={`w-full rounded-lg px-2 py-2 text-xs min-h-[56px] ${
+                              cell.is_break
+                                ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800"
+                                : "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800"
+                            }`}
+                          >
+                            {cell.is_break ? (
+                              <div className="font-medium text-amber-900 dark:text-amber-200">
+                                Break
+                              </div>
+                            ) : (
+                              <>
+                                <div className="font-medium text-navy-900 dark:text-white">
+                                  {className}
+                                </div>
+                                <div className="text-gray-600 dark:text-gray-300 truncate">
+                                  {subj?.name ?? "—"}
+                                  {cell.group_label ? ` · ${cell.group_label}` : ""}
+                                </div>
+                                <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                                  {formatTime(cell.start_time)}–
+                                  {formatTime(cell.end_time)}
+                                  {cell.room ? ` · ${cell.room}` : ""}
+                                </div>
+                              </>
+                            )}
                           </div>
-                          <div className="text-gray-600 dark:text-gray-300 truncate">
-                            {subj?.name ?? "—"}
-                          </div>
-                          <div className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
-                            {formatTime(cell.start_time)}–
-                            {formatTime(cell.end_time)}
-                            {cell.room ? ` · ${cell.room}` : ""}
-                          </div>
-                        </>
-                      )}
+                        );
+                      })}
                     </div>
                   </td>
                 );

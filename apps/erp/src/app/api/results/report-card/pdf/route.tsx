@@ -214,11 +214,27 @@ export async function GET(request: Request) {
         });
       }
 
-      // Legacy per-exam branch: attendance is computed via
-      // `academic_years.is_current` inside getReportCardData; passing an
-      // explicit academicYearId here would mis-filter attendance to a year
-      // that may not be the current one. Always pass null in legacy mode.
-      const data = await getReportCardData(supabase, studentId, null);
+      // Legacy per-exam branch. The exam type IS year-scoped
+      // (UNIQUE(name, academic_year_id)), so it alone determines the session
+      // this report card belongs to — derive the year from it rather than
+      // trusting a client parameter.
+      //
+      // This used to pass null, because getReportCardData hardcoded
+      // `academic_years.is_current` for the attendance window and a supplied
+      // year was therefore mis-applied. That is fixed, so a past-session
+      // report card now shows THAT session's attendance and year label
+      // instead of the current one's.
+      const { data: examYear } = await supabase
+        .from("exam_types")
+        .select("academic_year_id")
+        .eq("id", examTypeId)
+        .maybeSingle();
+
+      const data = await getReportCardData(
+        supabase,
+        studentId,
+        (examYear?.academic_year_id as string | null) ?? null
+      );
       if (!data) {
         return NextResponse.json({ error: "Student not found" }, { status: 404 });
       }
@@ -408,7 +424,20 @@ export async function GET(request: Request) {
     // expensive; skip when not needed).
     let enriched: FinalResult = finalResult;
     if (masterRow.show_rank) {
-      const ranks = await computeRanksForClass(supabase, {
+      // Service-role client, NOT the caller's. Rank is only meaningful over
+      // the whole class, and computeRanksForClass starts by reading
+      // student_enrollments for the class — which RLS restricts to
+      // `student_id = get_my_student_id()` for a student and
+      // `student_id IN get_my_children_ids()` for a parent. On the caller's
+      // client the cohort therefore collapsed to one row and every parent's
+      // report card read "Rank 1". Staff are RLS-exempt here, so the defect
+      // was invisible from inside the school.
+      //
+      // Safe because authorization already happened: canViewReportCard above
+      // decides whether this caller may see this student at all, and
+      // includeUnpublished stays tied to callerIsStaff, so a parent still
+      // ranks against published marks only.
+      const ranks = await computeRanksForClass(createAdminClient(), {
         class_id: classId,
         academic_year_id: yearId,
         includeUnpublished: callerIsStaff,

@@ -101,7 +101,7 @@ export async function POST(request: Request) {
         .eq("id", newUser.user.id);
 
       // Vault the temporary password so it stays retrievable from the users
-      // page until the account sets its own (migration 088). The welcome email
+      // page until the account sets its own (migration 902). The welcome email
       // below is best-effort; this is the fallback channel.
       await storeTempPassword(supabase, newUser.user.id, password, user.id);
     }
@@ -464,21 +464,40 @@ export async function DELETE(request: Request) {
       await supabase.from("students").delete().eq("id", profile.student_id);
     }
 
-    // Delete linked teachers record if exists. Cascade to the linked
-    // staff_members row too so the public staff listing reflects the change
-    // — if the admin wants to keep the public listing entry as a non-portal
-    // staff record, they should unlink the teacher from staff first.
+    // Retire — do NOT delete — the linked teachers record, and deactivate the
+    // linked staff_members row with it so the public staff listing follows.
+    //
+    // This used to delete both. Two reasons it no longer does (migration 116):
+    //   1. It could not work. `timetable_periods.teacher_id` and
+    //      `class_subjects.teacher_id` have no ON DELETE rule, so deleting a
+    //      teacher who has ever been timetabled fails with 23503 and the whole
+    //      user deletion aborted on it.
+    //   2. Even when it did work it erased who taught what — the schedule and
+    //      subject-assignment history of a real person, gone because their
+    //      portal login was removed.
+    // Removing a login is not the same act as someone leaving the school, so
+    // the teacher record survives, flagged inactive, and disappears from every
+    // teacher dropdown the same way a retirement does.
     if (profile?.teacher_id) {
+      const today = new Date().toISOString().slice(0, 10);
       const { data: teacherRow } = await supabase
         .from("teachers")
-        .select("staff_member_id")
+        .select("staff_member_id, date_of_leaving")
         .eq("id", profile.teacher_id)
         .maybeSingle();
-      await supabase.from("teachers").delete().eq("id", profile.teacher_id);
+      await supabase
+        .from("teachers")
+        .update({
+          is_active: false,
+          date_of_leaving: teacherRow?.date_of_leaving ?? today,
+          leaving_reason: "Portal user deleted",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", profile.teacher_id);
       if (teacherRow?.staff_member_id) {
         await supabase
           .from("staff_members")
-          .delete()
+          .update({ is_active: false, updated_at: new Date().toISOString() })
           .eq("id", teacherRow.staff_member_id);
       }
     }

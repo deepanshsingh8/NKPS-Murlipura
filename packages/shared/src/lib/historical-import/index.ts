@@ -2,5 +2,6 @@
 
 export * from "./class-name-map";
 export * from "./parse-account-wise-fees";
+export * from "./parse-head-wise-day-book";
 export * from "./parse-greensheet-results";
 export * from "./types";

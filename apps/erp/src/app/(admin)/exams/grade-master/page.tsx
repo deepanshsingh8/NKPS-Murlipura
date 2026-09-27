@@ -246,7 +246,7 @@ export default function GradeMasterPage() {
                         size="icon-sm"
                         onClick={() => openEdit(scale)}
                         aria-label="Edit grade scale"
-                        className="text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                        className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30"
                         title="Edit scale"
                       >
                         <Pencil className="h-4 w-4" />
@@ -256,7 +256,7 @@ export default function GradeMasterPage() {
                         size="icon-sm"
                         onClick={() => setDeleteTarget(scale)}
                         aria-label="Delete grade scale"
-                        className="text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                        className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                         title="Delete scale"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -269,7 +269,7 @@ export default function GradeMasterPage() {
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2">
                       Grade Bands
                     </p>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5"> {/* mobile-layout-ok: grade pills, "A+" and a range */}
                       {scale.bands.map((b, i) => (
                         <div
                           key={i}
@@ -531,7 +531,7 @@ function EditScaleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-4xl max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {isCreating ? "New Grade Scale" : "Edit Grade Scale"}
@@ -642,7 +642,7 @@ function EditScaleDialog({
                       size="icon-sm"
                       onClick={() => removeBand(i)}
                       aria-label="Remove grade band"
-                      className="text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                      className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                       title="Remove band"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -842,7 +842,7 @@ function DeleteScaleDialog({
           <div className="space-y-2">
             <Label>Promote to default:</Label>
             {candidates.length === 0 ? (
-              <p className="text-xs text-red-600">
+              <p className="text-xs text-red-600 dark:text-red-400">
                 No other {scale.scope} scales exist. Create one first, then come back.
               </p>
             ) : (

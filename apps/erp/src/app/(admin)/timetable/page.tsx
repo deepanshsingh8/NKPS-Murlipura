@@ -5,6 +5,14 @@ import Link from "next/link";
 import { createClient } from "@nkps/shared/lib/supabase/client";
 import { useUrlState } from "@nkps/shared/lib/hooks/use-url-state";
 import { Button } from "@nkps/shared/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@nkps/shared/components/ui/dropdown-menu";
+import { AcademicSessionPicker } from "@nkps/shared/components/AcademicSessionPicker";
+import { useAcademicSession } from "@nkps/shared/lib/hooks/use-academic-session";
 import { Input } from "@nkps/shared/components/ui/input";
 import { Label } from "@nkps/shared/components/ui/label";
 import {
@@ -22,10 +30,17 @@ import {
   SelectValue,
 } from "@nkps/shared/components/ui/select";
 import { toast } from "sonner";
-import { Plus, Trash2, Loader2, Clock, CalendarRange, Info } from "lucide-react";
-import { adminApi } from "@nkps/shared/lib/admin-api";
+import { Plus, Trash2, Loader2, Clock, CalendarRange, Info, Printer, ChevronDown } from "lucide-react";
+import { adminApi, adminFetch } from "@nkps/shared/lib/admin-api";
 import { formatClassName, formatShortDate } from "@nkps/shared/lib/utils";
+import { teacherOptions } from "@nkps/shared/lib/teacher-options";
 import type { Class, Subject, Teacher, TimetablePeriod } from "@nkps/shared/types";
+import { NativeSelect } from "@nkps/shared/components/ui/native-select";
+
+function defaultDay(): number {
+  const today = new Date().getDay(); // 0 = Sunday
+  return today >= 1 && today <= 6 ? today : 1;
+}
 
 const DAYS = [
   { value: 1, label: "Monday" },
@@ -82,6 +97,7 @@ export default function AdminTimetablePage() {
   const [loading, setLoading] = useState(true);
   const [periodsLoading, setPeriodsLoading] = useState(false);
 
+  const [mobileDay, setMobileDay] = useState(defaultDay);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -96,15 +112,27 @@ export default function AdminTimetablePage() {
     start_time: "08:00",
     end_time: "08:45",
     room: "",
+    // migration 119 — which parallel track of the cell this is, what to call
+    // it, and whether the teacher is legitimately with several classes at once.
+    group_no: 0,
+    group_label: "",
+    is_shared: false,
   });
 
-  useEffect(() => {
+const session = useAcademicSession();
+  const sessionId = session.sessionId;
+
+    useEffect(() => {
     async function fetchData() {
-      const { data: currentYear } = await supabase
+      // Period templates and teacher assignments are year-scoped, so the
+      // grid follows the session picker.
+      let yearQuery = supabase
         .from("academic_years")
-        .select("id, name, start_date, end_date")
-        .eq("is_current", true)
-        .single();
+        .select("id, name, start_date, end_date");
+      yearQuery = sessionId
+        ? yearQuery.eq("id", sessionId)
+        : yearQuery.eq("is_current", true);
+      const { data: currentYear } = await yearQuery.maybeSingle();
 
       if (currentYear) {
         setAcademicYear(currentYear as AcademicYearInfo);
@@ -124,11 +152,11 @@ export default function AdminTimetablePage() {
           .select("*")
           .eq("is_active", true)
           .order("name"),
-        supabase
-          .from("teachers")
-          .select("*")
-          .eq("is_active", true)
-          .order("full_name"),
+        // Retired teachers included on purpose: a period saved before they
+        // left still names them, and dropping them from the list would render
+        // the Select blank and let the next save wipe the assignment.
+        // teacherOptions() keeps them out of the pickable set. (migration 116)
+        supabase.from("teachers").select("*").order("full_name"),
       ]);
 
       setClasses((classesRes.data as Class[]) ?? []);
@@ -139,7 +167,7 @@ export default function AdminTimetablePage() {
 
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionId]);
 
   const fetchPeriods = useCallback(async () => {
     if (!selectedClassId) {
@@ -155,7 +183,10 @@ export default function AdminTimetablePage() {
       )
       .eq("class_id", selectedClassId)
       .order("day_of_week")
-      .order("period_number");
+      .order("period_number")
+      // Parallel groups share a period number (migration 119); order them so
+      // the grid reads the same on every load.
+      .order("group_no");
 
     if (error) {
       toast.error("Failed to fetch timetable");
@@ -181,36 +212,69 @@ export default function AdminTimetablePage() {
     fetchPeriods();
   }, [fetchPeriods]);
 
+  // A cell holds one row per parallel group (migration 119) — Games split into
+  // basketball/badminton/cricket, or an XI/XII period running IP alongside
+  // P.Ed. Ordinary cells are a list of one and look exactly as they did.
+  const getCellGroups = (day: number, period: number) =>
+    periods
+      .filter((p) => p.day_of_week === day && p.period_number === period)
+      .sort((a, b) => (a.group_no ?? 0) - (b.group_no ?? 0));
+
+  /** The cell's primary group — the row every pre-119 reader means. */
   const getCellData = (day: number, period: number) =>
-    periods.find((p) => p.day_of_week === day && p.period_number === period);
+    getCellGroups(day, period).find((p) => (p.group_no ?? 0) === 0) ??
+    getCellGroups(day, period)[0];
+
+  /** Load one group of the open cell into the form. */
+  const loadGroup = (day: number, period: number, g: PeriodCell) => {
+    const defaultPeriod = periodTimeDefaults(period);
+    setEditingId(g.id);
+    setFormData({
+      day_of_week: String(day),
+      period_number: String(period),
+      subject_id: g.subject_id ?? "",
+      teacher_id: g.teacher_id ?? "",
+      start_time: g.start_time ?? defaultPeriod.start,
+      end_time: g.end_time ?? defaultPeriod.end,
+      room: g.room ?? "",
+      group_no: g.group_no ?? 0,
+      group_label: g.group_label ?? "",
+      is_shared: g.is_shared ?? false,
+    });
+  };
+
+  /** Start a blank group in the open cell, taking the next free group number. */
+  const startNewGroup = (day: number, period: number) => {
+    const groups = getCellGroups(day, period);
+    const defaultPeriod = periodTimeDefaults(period);
+    // Parallel groups share the cell's times by definition, so inherit them
+    // from whatever is already there rather than making the admin retype.
+    const template = groups[0];
+    let nextNo = 0;
+    const used = new Set(groups.map((g) => g.group_no ?? 0));
+    while (used.has(nextNo)) nextNo++;
+    setEditingId(null);
+    setFormData({
+      day_of_week: String(day),
+      period_number: String(period),
+      subject_id: template?.subject_id ?? "",
+      teacher_id: "",
+      start_time: template?.start_time ?? defaultPeriod.start,
+      end_time: template?.end_time ?? defaultPeriod.end,
+      room: template?.room ?? "",
+      group_no: nextNo,
+      group_label: "",
+      // A second group in a cell is nearly always a parallel activity, and the
+      // teacher of one is usually with other sections too. Pre-tick it rather
+      // than let the first save fail on the clash constraint.
+      is_shared: template?.is_shared ?? nextNo > 0,
+    });
+  };
 
   const openDialog = (day: number, period: number) => {
     const existing = getCellData(day, period);
-    const defaultPeriod = periodTimeDefaults(period);
-
-    if (existing) {
-      setEditingId(existing.id);
-      setFormData({
-        day_of_week: String(day),
-        period_number: String(period),
-        subject_id: existing.subject_id ?? "",
-        teacher_id: existing.teacher_id ?? "",
-        start_time: existing.start_time ?? defaultPeriod?.start ?? "08:00",
-        end_time: existing.end_time ?? defaultPeriod?.end ?? "08:45",
-        room: existing.room ?? "",
-      });
-    } else {
-      setEditingId(null);
-      setFormData({
-        day_of_week: String(day),
-        period_number: String(period),
-        subject_id: "",
-        teacher_id: "",
-        start_time: defaultPeriod?.start ?? "08:00",
-        end_time: defaultPeriod?.end ?? "08:45",
-        room: "",
-      });
-    }
+    if (existing) loadGroup(day, period, existing);
+    else startNewGroup(day, period);
     setDialogOpen(true);
   };
 
@@ -233,6 +297,9 @@ export default function AdminTimetablePage() {
       start_time: formData.start_time,
       end_time: formData.end_time,
       room: formData.room || null,
+      group_no: formData.group_no,
+      group_label: formData.group_label.trim() || null,
+      is_shared: formData.is_shared,
     };
 
     const result = editingId
@@ -251,7 +318,13 @@ export default function AdminTimetablePage() {
     if (!result.success) {
       toast.error(result.error || "Failed to save");
     } else {
-      toast.success(editingId ? "Period updated" : "Period added");
+      toast.success(
+        editingId
+          ? "Period updated"
+          : formData.group_no > 0
+            ? "Group added to the period"
+            : "Period added"
+      );
       setDialogOpen(false);
       fetchPeriods();
     }
@@ -260,7 +333,15 @@ export default function AdminTimetablePage() {
 
   const handleDelete = async () => {
     if (!editingId) return;
-    if (!confirm("Remove this period?")) return;
+    const isGroup = formData.group_no > 0;
+    if (
+      !confirm(
+        isGroup
+          ? "Remove this group from the period? The other groups stay."
+          : "Remove this period?"
+      )
+    )
+      return;
 
     const result = await adminApi({
       action: "delete",
@@ -273,7 +354,38 @@ export default function AdminTimetablePage() {
       return;
     }
 
-    toast.success("Period removed");
+    // Every reader that wants "the" row of a cell asks for group 0 — this
+    // page's period-time header, and timetable_assignment_drift in SQL. So if
+    // the main group has just gone and parallel ones remain, promote the
+    // lowest of them rather than leaving the cell headless. (migration 119)
+    if (!isGroup) {
+      const survivors = getCellGroups(
+        parseInt(formData.day_of_week),
+        parseInt(formData.period_number)
+      ).filter((g) => g.id !== editingId);
+      if (survivors.length > 0) {
+        const promote = survivors[0];
+        const promoted = await adminApi({
+          action: "update",
+          table: "timetable_periods",
+          match: { column: "id", value: promote.id },
+          data: { group_no: 0 },
+        });
+        if (!promoted.success) {
+          // The delete already happened, so say what is left rather than
+          // pretending nothing changed.
+          toast.error(
+            promoted.error ||
+              "Period removed, but the remaining group could not be made the main one."
+          );
+          setDialogOpen(false);
+          fetchPeriods();
+          return;
+        }
+      }
+    }
+
+    toast.success(isGroup ? "Group removed" : "Period removed");
     setDialogOpen(false);
     fetchPeriods();
   };
@@ -296,8 +408,28 @@ export default function AdminTimetablePage() {
       ...extraPeriodNums,
     ])
   ).sort((a, b) => a - b);
+  // The groups of the cell the dialog is open on. Derived rather than stored,
+  // so it refreshes with `periods` after a save. (migration 119)
+  const dialogGroups = dialogOpen
+    ? getCellGroups(
+        parseInt(formData.day_of_week),
+        parseInt(formData.period_number)
+      )
+    : [];
+
+  // Active teachers to pick from, plus whoever this period already names even
+  // if they have since been retired. (migration 116)
+  const teacherChoices = teacherOptions(
+    teachers.filter((t) => t.is_active),
+    formData.teacher_id,
+    teachers
+  );
   const periodRows = allPeriodNums.map((num) => {
-    const cell = periods.find((p) => p.period_number === num);
+    // Primary group only: parallel groups share the cell's times, and reading
+    // an arbitrary one made the header depend on fetch order. (migration 119)
+    const cell = periods.find(
+      (p) => p.period_number === num && (p.group_no ?? 0) === 0
+    );
     const def = periodTimeDefaults(num);
     return {
       num,
@@ -306,31 +438,123 @@ export default function AdminTimetablePage() {
     };
   });
 
+  const handlePrint = async () => {
+    if (!selectedClassId) return;
+    const res = await adminFetch(
+      `/api/timetable/sheet?class_id=${selectedClassId}`
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      toast.error(body.error ?? "Failed to generate the timetable");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+
+  // One cell of the timetable. Lifted out of the <td> so the week table and
+  // the phone's day view draw the identical thing — a cell that renders
+  // differently depending on which layout you are in is a bug waiting to be
+  // reported as "the timetable is wrong on my phone".
+  const renderCell = (dayValue: number, periodNum: number) => {
+    const groups = getCellGroups(dayValue, periodNum);
+    const cell = groups[0];
+    const isLunch = cell?.is_break === true;
+    return (
+                        <button
+                          onClick={() => openDialog(dayValue, periodNum)}
+                          className={`w-full rounded-lg px-2 py-2 text-xs text-left transition-colors min-h-[56px] ${
+                            isLunch
+                              ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 hover:bg-amber-100"
+                              : cell
+                                ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/30"
+                                : "bg-gray-50 dark:bg-muted border border-dashed border-gray-200 dark:border-border hover:bg-gray-100 dark:hover:bg-muted hover:border-gray-300 dark:hover:border-gray-600"
+                          }`}
+                        >
+                          {isLunch ? (
+                            <div className="font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1">
+                              ☕ Lunch
+                            </div>
+                          ) : groups.length > 0 ? (
+                            <div className="space-y-1">
+                              {groups.map((g) => (
+                                <div key={g.id}>
+                                  <div className="font-medium text-navy-900 dark:text-white truncate">
+                                    {g.group_label
+                                      ? `${g.group_label} · ${g.subject_name}`
+                                      : g.subject_name}
+                                  </div>
+                                  {g.teacher_name && (
+                                    <div className="text-gray-500 dark:text-gray-400 truncate">
+                                      {g.teacher_name}
+                                    </div>
+                                  )}
+                                  {g.room && (
+                                    <div className="text-gray-400 dark:text-gray-500 truncate">
+                                      {g.room}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                              {groups.some((g) => g.is_shared) && (
+                                <div className="text-[10px] uppercase tracking-wide text-cyan-700 dark:text-cyan-400">  {/* color-ok: cyan is the Timetable module accent */}
+                                  Shared
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-gray-300 dark:text-gray-600 text-center">
+                              <Plus className="h-3 w-3 mx-auto" />
+                            </div>
+                          )}
+                        </button>
+    );
+  };
+
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
         <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
           Timetable
         </h1>
-        <div className="flex gap-2 flex-wrap">
-          <Link
-            href="/timetable/templates"
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 dark:border-border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-muted"
+        <div className="flex gap-2 flex-wrap items-center">
+          <AcademicSessionPicker state={session} />
+          {/* Templates, Auto Generate and Import are each already a sidebar
+              entry under Timetable, so as three more buttons here they were
+              a second doorway to the same three rooms — and on a phone they
+              wrapped into two rows of chrome above a timetable that had not
+              been drawn yet. One menu keeps them reachable from the screen
+              they are used from without spending the width. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" className="gap-1.5" />}
+            >
+              Set up
+              <ChevronDown className="h-4 w-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem render={<Link href="/timetable/templates" />}>
+                Period templates
+              </DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/timetable/generate" />}>
+                Auto generate
+              </DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/timetable/import" />}>
+                Import from Excel
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="outline"
+            onClick={handlePrint}
+            disabled={!selectedClassId}
           >
-            Templates
-          </Link>
-          <Link
-            href="/timetable/generate"
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 dark:border-border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-muted"
-          >
-            Auto Generate
-          </Link>
-          <Link
-            href="/timetable/import"
-            className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 dark:border-border px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-muted"
-          >
-            Import (Excel)
-          </Link>
+            <Printer className="h-4 w-4 mr-1" />
+            Print
+          </Button>
         </div>
       </div>
 
@@ -355,7 +579,7 @@ export default function AdminTimetablePage() {
       </div>
 
       {!selectedClassId ? (
-        <div className="erp-table-container p-6">
+        <div className="erp-table-container p-4 sm:p-6">
           <div className="mx-auto max-w-md text-center py-12">
             <div className="h-14 w-14 rounded-2xl bg-navy-900/5 dark:bg-white/5 flex items-center justify-center mx-auto mb-4">
               <Clock className="h-7 w-7 text-navy-900/70 dark:text-white/70" />
@@ -418,7 +642,49 @@ export default function AdminTimetablePage() {
               <Plus className="h-4 w-4 mr-1" /> Add period
             </Button>
           </div>
-          <div className="erp-table-container overflow-x-auto">
+          {/* Phone: one day at a time.
+              The week is Period x six days. In a horizontal scroller that is
+              a grid you drag sideways through with no column headers in
+              view, so you lose track of which day you are editing. Pick the
+              day, read the day. renderCell is shared with the table below,
+              so the two cannot disagree. */}
+          <div className="sm:hidden">
+            <div className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1 dark:bg-muted"> {/* mobile-layout-ok: six three-letter day chips */}
+              {DAYS.map((d) => (
+                <button
+                  key={d.value}
+                  onClick={() => setMobileDay(d.value)}
+                  aria-current={mobileDay === d.value ? "true" : undefined}
+                  className={`rounded-lg px-2 py-2 text-sm font-medium transition-colors ${
+                    mobileDay === d.value
+                      ? "bg-white dark:bg-card text-navy-900 dark:text-white shadow-sm"
+                      : "text-gray-500 dark:text-gray-400"
+                  }`}
+                >
+                  {d.label.slice(0, 3)}
+                </button>
+              ))}
+            </div>
+            <ul className="space-y-2">
+              {periodRows.map((dp) => (
+                <li key={dp.num} className="flex items-start gap-3">
+                  <div className="w-16 shrink-0 pt-2 text-gray-600 dark:text-gray-300">
+                    <div className="text-sm font-medium">
+                      {dp.num === 0 ? "Zero" : `P${dp.num}`}
+                    </div>
+                    <div className="text-[11px] text-gray-400 dark:text-gray-500">
+                      {dp.start}-{dp.end}
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    {renderCell(mobileDay, dp.num)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="erp-table-container hidden overflow-x-auto overscroll-x-contain sm:block">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-muted">
@@ -446,50 +712,11 @@ export default function AdminTimetablePage() {
                       {dp.start}-{dp.end}
                     </div>
                   </td>
-                  {DAYS.map((d) => {
-                    const cell = getCellData(d.value, dp.num);
-                    const isLunch = cell?.is_break === true;
-                    return (
-                      <td key={d.value} className="px-1 py-1">
-                        <button
-                          onClick={() => openDialog(d.value, dp.num)}
-                          className={`w-full rounded-lg px-2 py-2 text-xs text-left transition-colors min-h-[56px] ${
-                            isLunch
-                              ? "bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 hover:bg-amber-100"
-                              : cell
-                                ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/30"
-                                : "bg-gray-50 dark:bg-muted border border-dashed border-gray-200 dark:border-border hover:bg-gray-100 dark:hover:bg-muted hover:border-gray-300 dark:hover:border-gray-600"
-                          }`}
-                        >
-                          {isLunch ? (
-                            <div className="font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1">
-                              ☕ Lunch
-                            </div>
-                          ) : cell ? (
-                            <>
-                              <div className="font-medium text-navy-900 dark:text-white truncate">
-                                {cell.subject_name}
-                              </div>
-                              {cell.teacher_name && (
-                                <div className="text-gray-500 dark:text-gray-400 truncate">
-                                  {cell.teacher_name}
-                                </div>
-                              )}
-                              {cell.room && (
-                                <div className="text-gray-400 dark:text-gray-500 truncate">
-                                  {cell.room}
-                                </div>
-                              )}
-                            </>
-                          ) : (
-                            <div className="text-gray-300 dark:text-gray-600 text-center">
-                              <Plus className="h-3 w-3 mx-auto" />
-                            </div>
-                          )}
-                        </button>
+                  {DAYS.map((d) => (
+                      <td key={d.value} className="px-1 py-1 align-top">
+                        {renderCell(d.value, dp.num)}
                       </td>
-                    );
-                  })}
+                  ))}
                 </tr>
               ))}
             </tbody>
@@ -503,30 +730,91 @@ export default function AdminTimetablePage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10">
-                <Clock className="h-5 w-5 text-cyan-600" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/10">  {/* color-ok: cyan is the Timetable module accent */}
+                <Clock className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
               </div>
               <div>
                 <DialogTitle>{editingId ? "Edit Period" : "Add Period"}</DialogTitle>
-                <p className="text-xs text-gray-500 mt-0.5">{editingId ? "Update period details" : "Add a new period to the timetable"}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {editingId
+                    ? "Update period details"
+                    : formData.group_no > 0
+                      ? "Another group running in the same period"
+                      : "Add a new period to the timetable"}
+                </p>
               </div>
             </div>
           </DialogHeader>
+          {/* Groups already in this cell. A period with one group — almost all
+              of them — shows a single chip and reads as it always did.
+              (migration 119) */}
+          {dialogGroups.length > 0 && (
+            <div className="rounded-lg border border-gray-200 dark:border-border p-2">
+              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                {dialogGroups.length === 1
+                  ? "This period"
+                  : `${dialogGroups.length} groups in this period`}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {dialogGroups.map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() =>
+                      loadGroup(
+                        parseInt(formData.day_of_week),
+                        parseInt(formData.period_number),
+                        g
+                      )
+                    }
+                    className={`rounded-md border px-2 py-1 text-xs transition-colors ${
+                      editingId === g.id
+                        ? "border-cyan-400 bg-cyan-50 text-cyan-800 dark:border-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-300" // color-ok: cyan is the Timetable module accent, matching its hub tile
+                        : "border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-border dark:text-gray-300 dark:hover:bg-muted"
+                    }`}
+                  >
+                    {g.group_label || g.subject_name || `Group ${g.group_no ?? 0}`}
+                    {g.teacher_name ? (
+                      <span className="ml-1 opacity-60">· {g.teacher_name}</span>
+                    ) : null}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    startNewGroup(
+                      parseInt(formData.day_of_week),
+                      parseInt(formData.period_number)
+                    )
+                  }
+                  className="rounded-md border border-dashed border-gray-300 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-muted"
+                >
+                  <Plus className="mr-1 inline h-3 w-3" />
+                  Add group
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-gray-400 dark:text-gray-500">
+                Several teachers in one period — games split by sport, or two
+                optional subjects side by side.
+              </p>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Day</Label>
-                <select
+                <NativeSelect
                   value={formData.day_of_week}
                   disabled
-                  className="w-full rounded-md border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm bg-gray-50 dark:bg-muted dark:text-gray-300 h-9"
+                  className="w-full"
                 >
                   {DAYS.map((d) => (
                     <option key={d.value} value={d.value}>
                       {d.label}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Period</Label>
@@ -537,7 +825,7 @@ export default function AdminTimetablePage() {
                       : `Period ${formData.period_number}`
                   }
                   disabled
-                  className="bg-gray-50 h-9"
+                  className="bg-gray-50 dark:bg-muted h-9"
                 />
               </div>
             </div>
@@ -567,10 +855,7 @@ export default function AdminTimetablePage() {
               <Label className="text-xs font-medium">Teacher (optional)</Label>
               <Select
                 value={formData.teacher_id}
-                items={[
-                  { value: "none", label: "None" },
-                  ...teachers.map((t) => ({ value: t.id, label: `${t.full_name} (${t.employee_id})` })),
-                ]}
+                items={[{ value: "none", label: "None" }, ...teacherChoices]}
                 onValueChange={(val) =>
                   setFormData({
                     ...formData,
@@ -583,15 +868,15 @@ export default function AdminTimetablePage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
-                  {teachers.map((t) => (
-                    <SelectItem key={t.id} value={t.id} label={`${t.full_name} (${t.employee_id})`}>
-                      {t.full_name} ({t.employee_id})
+                  {teacherChoices.map((t) => (
+                    <SelectItem key={t.value} value={t.value} label={t.label}>
+                      {t.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Start Time</Label>
                 <Input
@@ -626,6 +911,42 @@ export default function AdminTimetablePage() {
                 }
               />
             </div>
+            <div className="space-y-1">
+              <Label className="text-xs font-medium">
+                Group name (optional)
+              </Label>
+              <Input
+                className="h-9"
+                placeholder="e.g. Basketball"
+                value={formData.group_label}
+                onChange={(e) =>
+                  setFormData({ ...formData, group_label: e.target.value })
+                }
+              />
+              <p className="text-[11px] text-gray-400">
+                Only needed when the subject does not say it — three Games
+                groups called Basketball, Badminton and Cricket.
+              </p>
+            </div>
+            <label className="flex cursor-pointer items-start gap-2 rounded-lg bg-gray-50 p-2.5 dark:bg-muted">
+              <input
+                type="checkbox"
+                checked={formData.is_shared}
+                onChange={(e) =>
+                  setFormData({ ...formData, is_shared: e.target.checked })
+                }
+                className="mt-0.5 rounded border-gray-300 dark:border-gray-600 text-navy-900 dark:text-white focus:ring-navy-900"
+              />
+              <span className="text-xs text-gray-700 dark:text-gray-300">
+                <span className="font-medium">Shared activity</span> — this
+                teacher is with other classes at the same time.
+                <span className="block text-gray-500 dark:text-gray-400">
+                  Normally a teacher cannot be in two places at once and saving
+                  would be refused. Tick this for a games period where one coach
+                  takes several sections together.
+                </span>
+              </span>
+            </label>
             <DialogFooter>
               {editingId && (
                 <Button
@@ -648,7 +969,7 @@ export default function AdminTimetablePage() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

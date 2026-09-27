@@ -43,3 +43,14 @@ export function staffPortalRole(category: string): StaffPortalRole | null {
   if (OFFICE_CATEGORIES.has(category)) return "staff";
   return null;
 }
+
+// The three families of staff the admin directory is organised around. They
+// are the same partition the login rules use — teaching, office, and the rest
+// — so the tabs on /people/staff can never disagree with who gets a login.
+export type StaffGroup = "teaching" | "office" | "support";
+
+export function staffCategoryGroup(category: string): StaffGroup {
+  if (TEACHING_CATEGORIES.has(category)) return "teaching";
+  if (OFFICE_CATEGORIES.has(category)) return "office";
+  return "support";
+}

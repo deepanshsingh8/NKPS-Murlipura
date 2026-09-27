@@ -26,6 +26,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import {
   Select,
   SelectContent,
@@ -102,7 +103,7 @@ export default function AdminDisclosurePage() {
     <div>
       <div className="flex items-center gap-3 mb-6">
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-          <ScrollText className="h-5 w-5 text-amber-600" />
+          <ScrollText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
         </div>
         <div>
           <h1 className="font-heading text-2xl font-bold text-navy-900 dark:text-white">
@@ -211,7 +212,7 @@ function TextItemsTab({
   };
 
   return (
-    <div className="erp-table-container p-6">
+    <div className="erp-table-container p-4 sm:p-6">
       <div className="space-y-4">
         {items.map((item) => (
           <div
@@ -245,7 +246,7 @@ function TextItemsTab({
           <Button
             onClick={handleSaveAll}
             disabled={saving || !hasChanges}
-            className="bg-navy-900 hover:bg-navy-800 text-white"
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
           >
             {saving ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -340,7 +341,7 @@ function DocumentsTab({
           <div className="flex items-start justify-between gap-4 mb-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
-                <FileText className="h-4 w-4 text-blue-600" />
+                <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-navy-900 dark:text-white truncate">
@@ -348,7 +349,7 @@ function DocumentsTab({
                 </p>
                 {doc.file_url ? (
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className="inline-flex items-center gap-1 text-xs text-green-600 font-medium">
+                    <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium">
                       <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
                       Uploaded
                     </span>
@@ -416,7 +417,7 @@ function DocumentsTab({
               disabled={
                 !pendingFiles[doc.doc_key] || uploadingKey === doc.doc_key
               }
-              className="bg-navy-900 hover:bg-navy-800 text-white"
+              className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
             >
               {uploadingKey === doc.doc_key ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -429,7 +430,7 @@ function DocumentsTab({
         </div>
       ))}
       {documents.length === 0 && (
-        <div className="erp-table-container p-6">
+        <div className="erp-table-container p-4 sm:p-6">
           <p className="text-center text-gray-500">
             No document slots found. Run the seed SQL to populate.
           </p>
@@ -591,14 +592,14 @@ function ResultAcademicsTab({
       <TextItemsTab items={items} onRefresh={onRefresh} />
 
       {/* Board Results */}
-      <div className="erp-table-container p-6">
+      <div className="erp-table-container p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-heading text-lg font-bold text-navy-900 dark:text-white">
             Last Three-Year Board Examination Results
           </h2>
           <Button
             onClick={openAdd}
-            className="bg-navy-900 hover:bg-navy-800 text-white"
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add Result
@@ -611,11 +612,20 @@ function ResultAcademicsTab({
         </h3>
         {classXResults.length > 0 ? (
           <>
-          <TableFilterSummary
-            ctl={classXTable}
-            total={classXResults.length}
-            shown={classXTable.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={classXTable}
+              total={classXResults.length}
+              shown={classXTable.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={classXTable}
+              filename="class-x-results"
+              title="Class X Board Results"
+              featureKey="disclosure"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -685,11 +695,20 @@ function ResultAcademicsTab({
         </h3>
         {classXIIResults.length > 0 ? (
           <>
-          <TableFilterSummary
-            ctl={classXIITable}
-            total={classXIIResults.length}
-            shown={classXIITable.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={classXIITable}
+              total={classXIIResults.length}
+              shown={classXIITable.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={classXIITable}
+              filename="class-xii-results"
+              title="Class XII Board Results"
+              featureKey="disclosure"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -760,7 +779,7 @@ function ResultAcademicsTab({
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
-                <ScrollText className="h-5 w-5 text-amber-600" />
+                <ScrollText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div>
                 <DialogTitle>
@@ -774,7 +793,7 @@ function ResultAcademicsTab({
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Class</Label>
                 <Select
@@ -799,7 +818,7 @@ function ResultAcademicsTab({
                 />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Registered</Label>
                 <Input
@@ -849,7 +868,7 @@ function ResultAcademicsTab({
               <Button
                 type="submit"
                 disabled={submitting}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 {submitting && (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

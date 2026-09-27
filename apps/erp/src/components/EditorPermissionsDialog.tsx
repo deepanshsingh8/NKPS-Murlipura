@@ -104,11 +104,11 @@ export function EditorPermissionsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-2xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-purple-100 dark:bg-purple-950/30 flex items-center justify-center">
-              <ShieldCheck className="h-5 w-5 text-purple-700 dark:text-purple-400" />
+            <div className="h-10 w-10 rounded-xl bg-violet-100 dark:bg-violet-950/30 flex items-center justify-center">
+              <ShieldCheck className="h-5 w-5 text-violet-700 dark:text-violet-400" />
             </div>
             <div>
               <DialogTitle>Editor Capability</DialogTitle>
@@ -160,7 +160,7 @@ export function EditorPermissionsDialog({
           <Button
             onClick={save}
             disabled={saving || loading}
-            className="bg-navy-900 hover:bg-navy-800 text-white"
+            className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
           >
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Save Permissions

@@ -87,6 +87,40 @@ export default function ParentAdmitCardsPage() {
 
     if (!studentParents || studentParents.length === 0) return;
 
+    // One enrollment read for every child. PostgREST rejects an empty `.in()`
+    // list, so skip the query when no link row carries a student.
+    const studentIds = studentParents
+      .map((sp) => (sp.students as unknown as { id: string } | null)?.id)
+      .filter((id): id is string => Boolean(id));
+
+    // Active enrollment only, as before — a child between sessions has no
+    // class to draw an admit card against.
+    const enrollmentByStudent = new Map<
+      string,
+      {
+        student_id: string;
+        class_id: string | null;
+        classes: { name: string; section: string } | null;
+      }
+    >();
+    if (studentIds.length > 0) {
+      const { data: enrollments } = await supabase
+        .from("student_enrollments")
+        .select("student_id, class_id, classes(name, section)")
+        .in("student_id", studentIds)
+        .eq("status", "active");
+
+      for (const row of (enrollments ?? []) as unknown as {
+        student_id: string;
+        class_id: string | null;
+        classes: { name: string; section: string } | null;
+      }[]) {
+        if (!enrollmentByStudent.has(row.student_id)) {
+          enrollmentByStudent.set(row.student_id, row);
+        }
+      }
+    }
+
     const options: ChildOption[] = [];
     for (const sp of studentParents) {
       const student = sp.students as unknown as {
@@ -94,21 +128,12 @@ export default function ParentAdmitCardsPage() {
         full_name: string;
       } | null;
       if (!student) continue;
-      const { data: enrollment } = await supabase
-        .from("student_enrollments")
-        .select("class_id, classes(name, section)")
-        .eq("student_id", student.id)
-        .eq("status", "active")
-        .limit(1)
-        .maybeSingle();
-      const cls = enrollment?.classes as unknown as {
-        name: string;
-        section: string;
-      } | null;
+      const enrollment = enrollmentByStudent.get(student.id);
+      const cls = enrollment?.classes ?? null;
       options.push({
         student_id: student.id,
         full_name: student.full_name,
-        class_id: (enrollment?.class_id as string | undefined) ?? null,
+        class_id: enrollment?.class_id ?? null,
         class_label: cls ? `${cls.name} — ${cls.section}` : "—",
       });
     }

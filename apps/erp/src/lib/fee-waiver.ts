@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { generateReceiptNumber } from "@nkps/shared/lib/password";
+import { todayISO } from "@nkps/shared/lib/date";
 import { annualizedAmount } from "./fees";
 
 // Shared waiver logic so the direct (admin) insert and the change-request
@@ -123,7 +124,7 @@ export function buildWaiverRow(
     waiver_reason: input.waiver_reason,
     month: input.month || null,
     receipt_number: generateReceiptNumber(),
-    payment_date: new Date().toISOString().split("T")[0],
+    payment_date: todayISO(),
     status: "paid",
     recorded_by: recordedBy,
   };

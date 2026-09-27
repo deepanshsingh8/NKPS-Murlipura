@@ -33,11 +33,14 @@ export async function GET(request: NextRequest) {
   const { data: periods, error: periodsErr } = await admin
     .from("timetable_periods")
     .select(
-      "id, day_of_week, period_number, start_time, end_time, room, is_break, class_id, subject_id, classes(id, name, section), subjects(id, name, code)"
+      "id, day_of_week, period_number, start_time, end_time, room, is_break, group_no, group_label, is_shared, class_id, subject_id, classes(id, name, section), subjects(id, name, code)"
     )
     .eq("teacher_id", teacherId)
     .order("day_of_week", { ascending: true })
-    .order("start_time", { ascending: true });
+    .order("start_time", { ascending: true })
+    // Parallel groups of one cell tie exactly on start_time, so without this
+    // their order flips between requests. (migration 119)
+    .order("group_no", { ascending: true });
   if (periodsErr) {
     console.error("[teacher-timetable.GET] periods fetch:", periodsErr);
     return NextResponse.json({ error: "Failed to load teacher timetable" }, { status: 500 });

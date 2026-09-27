@@ -120,11 +120,11 @@ export function CreatePortalUsersDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10">
-              <UserPlus className="h-5 w-5 text-violet-600" />
+              <UserPlus className="h-5 w-5 text-violet-600 dark:text-violet-400" />
             </div>
             <div>
               <DialogTitle>Create Portal Users</DialogTitle>
@@ -141,31 +141,31 @@ export function CreatePortalUsersDialog({
 
         {step === "confirm" && (
           <div className="space-y-4">
-            <div className="rounded-xl bg-green-50 border border-green-200 p-4">
+            <div className="rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 p-4">
               <div className="flex items-center gap-2 mb-1">
-                <Mail className="h-4 w-4 text-green-600" />
-                <p className="text-sm font-medium text-green-700">
+                <Mail className="h-4 w-4 text-green-600 dark:text-green-400" />
+                <p className="text-sm font-medium text-green-700 dark:text-green-400">
                   {ready.length} {label}{ready.length === 1 ? "" : "s"} ready
                 </p>
               </div>
-              <p className="text-xs text-green-600">
+              <p className="text-xs text-green-600 dark:text-green-400">
                 Portal accounts will be created and welcome emails sent with temporary passwords.
               </p>
             </div>
 
             {skipped.length > 0 && (
-              <div className="rounded-xl bg-amber-50 border border-amber-200 p-4">
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  <p className="text-sm font-medium text-amber-700">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
                     {skipped.length} {label}{skipped.length === 1 ? "" : "s"} skipped — no email
                   </p>
                 </div>
                 <div className="max-h-32 overflow-y-auto space-y-1">
                   {skipped.map((s) => (
                     <div key={s.id} className="flex items-center justify-between text-xs">
-                      <span className="text-amber-700 truncate">{s.name}</span>
-                      <Badge variant="secondary" className="bg-amber-100 text-amber-600 text-[10px] shrink-0">
+                      <span className="text-amber-700 dark:text-amber-400 truncate">{s.name}</span>
+                      <Badge variant="secondary" className="bg-amber-100 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 text-[10px] shrink-0">
                         No email
                       </Badge>
                     </div>
@@ -181,7 +181,7 @@ export function CreatePortalUsersDialog({
               <Button
                 onClick={handleCreate}
                 disabled={ready.length === 0}
-                className="bg-navy-900 hover:bg-navy-800 text-white"
+                className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900"
               >
                 <UserPlus className="h-4 w-4 mr-2" />
                 Create {ready.length} User{ready.length === 1 ? "" : "s"}
@@ -192,7 +192,7 @@ export function CreatePortalUsersDialog({
 
         {step === "progress" && (
           <div className="py-8 text-center space-y-4">
-            <Loader2 className="h-10 w-10 animate-spin text-violet-500 mx-auto" />
+            <Loader2 className="h-10 w-10 animate-spin text-violet-500 mx-auto" /> {/* color-ok: violet is the Users/portal accent */}
             <div>
               <p className="text-sm font-medium text-navy-900 dark:text-white">
                 Creating portal accounts...
@@ -207,25 +207,25 @@ export function CreatePortalUsersDialog({
         {step === "results" && (
           <div className="space-y-4">
             {/* Summary cards */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl bg-green-50 border border-green-200 p-3 text-center">
-                <p className="text-2xl font-bold text-green-700">{summary.created}</p>
-                <p className="text-xs text-green-600">Created</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 p-3 text-center">
+                <p className="text-2xl font-bold text-green-700 dark:text-green-400">{summary.created}</p>
+                <p className="text-xs text-green-600 dark:text-green-400">Created</p>
               </div>
-              <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-center">
-                <p className="text-2xl font-bold text-red-700">{summary.failed}</p>
-                <p className="text-xs text-red-600">Failed</p>
+              <div className="rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 p-3 text-center">
+                <p className="text-2xl font-bold text-red-700 dark:text-red-400">{summary.failed}</p>
+                <p className="text-xs text-red-600 dark:text-red-400">Failed</p>
               </div>
-              <div className="rounded-xl bg-gray-50 border border-gray-200 p-3 text-center">
-                <p className="text-2xl font-bold text-gray-700">{skipped.length}</p>
+              <div className="rounded-xl bg-gray-50 dark:bg-muted border border-gray-200 p-3 text-center">
+                <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">{skipped.length}</p>
                 <p className="text-xs text-gray-500">Skipped</p>
               </div>
             </div>
 
             {summary.created > 0 && summary.failed === 0 && (
-              <div className="rounded-xl bg-green-50 border border-green-200 p-4 text-center">
+              <div className="rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 p-4 text-center">
                 <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-1" />
-                <p className="text-sm font-medium text-green-700">
+                <p className="text-sm font-medium text-green-700 dark:text-green-400">
                   All accounts created successfully!
                 </p>
               </div>
@@ -236,7 +236,7 @@ export function CreatePortalUsersDialog({
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <XCircle className="h-4 w-4 text-red-500" />
-                  <p className="text-sm font-medium text-red-700">
+                  <p className="text-sm font-medium text-red-700 dark:text-red-400">
                     {summary.failed} failed
                   </p>
                 </div>
@@ -255,7 +255,7 @@ export function CreatePortalUsersDialog({
                           .map((r) => (
                             <TableRow key={r.id} className="bg-red-50/50">
                               <TableCell className="text-xs font-medium">{r.name}</TableCell>
-                              <TableCell className="text-xs text-red-600">{r.error}</TableCell>
+                              <TableCell className="text-xs text-red-600 dark:text-red-400">{r.error}</TableCell>
                             </TableRow>
                           ))}
                       </TableBody>

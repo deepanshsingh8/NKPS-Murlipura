@@ -24,6 +24,7 @@ import {
   useTableControls,
   type TableColumns,
 } from "@nkps/shared/components/ui/data-table";
+import { TableExportButton } from "@nkps/shared/components/ui/table-export-button";
 import { toast } from "sonner";
 import { Plus, Download, Trash2, Loader2, Search, UserCheck, FileText, Upload } from "lucide-react";
 import { adminFetch, adminDelete } from "@nkps/shared/lib/admin-api";
@@ -231,7 +232,7 @@ export default function AdminTransferCertificatesPage() {
           Transfer Certificates
         </h1>
 
-        <Button className="bg-navy-900 hover:bg-navy-800 text-white" onClick={() => setDialogOpen(true)}>
+        <Button className="bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900" onClick={() => setDialogOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           Upload TC
         </Button>
@@ -243,7 +244,7 @@ export default function AdminTransferCertificatesPage() {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gold-500/10">
-                <FileText className="h-5 w-5 text-gold-600" />
+                <FileText className="h-5 w-5 text-gold-600 dark:text-gold-400" />
               </div>
               <div>
                 <DialogTitle>Upload Transfer Certificate</DialogTitle>
@@ -271,7 +272,7 @@ export default function AdminTransferCertificatesPage() {
               {selectedStudent ? (
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800">
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900/30">
-                    <UserCheck className="h-4 w-4 text-green-600" />
+                    <UserCheck className="h-4 w-4 text-green-600 dark:text-green-400" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-green-800 dark:text-green-300 truncate">
@@ -291,7 +292,7 @@ export default function AdminTransferCertificatesPage() {
                     variant="ghost"
                     size="sm"
                     onClick={clearSelectedStudent}
-                    className="text-green-600 hover:text-red-600 h-7 px-2 text-xs"
+                    className="text-green-600 dark:text-green-400 hover:text-red-600 h-7 px-2 text-xs"
                   >
                     Change
                   </Button>
@@ -367,7 +368,7 @@ export default function AdminTransferCertificatesPage() {
                 !selectedStudent ||
                 !selectedStudent.date_of_birth
               }
-              className="w-full bg-navy-900 hover:bg-navy-800 text-white h-11 rounded-xl font-medium"
+              className="w-full bg-navy-900 hover:bg-navy-800 text-white dark:bg-gold-500 dark:hover:bg-gold-400 dark:text-navy-900 h-11 rounded-xl font-medium"
             >
               {uploading ? (
                 <>
@@ -410,11 +411,20 @@ export default function AdminTransferCertificatesPage() {
           </div>
         ) : (
           <>
-          <TableFilterSummary
-            ctl={table}
-            total={filtered.length}
-            shown={table.rows.length}
-          />
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <TableFilterSummary
+              ctl={table}
+              total={filtered.length}
+              shown={table.rows.length}
+              className="mb-0 mr-auto"
+            />
+            <TableExportButton
+              ctl={table}
+              filename="transfer-certificates"
+              title="Transfer Certificates"
+              featureKey="transfer_certificates"
+            />
+          </div>
           <Table>
             <TableHeader>
               <TableRow>

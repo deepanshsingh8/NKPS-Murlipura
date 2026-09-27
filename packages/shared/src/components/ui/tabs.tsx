@@ -24,7 +24,9 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  // `shrink-0` keeps the strip at its natural width inside the scroller below
+  // instead of squeezing every tab when the screen is narrow.
+  "group/tabs-list inline-flex w-fit shrink-0 items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
@@ -44,12 +46,27 @@ function TabsList({
   ...props
 }: TabsPrimitive.List.Props & VariantProps<typeof tabsListVariants>) {
   return (
-    <TabsPrimitive.List
-      data-slot="tabs-list"
-      data-variant={variant}
-      className={cn(tabsListVariants({ variant }), className)}
-      {...props}
-    />
+    // A horizontal strip is one fixed-height row, so on a narrow screen it has
+    // to scroll rather than wrap: a wrapped second line lands on top of the
+    // first, since every tab sizes itself to the full height of the list.
+    // `flex` (not block) so the list stays a block-level child and the margin
+    // utilities call sites put on it still take effect.
+    <div
+      data-slot="tabs-list-scroller"
+      className={cn(
+        "erp-scroll-x flex group-data-vertical/tabs:overflow-visible",
+        // The active underline of the `line` variant hangs below the trigger,
+        // and a scroll container clips both axes — leave it room.
+        variant === "line" && "pb-1.5"
+      )}
+    >
+      <TabsPrimitive.List
+        data-slot="tabs-list"
+        data-variant={variant}
+        className={cn(tabsListVariants({ variant }), className)}
+        {...props}
+      />
+    </div>
   )
 }
 

@@ -158,17 +158,17 @@ export function FileDropZone({
 
       {fileCount > 0 ? (
         <div className="space-y-2">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-            <IconComponent className="h-6 w-6 text-green-600" />
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-950/30">
+            <IconComponent className="h-6 w-6 text-green-600 dark:text-green-400" />
           </div>
           <div>
-            <p className="text-sm font-medium text-green-700">
+            <p className="text-sm font-medium text-green-700 dark:text-green-400">
               {fileCount === 1
                 ? fileNames[0]
                 : `${fileCount} files selected`}
             </p>
             {fileCount > 1 && (
-              <p className="text-xs text-green-600 mt-0.5">
+              <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
                 {fileNames.slice(0, 3).join(", ")}
                 {fileCount > 3 && ` + ${fileCount - 3} more`}
               </p>

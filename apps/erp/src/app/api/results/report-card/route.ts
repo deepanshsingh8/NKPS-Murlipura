@@ -34,7 +34,28 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Student not found" }, { status: 404 });
     }
 
-    return NextResponse.json(data);
+    // Sessions this student was actually enrolled for, so the portal can offer
+    // a year picker without a second endpoint or a wider permission surface.
+    // Returned newest-first; RLS already scopes the caller to their own rows,
+    // and canViewReportCard above has scoped them to this student.
+    const { data: enrolledYears } = await supabase
+      .from("student_enrollments")
+      .select("academic_year_id, academic_years(id, name, start_date, is_current)")
+      .eq("student_id", studentId);
+
+    const seen = new Set<string>();
+    const available_years = (enrolledYears ?? [])
+      .map((row) => {
+        const y = row.academic_years as unknown as
+          | { id: string; name: string; start_date: string | null; is_current: boolean }
+          | { id: string; name: string; start_date: string | null; is_current: boolean }[]
+          | null;
+        return Array.isArray(y) ? (y[0] ?? null) : y;
+      })
+      .filter((y): y is NonNullable<typeof y> => Boolean(y && !seen.has(y.id) && seen.add(y.id)))
+      .sort((a, b) => (b.start_date ?? "").localeCompare(a.start_date ?? ""));
+
+    return NextResponse.json({ ...data, available_years });
   } catch (err) {
     console.error("Report card API error:", err);
     return NextResponse.json(
