@@ -69,10 +69,15 @@ before 104 so the script is re-runnable.
   will pass); `timetable_assignment_drift` has the column list 119 re-creates.
 - 903 executed inside a transaction and rolled back — clean; nothing persisted.
 
-**Status: ⬜ not yet run.** Run the consolidated script in the Supabase SQL
-editor for the Murlipura project **before** deploying this branch — the synced
-ERP reads tables and columns (student_status_history, houses, school_profile,
-group_no, …) that do not exist until it has.
+**Status: ✅ applied 2026-09-27** to the Murlipura project via Supabase
+migrations, in seven transactional batches (each all-or-nothing):
+`upstream_sync_2026_09_part1_086_090` … `part6_121_126`, then
+`murlipura_903_class_diary`. The consolidated script is kept for re-runs and
+fresh databases; it is idempotent.
+
+Side effect of 098: `staff_members` is no longer readable anonymously, so the
+public website's faculty directory now reads the `public_staff_directory` view
+(same fix as upstream).
 
 Not included: `scripts/_apply-ai-feature-migrations.sql` /
 `_enable-ai-assistant.sql`. The AI assistant stays off until
@@ -110,7 +115,7 @@ four pages, four sidebar links, two guide entries, feature key `class_diary`.
 
 | | Step | Status |
 |---|---|---|
-| 1 | Run `CONSOLIDATED-upstream-sync-2026-09.sql` on Murlipura | ⬜ |
+| 1 | Run `CONSOLIDATED-upstream-sync-2026-09.sql` on Murlipura | ✅ 2026-09-27 |
 | 2 | Preview deploy: fees, students, timetable, reports smoke test | ⬜ |
 | 3 | Class Diary end-to-end: teacher posts homework with a photo → parent sees it, photo opens, "Seen by 1" | ⬜ |
 | 4 | Office posts a whole-school notice and a pinned fee reminder | ⬜ |

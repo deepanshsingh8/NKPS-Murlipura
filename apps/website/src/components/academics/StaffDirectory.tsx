@@ -77,10 +77,15 @@ export function StaffDirectory() {
     (async () => {
       try {
         const supabase = createClient();
+        // public_staff_directory, not staff_members: the base table also
+        // holds date_of_birth, address, phone, email and license_number, and
+        // `select("*")` was shipping all of it to every visitor. The view
+        // (migration 098) exposes only these columns and active staff, and
+        // the table itself is now authenticated-only. Columns are listed
+        // explicitly so widening the view can never silently widen this page.
         const { data, error } = await supabase
-          .from("staff_members")
-          .select("*")
-          .eq("is_active", true)
+          .from("public_staff_directory")
+          .select("id, name, subject, category, photo_url, qualifications, sort_order")
           .in("category", PUBLIC_CATEGORIES as unknown as string[])
           .order("sort_order")
           .order("name");
