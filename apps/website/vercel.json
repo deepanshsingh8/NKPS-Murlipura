@@ -10,6 +10,7 @@
     { "source": "/cms/(.*)", "destination": "https://cms.nkpublicschool.org/$1", "permanent": true },
     { "source": "/erp", "destination": "https://erp.nkpublicschool.org", "permanent": true },
     { "source": "/erp/(.*)", "destination": "https://erp.nkpublicschool.org/$1", "permanent": true },
-    { "source": "/portal/(.*)", "destination": "https://erp.nkpublicschool.org/portal/$1", "permanent": true }
+    { "source": "/portal/(.*)", "destination": "https://erp.nkpublicschool.org/portal/$1", "permanent": true },
+    { "source": "/articles/nkps-murlipura-2025-board-results", "destination": "/articles/smart-panel-classrooms", "permanent": true }
   ]
 }

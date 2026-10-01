@@ -233,6 +233,7 @@ export function ContactPageClient() {
                       href={SCHOOL.social.facebook}
                       target="_blank"
                       rel="noopener noreferrer"
+                      aria-label="Facebook"
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-gold-500 hover:text-white"
                     >
                       <FacebookIcon className="h-4 w-4" />
@@ -241,6 +242,7 @@ export function ContactPageClient() {
                       href={SCHOOL.social.instagram}
                       target="_blank"
                       rel="noopener noreferrer"
+                      aria-label="Instagram"
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-gold-500 hover:text-white"
                     >
                       <InstagramIcon className="h-4 w-4" />
@@ -249,6 +251,7 @@ export function ContactPageClient() {
                       href={SCHOOL.social.youtube}
                       target="_blank"
                       rel="noopener noreferrer"
+                      aria-label="YouTube"
                       className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-gold-500 hover:text-white"
                     >
                       <YoutubeIcon className="h-4 w-4" />

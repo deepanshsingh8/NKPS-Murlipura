@@ -30,10 +30,12 @@ export const SCHOOL = {
   affiliationNumber: "",
   geo: { lat: 26.9774, lng: 75.7884 },
   priceRange: "₹₹",
+  // Canonical profile URLs (share/tracking parameters stripped). Also emitted
+  // as `sameAs` in the School JSON-LD so Google links the profiles to the site.
   social: {
-    facebook: "",
-    instagram: "",
-    youtube: "",
+    facebook: "https://www.facebook.com/nkpsmurlipura",
+    instagram: "https://www.instagram.com/nkpsmurlipura/",
+    youtube: "https://www.youtube.com/@nkpublicschooljaipur9777",
   },
   leadership: [
     {
