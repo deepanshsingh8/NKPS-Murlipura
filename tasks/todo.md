@@ -86,10 +86,10 @@ Flagged, not changed (product decisions):
 - Lighthouse a11y flags colour contrast (96/100) — not SEO, worth a pass later.
 
 ### Phase B — content / data (needs school input)
-- [ ] B1 Fix board-results article content (or slug) in CMS
-- [ ] B2 Social profile URLs (Facebook/Instagram/YouTube) → `sameAs`
-- [ ] B3 RBSE affiliation number + exact pin code
-- [ ] B4 Upload prospectus PDF + holiday homework; review gallery alt text
+- [x] B1 Board-results article → slug renamed to `smart-panel-classrooms` (DB) + 308 redirect (vercel.json)
+- [x] B2 Social profile URLs → constants + school_profile.social + `sameAs`
+- [x] B3 RBSE affiliation number 1121353 → constants, school_profile, MPD "Affiliation No." (MPD "School Code" still empty)
+- [ ] B4 Upload prospectus PDF + holiday homework (school) — gallery alt text ✅ (17 placeholder alts rewritten + recategorised)
 - [ ] B5 Expand thin /student-life copy
 
 ### Phase C — off-site (user)
