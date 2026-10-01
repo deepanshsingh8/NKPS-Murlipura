@@ -159,7 +159,7 @@ export default async function MandatoryPublicDisclosurePage() {
       />
 
       <section className="py-16 px-4 md:px-8 max-w-5xl mx-auto">
-        <AnimatedSection>
+        <AnimatedSection aboveFold>
           <p className="text-chalk-dim mb-8 text-sm">
             The following information is published as per RBSE Affiliation
             Bye-Laws and mandatory disclosure requirements. This information is

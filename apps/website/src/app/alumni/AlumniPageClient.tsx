@@ -37,7 +37,7 @@ export function AlumniPageClient({ cards }: AlumniPageClientProps) {
       {/* Intro */}
       <section className="py-20 px-6">
         <div className="mx-auto max-w-3xl text-center">
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-gold-500 to-gold-400 shadow-lg shadow-gold-500/25">
               <GraduationCap className="h-7 w-7 text-white" />
             </div>

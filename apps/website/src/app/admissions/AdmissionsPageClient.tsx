@@ -63,7 +63,7 @@ export function AdmissionsPageClient() {
       {/* Admission Process */}
       <section className="py-20 px-6">
         <div className="mx-auto max-w-6xl">
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <SectionHeading
               label="How to Apply"
               title="Admission Process"

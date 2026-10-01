@@ -221,7 +221,7 @@ export function GalleryPageClient({
 
       <section className="py-20 px-6">
         <div className="mx-auto max-w-6xl">
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <SectionHeading title="Photo Gallery" light />
           </AnimatedSection>
 

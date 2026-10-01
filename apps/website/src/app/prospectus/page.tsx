@@ -39,7 +39,7 @@ export default async function ProspectusPage() {
       />
 
       <section className="mx-auto max-w-3xl px-4 py-16 md:px-8">
-        <AnimatedSection>
+        <AnimatedSection aboveFold>
           <p className="mb-8 text-center text-[15px] leading-relaxed text-chalk-dim">
             Explore what NK Public School, Murlipura has to offer. Download the
             prospectus below to learn about our academics, facilities, admission

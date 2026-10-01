@@ -75,7 +75,7 @@ export function TransferCertificatesPageClient() {
 
       <section className="py-20 px-6">
         <div className="mx-auto max-w-3xl">
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <SectionHeading title="Find Your Transfer Certificate" light />
           </AnimatedSection>
 

@@ -103,7 +103,7 @@ export function ContactPageClient() {
       {/* Contact Info Cards */}
       <section className="py-20 px-6">
         <div className="mx-auto max-w-6xl">
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <SectionHeading
               title="Get in Touch"
               subtitle="Reach out to us through any of the following channels"

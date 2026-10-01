@@ -123,7 +123,7 @@ export default function ForParentsPage() {
 
       <section className="mx-auto max-w-5xl px-4 py-16 md:px-8">
         {/* Intro */}
-        <AnimatedSection>
+        <AnimatedSection aboveFold>
           <div className="mb-12 rounded-2xl bg-gradient-to-br from-navy-900 via-navy-800 to-navy-900 p-6 text-center shadow-lg sm:p-10">
             <p className="font-heading text-lg italic leading-relaxed text-cream-50 md:text-xl">
               &ldquo;The greater the co-operation between home and school, the more
