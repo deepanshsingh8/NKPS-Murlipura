@@ -4,10 +4,19 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowLeft, Calendar, User } from "lucide-react";
+import { ArrowLeft, Calendar, ChevronRight, User } from "lucide-react";
 import { PageTransition } from "@nkps/shared/components/PageTransition";
 import { getArticleBySlug, getPublishedArticles } from "@nkps/shared/lib/articles";
-import { SITE_URL } from "@nkps/shared/lib/seo";
+import {
+  DEFAULT_OG_IMAGE,
+  INDEXABLE_ROBOTS,
+  SITE_URL,
+  TITLE_SUFFIX,
+  breadcrumbJsonLd,
+  toMetaDescription,
+} from "@nkps/shared/lib/seo";
+import { SCHOOL } from "@nkps/shared/lib/constants";
+import { JsonLd } from "@/components/seo/JsonLd";
 
 export const revalidate = 300;
 
@@ -20,6 +29,19 @@ export async function generateStaticParams() {
   return articles.map((a) => ({ slug: a.slug }));
 }
 
+function articleDescription(article: { title: string; meta_description: string | null; excerpt: string | null }) {
+  return toMetaDescription(
+    article.meta_description ||
+      article.excerpt ||
+      `Read "${article.title}" from ${SCHOOL.name}, Jaipur.`
+  );
+}
+
+// author_name defaults to the school; only a named individual is a Person.
+function isPersonAuthor(name: string | null): name is string {
+  return !!name && !/school|nkps/i.test(name);
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   const article = await getArticleBySlug(slug);
@@ -27,23 +49,25 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return { title: "Article Not Found" };
   }
 
-  const description =
-    article.meta_description ||
-    article.excerpt ||
-    `Read "${article.title}" on NK Public School.`;
+  const description = articleDescription(article);
   const canonical = `${SITE_URL}/articles/${article.slug}`;
-  const images = article.cover_image_url ? [article.cover_image_url] : [];
+  const images = [article.cover_image_url || DEFAULT_OG_IMAGE];
 
   return {
-    title: article.title,
+    // Long headlines skip the "| School name" suffix so they aren't truncated.
+    title:
+      article.title.length + TITLE_SUFFIX.length > 60
+        ? { absolute: article.title }
+        : article.title,
     description,
     alternates: { canonical },
+    robots: INDEXABLE_ROBOTS,
     openGraph: {
       type: "article",
       title: article.title,
       description,
       url: canonical,
-      siteName: "NK Public School",
+      siteName: SCHOOL.name,
       images,
       publishedTime: article.published_at ?? undefined,
       modifiedTime: article.updated_at,
@@ -73,26 +97,26 @@ export default async function ArticleDetailPage({ params }: PageProps) {
   const article = await getArticleBySlug(slug);
   if (!article) notFound();
 
-  const description =
-    article.meta_description ||
-    article.excerpt ||
-    `Read "${article.title}" on NK Public School.`;
+  const description = articleDescription(article);
   const canonical = `${SITE_URL}/articles/${article.slug}`;
-  const authorName = article.author_name || "NK Public School";
+  const authorName = article.author_name || SCHOOL.name;
 
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "NewsArticle",
     headline: article.title,
     description,
-    image: article.cover_image_url ? [article.cover_image_url] : undefined,
+    image: [article.cover_image_url || DEFAULT_OG_IMAGE],
     datePublished: article.published_at,
     dateModified: article.updated_at,
-    author: { "@type": "Organization", name: authorName },
+    author: isPersonAuthor(article.author_name)
+      ? { "@type": "Person", name: article.author_name }
+      : { "@type": "Organization", name: SCHOOL.name, url: SITE_URL },
     publisher: {
       "@type": "Organization",
-      name: "NK Public School",
-      logo: { "@type": "ImageObject", url: `${SITE_URL}/logo.png` },
+      "@id": `${SITE_URL}/#school`,
+      name: SCHOOL.name,
+      logo: { "@type": "ImageObject", url: `${SITE_URL}/images/logo.png` },
     },
     mainEntityOfPage: { "@type": "WebPage", "@id": canonical },
     keywords: article.tags.length > 0 ? article.tags.join(", ") : undefined,
@@ -100,9 +124,13 @@ export default async function ArticleDetailPage({ params }: PageProps) {
 
   return (
     <PageTransition>
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      <JsonLd data={jsonLd} />
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "Home", path: "/" },
+          { name: "Articles", path: "/articles" },
+          { name: article.title, path: `/articles/${article.slug}` },
+        ])}
       />
 
       {/* Hero */}
@@ -116,13 +144,20 @@ export default async function ArticleDetailPage({ params }: PageProps) {
           }}
         />
         <div className="relative mx-auto max-w-4xl px-6">
-          <Link
-            href="/articles"
-            className="inline-flex items-center gap-1.5 text-sm text-gold-400 hover:text-gold-300 transition-colors mb-6"
+          <nav
+            aria-label="Breadcrumb"
+            className="flex flex-wrap items-center gap-1.5 text-sm mb-6"
           >
-            <ArrowLeft className="h-4 w-4" />
-            All articles
-          </Link>
+            <Link href="/" className="text-gray-400 hover:text-gold-400 transition-colors">
+              Home
+            </Link>
+            <ChevronRight className="w-3.5 h-3.5 text-gray-500" />
+            <Link href="/articles" className="text-gray-400 hover:text-gold-400 transition-colors">
+              Articles
+            </Link>
+            <ChevronRight className="w-3.5 h-3.5 text-gray-500" />
+            <span className="text-gold-400 font-medium line-clamp-1">{article.title}</span>
+          </nav>
 
           {article.tags.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-4">
@@ -164,7 +199,7 @@ export default async function ArticleDetailPage({ params }: PageProps) {
               src={article.cover_image_url}
               alt={article.title}
               fill
-              priority
+              preload
               sizes="(max-width: 1024px) 100vw, 1024px"
               className="object-cover"
             />

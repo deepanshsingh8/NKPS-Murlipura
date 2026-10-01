@@ -25,7 +25,11 @@ const playfair = Playfair_Display({
 
 export const metadata: Metadata = {
   title: "NKPS CMS",
-  robots: { index: false, follow: false },
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: { index: false, follow: false },
+  },
   appleWebApp: {
     capable: true,
     // See apps/erp/src/app/layout.tsx for why "black" and not the other two.

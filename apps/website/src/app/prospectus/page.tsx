@@ -4,14 +4,21 @@ import { PageTransition } from "@nkps/shared/components/PageTransition";
 import { AnimatedSection } from "@nkps/shared/components/AnimatedSection";
 import { getProspectusDocuments } from "@/lib/prospectus";
 import { ExternalLink, FileText, Download, BookText } from "lucide-react";
-import { buildMetadata } from "@nkps/shared/lib/seo";
+import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 
-export const metadata: Metadata = buildMetadata({
-  title: "Prospectus — NK Public School, Murlipura",
-  description:
-    "Download the NK Public School, Murlipura prospectus — admission information, academics, facilities and campus life for prospective parents and students.",
-  path: "/prospectus",
-});
+// Kept out of the index (and the sitemap) until the CMS has documents, so
+// Google doesn't index an empty placeholder page.
+export async function generateMetadata(): Promise<Metadata> {
+  const documents = await getProspectusDocuments();
+  return buildMetadata({
+    title: "Prospectus",
+    description:
+      "Download the NK Public School, Murlipura prospectus — admission information, academics, facilities and campus life for prospective parents and students.",
+    path: "/prospectus",
+    noIndex: documents.length === 0,
+  });
+}
 
 export const revalidate = 60;
 
@@ -20,6 +27,12 @@ export default async function ProspectusPage() {
 
   return (
     <PageTransition>
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "Home", path: "/" },
+          { name: "Prospectus", path: "/prospectus" },
+        ])}
+      />
       <PageHeader
         title="Prospectus"
         subtitle="Download our school prospectus and brochures"

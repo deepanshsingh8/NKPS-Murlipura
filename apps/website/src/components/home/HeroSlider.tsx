@@ -6,6 +6,7 @@ import { ArrowRight, BookOpen, CalendarDays, GraduationCap, Building2 } from "lu
 import Link from "next/link";
 import Image from "next/image";
 import { cn } from "@nkps/shared/lib/utils";
+import { SCHOOL } from "@nkps/shared/lib/constants";
 import { useMouseMotion } from "@nkps/shared/hooks/useMousePosition";
 import type { SectionCard } from "@nkps/shared/types";
 
@@ -19,6 +20,7 @@ const stats = [
 ];
 
 const INTERVAL = 7000;
+const HERO_H1 = `${SCHOOL.name}, ${SCHOOL.address.city}`;
 const CHAR_DELAY = 28;
 
 /* ─── FadeIn wrapper ─── */
@@ -52,7 +54,9 @@ function FadeIn({
   );
 }
 
-/* ─── AnimatedHeading — character-by-character reveal ─── */
+/* ─── AnimatedHeading — character-by-character reveal ───
+   Rendered as an h2: the slide headline rotates, so the page's single, stable
+   h1 is the school name above it. */
 function AnimatedHeading({
   text,
   slideKey,
@@ -74,7 +78,7 @@ function AnimatedHeading({
   const lines = text.split("\n");
 
   return (
-    <h1
+    <h2
       className="font-heading font-bold text-5xl md:text-6xl lg:text-7xl xl:text-8xl leading-[1.05] text-white"
       style={{ letterSpacing: "-0.02em" }}
     >
@@ -128,7 +132,7 @@ function AnimatedHeading({
           </span>
         );
       })}
-    </h1>
+    </h2>
   );
 }
 
@@ -203,7 +207,8 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
     return () => cancelAnimationFrame(raf);
   }, [current, slides.length]);
 
-  if (slides.length === 0) return null;
+  // Keep the page's h1 even if every hero card is deactivated in the CMS.
+  if (slides.length === 0) return <h1 className="sr-only">{HERO_H1}</h1>;
 
   // Cards can shrink (deactivated/deleted) between renders; clamp the index
   // so we never dereference past the end of the array.
@@ -219,8 +224,10 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
   return (
     <section className="relative h-screen w-full overflow-hidden bg-navy-950">
 
-      {/* ═══ LAYER 1: Background image — parallax tracked ═══ */}
-      <AnimatePresence mode="wait">
+      {/* ═══ LAYER 1: Background image — parallax tracked ═══
+          initial={false}: the first slide (the LCP image) paints immediately
+          from the server HTML instead of waiting for hydration to fade in. */}
+      <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={safeCurrent}
           className="absolute -inset-5"
@@ -237,7 +244,7 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
             alt={activeSlide.alt}
             fill
             className="object-cover"
-            priority={safeCurrent === 0}
+            preload={safeCurrent === 0}
             sizes="100vw"
           />
         </motion.div>
@@ -345,6 +352,9 @@ export function HeroSlider({ cards }: HeroSliderProps = {}) {
           <div className="lg:grid lg:grid-cols-2 lg:items-end lg:gap-12">
             {/* Left — Main content */}
             <div>
+              <h1 className="mb-4 text-xs md:text-sm font-semibold uppercase tracking-[0.25em] text-gold-400">
+                {HERO_H1}
+              </h1>
               <AnimatedHeading
                 text={activeSlide.title}
                 slideKey={safeCurrent}

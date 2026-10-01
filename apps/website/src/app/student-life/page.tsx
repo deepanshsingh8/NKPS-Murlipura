@@ -5,9 +5,9 @@ import { getSectionCards } from "@/lib/site-media";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Student Life & Activities — NK Public School Jaipur",
+  title: "Student Life & Activities",
   description:
-    "Co-curricular life at NK Public School, Jaipur — our student council and house captains, music, dance, art, debate, quiz, literary and science clubs plus annual events that shape character beyond the classroom.",
+    "Student council, houses, music, dance, art, debate, quiz and science clubs, and annual events at NK Public School, Murlipura, Jaipur.",
   path: "/student-life",
 });
 

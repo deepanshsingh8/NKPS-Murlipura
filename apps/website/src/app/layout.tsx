@@ -5,7 +5,7 @@ import { Analytics } from "@vercel/analytics/next";
 import { Toaster } from "@nkps/shared/components/ui/sonner";
 import { LayoutShell } from "@/components/layout/LayoutShell";
 import { JsonLd } from "@/components/seo/JsonLd";
-import { SITE_URL, schoolJsonLd } from "@nkps/shared/lib/seo";
+import { SITE_URL, TITLE_SUFFIX, schoolJsonLd } from "@nkps/shared/lib/seo";
 import "./globals.css";
 
 const inter = Inter({
@@ -27,10 +27,10 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
     default: "NK Public School, Murlipura — Established 1985",
-    template: "%s | NK Public School, Murlipura",
+    template: `%s${TITLE_SUFFIX}`,
   },
   description:
-    "NK Public School, Murlipura — the founding NKPS campus in Arya Nagar, Jaipur. English medium, co-educational, Nursery to Class XII with Science and Commerce streams.",
+    "The founding NKPS campus in Arya Nagar, Murlipura, Jaipur, since 1985. English-medium, co-educational school from Nursery to Class XII (Science & Commerce).",
   keywords: [
     "NK Public School Murlipura",
     "NKPS Murlipura",
@@ -46,7 +46,8 @@ export const metadata: Metadata = {
   authors: [{ name: "NK Public School, Murlipura" }],
   creator: "NK Public School, Murlipura",
   publisher: "NK Public School, Murlipura",
-  alternates: { canonical: "/" },
+  // No root-level canonical or robots: each page sets its own via
+  // buildMetadata, so 404s don't inherit canonical "/" or "index, follow".
   openGraph: {
     title: "NK Public School, Murlipura — Established 1985",
     description:
@@ -70,17 +71,6 @@ export const metadata: Metadata = {
     description:
       "The founding NKPS campus in Murlipura, Jaipur — Nursery to Class XII with Science and Commerce streams.",
     images: [`${SITE_URL}/opengraph-image`],
-  },
-  robots: {
-    index: true,
-    follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-      "max-video-preview": -1,
-    },
   },
   verification: GSC_VERIFICATION ? { google: GSC_VERIFICATION } : undefined,
   category: "education",

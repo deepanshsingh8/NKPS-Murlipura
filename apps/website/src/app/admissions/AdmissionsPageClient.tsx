@@ -250,7 +250,7 @@ export function AdmissionsPageClient() {
 
           <AnimatedSection delay={0.2}>
             <div className="mt-12">
-              <Accordion defaultValue={[]}>
+              <Accordion defaultValue={[]} hiddenUntilFound>
                 {ADMISSIONS_FAQS.map((faq, index) => (
                   <AccordionItem
                     key={index}

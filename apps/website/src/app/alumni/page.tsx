@@ -5,9 +5,9 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Alumni — NK Public School, Murlipura | Achievements & Network",
+  title: "Alumni Network & Achievements",
   description:
-    "Meet the alumni of NK Public School, Murlipura and their achievements across medicine, engineering, civil services, business and more. Join our growing alumni network.",
+    "Meet NK Public School, Murlipura alumni and their achievements in medicine, engineering, civil services, business and more. Join our alumni network.",
   path: "/alumni",
 });
 

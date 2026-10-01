@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClient } from "@nkps/shared/lib/supabase/client";
 import { motion } from "framer-motion";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
 import { AnimatedSection } from "@nkps/shared/components/AnimatedSection";
 import { staggerContainer, fadeUp } from "@nkps/shared/lib/animations";
-import type { CalendarEvent, CalendarEventType } from "@nkps/shared/types";
+import type { CalendarEventType } from "@nkps/shared/types";
+import type { PublicCalendarEvent } from "@/lib/calendar-events";
 
 const EVENT_TYPE_COLORS: Record<CalendarEventType, string> = {
   exam: "bg-navy-700",
@@ -28,33 +27,9 @@ const EVENT_TYPE_LABELS: Record<CalendarEventType, string> = {
   other: "Other",
 };
 
-export function SchoolEvents() {
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    async function fetchEvents() {
-      const supabase = createClient();
-      const today = new Date().toISOString().split("T")[0];
-
-      const { data } = await supabase
-        .from("calendar_events")
-        .select("*")
-        .gte("start_date", today)
-        .is("class_id", null) // Only school-wide events
-        .order("start_date", { ascending: true })
-        .limit(6);
-
-      setEvents((data as CalendarEvent[]) ?? []);
-      setLoaded(true);
-    }
-
-    fetchEvents();
-  }, []);
-
+export function SchoolEvents({ events }: { events: PublicCalendarEvent[] }) {
   // Don't render section if no events
-  if (loaded && events.length === 0) return null;
-  if (!loaded) return null;
+  if (events.length === 0) return null;
 
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr + "T00:00:00");

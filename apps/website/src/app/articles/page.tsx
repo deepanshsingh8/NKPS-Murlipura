@@ -12,9 +12,9 @@ import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 export const revalidate = 300;
 
 export const metadata: Metadata = buildMetadata({
-  title: "News & Articles — NK Public School, Murlipura",
+  title: "News & Articles",
   description:
-    "Latest news, announcements and articles from NK Public School, Murlipura — admissions updates, events, achievements, and school life from our Arya Nagar campus in Jaipur.",
+    "Latest news from NK Public School, Murlipura — admissions updates, events, achievements and school life at our Arya Nagar campus in Jaipur.",
   path: "/articles",
 });
 

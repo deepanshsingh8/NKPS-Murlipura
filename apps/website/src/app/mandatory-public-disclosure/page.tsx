@@ -15,12 +15,13 @@ import {
 } from "@/lib/disclosure";
 import { ExternalLink, FileText, Download } from "lucide-react";
 import type { DisclosureItem, DisclosureBoardResult } from "@nkps/shared/types";
-import { buildMetadata } from "@nkps/shared/lib/seo";
+import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Mandatory Public Disclosure — NK Public School, Murlipura",
+  title: "Mandatory Public Disclosure",
   description:
-    "RBSE mandatory public disclosure for NK Public School, Murlipura, Jaipur — affiliation details, infrastructure, staff, results, documents and statutory information.",
+    "Mandatory public disclosure for NK Public School, Murlipura, Jaipur — affiliation, infrastructure, staff, results and statutory documents.",
   path: "/mandatory-public-disclosure",
 });
 
@@ -146,6 +147,12 @@ export default async function MandatoryPublicDisclosurePage() {
 
   return (
     <PageTransition>
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "Home", path: "/" },
+          { name: "Mandatory Public Disclosure", path: "/mandatory-public-disclosure" },
+        ])}
+      />
       <PageHeader
         title="Mandatory Public Disclosure"
         subtitle="As per RBSE requirements"
@@ -161,7 +168,7 @@ export default async function MandatoryPublicDisclosurePage() {
         </AnimatedSection>
 
         <AnimatedSection delay={0.1}>
-          <Accordion defaultValue={[]}>
+          <Accordion defaultValue={[]} hiddenUntilFound>
             {/* Section A: General Information */}
             <AccordionItem
               value="general"

@@ -10,20 +10,22 @@ import { MarqueeStrip } from "@nkps/shared/components/MarqueeStrip";
 import { PageTransition } from "@nkps/shared/components/PageTransition";
 import { getPageMedia, mediaUrl, getSectionCards } from "@/lib/site-media";
 import { getLatestArticles } from "@nkps/shared/lib/articles";
+import { getUpcomingSchoolEvents } from "@/lib/calendar-events";
 import { buildMetadata } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "NK Public School, Murlipura — Established 1985",
+  title: "NK Public School, Murlipura, Jaipur | Since 1985",
   description:
-    "NK Public School, Murlipura — the founding NKPS campus in Arya Nagar, Jaipur. English medium, co-educational, Nursery to Class XII with Science and Commerce streams.",
+    "The founding NKPS campus in Arya Nagar, Murlipura, Jaipur, since 1985. English-medium, co-educational school from Nursery to Class XII (Science & Commerce).",
   path: "/",
+  absoluteTitle: true,
 });
 
 // ISR: revalidate every 60s, plus on-demand via revalidatePath from admin
 export const revalidate = 60;
 
 export default async function HomePage() {
-  const [media, heroCards, testimonialCards, facilityCards, accoladeCards, studentAchievementCards, latestArticles] = await Promise.all([
+  const [media, heroCards, testimonialCards, facilityCards, accoladeCards, studentAchievementCards, latestArticles, upcomingEvents] = await Promise.all([
     getPageMedia("home"),
     getSectionCards("hero_slider"),
     getSectionCards("testimonials"),
@@ -31,6 +33,7 @@ export default async function HomePage() {
     getSectionCards("accolades"),
     getSectionCards("student_achievements"),
     getLatestArticles(9),
+    getUpcomingSchoolEvents(6),
   ]);
 
   const statsBackground = mediaUrl(media, "stats_background", "/images/gallery/g10.jpg");
@@ -86,7 +89,7 @@ export default async function HomePage() {
 
       <StatsCounter backgroundImage={statsBackground} />
 
-      <SchoolEvents />
+      <SchoolEvents events={upcomingEvents} />
 
       <Testimonials cards={testimonialCards} />
     </PageTransition>

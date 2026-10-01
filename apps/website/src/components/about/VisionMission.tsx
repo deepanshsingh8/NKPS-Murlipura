@@ -16,9 +16,12 @@ export function VisionMission() {
           light
         />
 
+        {/* First section under the page header — in view on load, and its text
+            is the page's LCP element. initial={false} paints it from the
+            server HTML instead of fading in after hydration. */}
         <motion.div
           variants={staggerContainer}
-          initial="hidden"
+          initial={false}
           whileInView="visible"
           viewport={{ once: true }}
           className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-12 max-w-5xl mx-auto"

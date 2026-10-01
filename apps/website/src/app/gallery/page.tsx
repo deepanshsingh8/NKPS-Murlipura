@@ -2,15 +2,20 @@ import type { Metadata } from "next";
 import { GalleryPageClient } from "./GalleryPageClient";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
+import { getPublicGallery } from "@/lib/gallery";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Photo Gallery — Life at NK Public School, Murlipura",
+  title: "Photo Gallery",
   description:
-    "Glimpses of campus life at NK Public School, Murlipura — annual events, sports meets, cultural programs, academics and everyday moments from our Arya Nagar campus.",
+    "Campus life at NK Public School, Murlipura — annual events, sports meets, cultural programmes and everyday moments from our Arya Nagar campus, Jaipur.",
   path: "/gallery",
 });
 
-export default function GalleryPage() {
+export const revalidate = 60;
+
+export default async function GalleryPage() {
+  const { images, events } = await getPublicGallery();
+
   return (
     <>
       <JsonLd
@@ -19,7 +24,7 @@ export default function GalleryPage() {
           { name: "Gallery", path: "/gallery" },
         ])}
       />
-      <GalleryPageClient />
+      <GalleryPageClient galleryImages={images} galleryEvents={events} />
     </>
   );
 }

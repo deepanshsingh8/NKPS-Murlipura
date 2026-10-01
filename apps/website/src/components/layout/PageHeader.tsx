@@ -35,9 +35,11 @@ export function PageHeader({ title, subtitle }: PageHeaderProps) {
         }}
       />
 
+      {/* Transform-only entrance (see PageTransition): an opacity:0 start would
+          hide the h1 — usually the LCP element — until framer-motion hydrates. */}
       <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ y: 30 }}
+        animate={{ y: 0 }}
         transition={{ duration: 0.6, ease: "easeOut" }}
         className="relative mx-auto max-w-4xl px-6 text-center"
       >

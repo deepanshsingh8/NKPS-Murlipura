@@ -3,14 +3,18 @@ import { MapPin, Phone, Mail, Clock, ArrowRight, GraduationCap } from "lucide-re
 import { FacebookIcon, InstagramIcon, YoutubeIcon } from "@nkps/shared/components/SocialIcons";
 import { SCHOOL, NAV_LINKS } from "@nkps/shared/lib/constants";
 
+// The navbar's "More" dropdown only renders when opened, so every public page
+// must also be linked here to appear in the server HTML crawlers read.
 const resources = [
+  { label: "News & Articles", href: "/articles" },
+  { label: "Academic Calendar", href: "/academic-calendar" },
+  { label: "Gallery", href: "/gallery" },
+  { label: "Alumni", href: "/alumni" },
   { label: "Prospectus", href: "/prospectus" },
   { label: "Holiday Homework", href: "/holiday-homework" },
   { label: "Transfer Certificates", href: "/transfer-certificates" },
-  { label: "Admissions", href: "/admissions" },
-  { label: "Gallery", href: "/gallery" },
-  { label: "Contact", href: "/contact" },
   { label: "For Parents", href: "/for-parents" },
+  { label: "Contact", href: "/contact" },
 ];
 
 export function Footer() {

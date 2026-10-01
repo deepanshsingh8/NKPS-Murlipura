@@ -6,6 +6,97 @@ task logs are all under `_reference/`.
 
 ---
 
+## SEO improvement pass (2026-10-01) — Phase A implemented on `claude/seo-phase-a`
+
+Audit = live crawl of https://www.nkpublicschool.org + code review of
+`apps/website`. Raw crawl output: session scratchpad `seo-live/`.
+
+### Checklist status (user's list)
+| Item | Status today |
+|---|---|
+| Server-side rendering | ✅ mostly — ❌ `/gallery`, staff list on `/academics`, home events fetched client-only |
+| sitemap.xml | ⚠️ works, but `/academic-calendar` missing; static `lastmod` = build time; built once per deploy so new articles don't appear until redeploy |
+| Search Console | ✅ done by user — confirm "Success" + discovered-URL count in GSC |
+| Googlebot not blocked | ✅ robots.txt only blocks /admin /cms /erp /api; same HTML for Googlebot |
+| No stray noindex | ✅ none on public pages — ❌ ERP login (`erp.` subdomain) *is* indexable, should be noindex |
+| Redirect chains | ✅ all 308, one hop for www/https; apex+trailing-slash = 2 hops (Vercel domain config, minor) |
+| Canonical tags | ✅ self-canonical everywhere — ❌ 404 + "article not found" inherit canonical `/` from root layout |
+| Fix 404s | ✅ no broken internal links — ❌ article JSON-LD publisher logo `/logo.png` is a 404 |
+| Meta descriptions | ✅ unique on all pages — ⚠️ 11/18 over 160 chars; titles 66–95 chars with brand repeated twice |
+| One H1 per page | ✅ exactly one everywhere — ⚠️ home H1 rotates with hero slide and renders at opacity:0 |
+| FAQ schema | ✅ on /admissions + /contact — ❌ answers not in HTML (closed accordion unmounts them) |
+| Breadcrumbs | ✅ most pages — ❌ for-parents, prospectus, holiday-homework, MPD, article pages |
+| Orphan pages | ❌ /alumni (no server-HTML link), /articles + /academic-calendar only linked from home |
+| Image alt text | ✅ all images have alt (1 decorative empty) — gallery alt comes from DB |
+| Images → WebP | ✅ next/image serves WebP — ⚠️ 5 `fill` images lack `sizes` (oversized downloads) |
+| Layout shift | ⚠️ unmeasured (PageSpeed API quota 0) — big risk is opacity:0 animation on hero/H1 delaying LCP |
+| Load < 2s | ⚠️ unmeasured; TTFB 0.17–0.53s (good); ~362 KB JS on home from site-wide chalk effects + framer-motion |
+| Author bio | ⚠️ leadership content exists, no Person schema; article `author` always typed Organization |
+| Forbes backlink | ❌ not achievable via code — see Phase C for realistic link building |
+
+Also found: **`/articles/nkps-murlipura-2025-board-results` shows the "Smart
+Panel Classrooms" article** (CMS data mismatch); sports article has no
+og:image; `sameAs` social links + affiliation number empty in schema.
+
+### Phase A — code (one branch → PR, Vercel preview verified)
+- [x] A0 Baseline Lighthouse 13 (mobile, local prod builds of `main` vs branch — PageSpeed web/API quota-blocked from here)
+- [x] A1 sitemap: add `/academic-calendar`; drop fake `now` lastmod; revalidate hourly so new articles appear; thin pages auto-excluded (A9)
+- [x] A2 Titles ≤ 60 chars (no double brand), descriptions ≤ 160 chars
+- [x] A3 Remove inherited root canonical; fix 404 duplicate robots meta; "article not found" no canonical
+- [x] A4 Article pages: logo → `/images/logo.png`, fallback og:image, consistent siteName, `Person` author when named, visible breadcrumb + BreadcrumbList
+- [x] A5 BreadcrumbList on for-parents, prospectus, holiday-homework, MPD
+- [x] A6 Server-render gallery, staff directory, home events, and /academic-calendar (was dynamic via cookie client → now ISR)
+- [x] A7 FAQ / MPD accordions: keep answers in the DOM (`keepMounted`/hidden-until-found)
+- [x] A8 Internal links: alumni, articles, academic-calendar in footer (server HTML)
+- [x] A9 Prospectus / holiday-homework: `noindex` + out of sitemap while empty, auto-indexed once CMS has content
+- [x] A10 LCP: hero image + H1 visible on first paint (no opacity:0 start); stable home H1 (school name), slide titles → h2
+- [x] A11 Images: `sizes` on grid `fill` images; navbar logo eager; `priority` → `preload` (Next 16). AVIF skipped on purpose (webp-only keeps Vercel image-transform quota low, see next.config.ts); PNG source left — next/image serves WebP anyway
+- [x] A12 Perf: measured — TBT ≤ 52 ms and chalk effects already desktop-only, so no deferral needed; fixed opacity-gated LCP on /about + /gallery instead
+- [x] A13 ERP + CMS: noindex meta + `X-Robots-Tag` header; robots.txt *allows* crawling so Google can see the noindex
+- [x] A14 Leadership `Person` schema on /about (author/E-E-A-T)
+- [x] A15 Verify: website/ERP/CMS builds ✅, typecheck + lint ✅, crawl of prod build ✅, Lighthouse A/B ✅ — Rich Results Test to run on the Vercel preview
+
+### Phase A results (local prod builds, Lighthouse 13 mobile / simulated slow 4G)
+| Page | LCP main → branch | Perf main → branch |
+|---|---|---|
+| / | 6.25 s → 4.06 s | 78 → 87 |
+| /about | 4.53 s → 3.76 s | 84 → 89 |
+| /gallery | 4.37 s → 3.99 s | 85 → 87 |
+| /admissions | 4.97 s → 4.66 s | 82 → 83 |
+CLS 0.000 and SEO 100 on every run; TBT ≤ 35 ms. Remaining LCP floor is the
+critical path on slow 4G (CSS + 2 web fonts + framer-motion JS); getting it
+under ~3 s needs a bigger refactor (trim framer-motion / client components).
+Tried `loading="eager"` + `fetchPriority="high"` instead of `preload` on hero
+images — slightly worse (4.06 → 4.21 s), reverted.
+
+Crawl of branch build: every page 1 h1, title ≤ 60, description ≤ 160,
+self-canonical, no "Loading…" placeholders; FAQ answers in the DOM; 404 only
+`noindex` (no canonical); /prospectus + /holiday-homework `noindex, follow` and
+out of the sitemap while empty; ERP /portal/login → `X-Robots-Tag` + meta noindex.
+
+Flagged, not changed (product decisions):
+- /admissions enquiry pop-up auto-opens 600 ms after every visit. Google can
+  demote pages whose mobile interstitial covers content on arrival from search
+  — consider opening it on scroll/exit-intent or a delay of ~15 s, once per session.
+- Footer says "Mon – Sat: 8:00 AM – 3:00 PM" but schema + contact page say
+  9:00 AM – 3:00 PM. Pick one so NAP data is consistent (local SEO).
+- Lighthouse a11y flags colour contrast (96/100) — not SEO, worth a pass later.
+
+### Phase B — content / data (needs school input)
+- [ ] B1 Fix board-results article content (or slug) in CMS
+- [ ] B2 Social profile URLs (Facebook/Instagram/YouTube) → `sameAs`
+- [ ] B3 RBSE affiliation number + exact pin code
+- [ ] B4 Upload prospectus PDF + holiday homework; review gallery alt text
+- [ ] B5 Expand thin /student-life copy
+
+### Phase C — off-site (user)
+- [ ] C1 GSC: sitemap status, Pages report (indexed vs excluded), URL Inspection → request indexing on key pages
+- [ ] C2 Google Business Profile (biggest lever for "school in Murlipura / Jaipur" searches): verify, photos, hours, link to site
+- [ ] C3 Links: other NKPS campus sites → Murlipura; education directories (Shiksha, Edustoke, Justdial, Sulekha); local press (Dainik Bhaskar / Rajasthan Patrika) for results & sports wins; alumni + staff LinkedIn
+- [ ] C4 Publish an article monthly (results, events, admissions) — fresh, linkable content
+
+---
+
 ## Launch-parity completion pass (2026-07-14) — DONE
 
 Verified the launch-parity plan (Website + CMS). Findings + finishing work:

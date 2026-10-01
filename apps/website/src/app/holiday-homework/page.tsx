@@ -5,15 +5,22 @@ import { AnimatedSection } from "@nkps/shared/components/AnimatedSection";
 import { getHolidayHomework } from "@/lib/holiday-homework";
 import { HOLIDAY_HOMEWORK_CLASSES } from "@nkps/shared/lib/constants";
 import { ExternalLink, FileText, Download, NotebookPen } from "lucide-react";
-import { buildMetadata } from "@nkps/shared/lib/seo";
+import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
+import { JsonLd } from "@/components/seo/JsonLd";
 import type { HolidayHomework } from "@nkps/shared/types";
 
-export const metadata: Metadata = buildMetadata({
-  title: "Holiday Homework — NK Public School, Murlipura",
-  description:
-    "Download holiday homework for each class at NK Public School, Murlipura. Summer and winter break assignments organised by class.",
-  path: "/holiday-homework",
-});
+// Kept out of the index (and the sitemap) until the CMS has documents, so
+// Google doesn't index an empty placeholder page.
+export async function generateMetadata(): Promise<Metadata> {
+  const items = await getHolidayHomework();
+  return buildMetadata({
+    title: "Holiday Homework",
+    description:
+      "Download holiday homework for each class at NK Public School, Murlipura. Summer and winter break assignments organised by class.",
+    path: "/holiday-homework",
+    noIndex: items.length === 0,
+  });
+}
 
 export const revalidate = 60;
 
@@ -39,6 +46,12 @@ export default async function HolidayHomeworkPage() {
 
   return (
     <PageTransition>
+      <JsonLd
+        data={breadcrumbJsonLd([
+          { name: "Home", path: "/" },
+          { name: "Holiday Homework", path: "/holiday-homework" },
+        ])}
+      />
       <PageHeader
         title="Holiday Homework"
         subtitle="Download holiday homework for your class"
