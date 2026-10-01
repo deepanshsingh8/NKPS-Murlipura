@@ -27,13 +27,15 @@ export const SCHOOL = {
   whatsapp: "919785500042",
   officeHours: "Mon–Sat, 9:00 AM – 3:00 PM",
   affiliation: "RBSE",
-  affiliationNumber: "",
+  affiliationNumber: "1121353", // RBSE affiliation number (confirmed by the school)
   geo: { lat: 26.9774, lng: 75.7884 },
   priceRange: "₹₹",
+  // Canonical profile URLs (share/tracking parameters stripped). Also emitted
+  // as `sameAs` in the School JSON-LD so Google links the profiles to the site.
   social: {
-    facebook: "",
-    instagram: "",
-    youtube: "",
+    facebook: "https://www.facebook.com/nkpsmurlipura",
+    instagram: "https://www.instagram.com/nkpsmurlipura/",
+    youtube: "https://www.youtube.com/@nkpublicschooljaipur9777",
   },
   leadership: [
     {
