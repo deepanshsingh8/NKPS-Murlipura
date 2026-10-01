@@ -14,6 +14,10 @@ import {
   YoutubeIcon,
 } from "@nkps/shared/components/SocialIcons";
 import { getErpUrl } from "@nkps/shared/lib/cross-app";
+// A static import, not "/images/logo.png": the optimizer caches by URL for
+// 31 days (next.config.ts), so a string src keeps serving the previous crest
+// to every returning visitor. The import puts a content hash in the URL.
+import logo from "../../../public/images/logo.png";
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -72,7 +76,7 @@ export function Navbar() {
             className="group flex items-center gap-3 transition-transform duration-300 hover:scale-105"
           >
             <Image
-              src="/images/logo.png"
+              src={logo}
               alt="NK Public School Logo"
               width={40}
               height={40}

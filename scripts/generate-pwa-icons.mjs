@@ -1,7 +1,19 @@
-// Generates the home-screen icons AND the browser-tab favicons for the ERP,
-// CMS and website apps, from one copy of the school crest
-// (assets/nkps-crest.png, 709x714, the crest printed on a white page).
+// Generates every raster of the school crest the three apps use, from the
+// vector masters in assets/logos/:
+//
+//   nkps-crest.svg   the full crest — title arc, shield, motto ribbon
+//   nkps-shield.svg  the shield alone, for anything drawn under ~100px
+//
+// Outputs: the home-screen icons and browser-tab favicons for the ERP, CMS
+// and website, plus apps/<app>/public/images/logo.png (the crest every UI
+// header, login screen, PDF and JSON-LD block points at), the website's
+// public/favicon.ico, and public/images/logo-mark.png for its OG card.
 // Run once; commit the results. Re-run only when the crest changes.
+//
+// The masters were converted from the school's CorelDRAW originals
+// (LOGO-i.cdr, via libcdr's cdr2xhtml) and recoloured to the crest's printed
+// colours — the .cdr only carries single-ink variants. Edit the SVGs, not the
+// PNGs: every PNG here is derived.
 //
 // The crest lives at assets/ rather than in each app because it used to be
 // three byte-identical 264KB copies at apps/<app>/src/app/icon.png — where
@@ -27,12 +39,9 @@
 //
 // ── What this does instead ──────────────────────────────────────────────────
 //
-// 1. Cuts the shield out of the page, by flood-filling from the crest's centre
-//    across everything that isn't page-white. The shield, its outline and its
-//    lettering are one connected blob; the arced "NOBLE KINGDOM PUBLIC SCHOOL"
-//    is separated from it by white and so is never reached. That text is
-//    illegible at 60px anyway — dropping it is what makes the mark readable at
-//    the size it is actually looked at.
+// 1. Uses the shield alone, without the arced "NOBLE KINGDOM PUBLIC SCHOOL"
+//    or the ribbon. That text is illegible at 60px anyway — dropping it is
+//    what makes the mark readable at the size it is actually looked at.
 // 2. Puts the shield full-bleed on a solid field. One colour edge to edge,
 //    so there is no box inside a box and nothing for the platform's rounding
 //    to expose.
@@ -49,12 +58,14 @@
 import sharp from "sharp";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
 
-const CREST = join(REPO_ROOT, "assets", "nkps-crest.png");
+const LOGOS = join(REPO_ROOT, "assets", "logos");
+const CREST = join(LOGOS, "nkps-crest.svg");
+const SHIELD = join(LOGOS, "nkps-shield.svg");
 
 const APPS = [
   {
@@ -95,61 +106,82 @@ const APPS = [
   },
 ];
 
-/** Cut the shield off its white page. Returns a trimmed RGBA PNG buffer. */
-async function shieldCutout(srcPath) {
-  const { data, info } = await sharp(srcPath)
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const { width: W, height: H, channels: C } = info;
-
-  const isPage = (p) => {
-    const i = p * C;
-    return data[i] > 232 && data[i + 1] > 232 && data[i + 2] > 232;
-  };
-
-  const seen = new Uint8Array(W * H);
-  const start = Math.floor(H / 2) * W + Math.floor(W / 2);
-  const stack = [start];
-  seen[start] = 1;
-  let minX = W, minY = H, maxX = 0, maxY = 0;
-
-  while (stack.length) {
-    const p = stack.pop();
-    const x = p % W;
-    const y = (p - x) / W;
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-      const np = ny * W + nx;
-      if (seen[np] || isPage(np)) continue;
-      seen[np] = 1;
-      stack.push(np);
-    }
-  }
-
-  const rgba = Buffer.alloc(W * H * 4);
-  for (let p = 0; p < W * H; p++) {
-    const i = p * C;
-    rgba[p * 4] = data[i];
-    rgba[p * 4 + 1] = data[i + 1];
-    rgba[p * 4 + 2] = data[i + 2];
-    rgba[p * 4 + 3] = seen[p] ? 255 : 0;
-  }
-
-  return sharp(rgba, { raw: { width: W, height: H, channels: 4 } })
-    .extract({
-      left: minX,
-      top: minY,
-      width: maxX - minX + 1,
-      height: maxY - minY + 1,
-    })
+/**
+ * Rasterise an SVG master at `height` px, trimmed to its ink. The SVGs carry
+ * a nominal size of ~900px; density scales from that, so a request for 1000px
+ * renders at 1000px rather than being upscaled from a smaller bitmap.
+ */
+async function render(svgPath, height) {
+  const { height: nominal } = await sharp(svgPath).metadata();
+  return sharp(svgPath, { density: Math.ceil((72 * height) / nominal) + 1 })
+    .resize({ height })
+    .trim({ threshold: 0 })
     .png()
     .toBuffer();
+}
+
+/**
+ * The full crest, square, on white. The UI shows this file inside
+ * `rounded-full` frames (sidebar, login, navbar), so the crest is scaled to
+ * sit inside the inscribed circle rather than the square — otherwise the ends
+ * of the title arc and the ribbon tails get clipped. PDFs and JSON-LD use the
+ * same file; on paper the white is the page.
+ */
+async function crestLogo(size) {
+  const art = await render(CREST, size * 2);
+  const { data, info } = await sharp(art).raw().toBuffer({ resolveWithObject: true });
+  const cx = info.width / 2;
+  const cy = info.height / 2;
+  let r2 = 0;
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      if (data[(y * info.width + x) * 4 + 3] === 0) continue;
+      const d = (x - cx) ** 2 + (y - cy) ** 2;
+      if (d > r2) r2 = d;
+    }
+  }
+  // 96% of the circle: a hair of white between the arc and the frame.
+  const scale = (size * 0.96) / (2 * Math.sqrt(r2));
+  const fitted = await sharp(art)
+    .resize(Math.round(info.width * scale), Math.round(info.height * scale))
+    .toBuffer();
+  const composed = await sharp({
+    create: { width: size, height: size, channels: 3, background: "#ffffff" },
+  })
+    .composite([{ input: fitted, gravity: "center" }])
+    .png()
+    .toBuffer();
+  // Composite adds an alpha channel, and sharp runs it after any flatten in
+  // the same pipeline — so drop it in a second pass, and PDFs embed a plain
+  // RGB image rather than one with a soft mask.
+  return sharp(composed).removeAlpha().png({ compressionLevel: 9 });
+}
+
+/**
+ * A .ico wrapping PNG frames — every browser since IE9 reads PNG-in-ICO, and
+ * sharp has no ICO writer. Only fetched by clients that ask for /favicon.ico
+ * directly; pages link the app/icon.png tile instead.
+ */
+async function ico(art, field, sizes) {
+  const frames = await Promise.all(
+    sizes.map(async (s) => (await tile(art, field, s, 0.88)).toBuffer())
+  );
+  const header = Buffer.alloc(6 + 16 * frames.length);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(frames.length, 4);
+  let offset = header.length;
+  frames.forEach((buf, i) => {
+    const e = 6 + 16 * i;
+    header.writeUInt8(sizes[i] % 256, e);
+    header.writeUInt8(sizes[i] % 256, e + 1);
+    header.writeUInt16LE(1, e + 4);
+    header.writeUInt16LE(32, e + 6);
+    header.writeUInt32LE(buf.length, e + 8);
+    header.writeUInt32LE(offset, e + 12);
+    offset += buf.length;
+  });
+  return Buffer.concat([header, ...frames]);
 }
 
 /**
@@ -215,14 +247,20 @@ async function tile(art, field, size, inset) {
     .png();
 }
 
-const shield = await shieldCutout(CREST);
+// Rendered well above the 512 artwork box, so every resize is a downscale.
+const shield = await render(SHIELD, 840);
+const logo = await (await crestLogo(1024)).toBuffer();
 
 for (const app of APPS) {
   const appRoot = join(REPO_ROOT, "apps", app.dir);
   const art = await artwork(shield, app.label, app.ink);
 
+  // The crest itself, at the path every app already serves it from.
+  await mkdir(join(appRoot, "public", "images"), { recursive: true });
+  await sharp(logo).toFile(join(appRoot, "public", "images", "logo.png"));
+
   // The browser-tab icon, via Next's app/icon.png convention. 128px rather
-  // than the crest's 709 — a favicon is drawn at 16-32px, and at that size
+  // than the crest's 1024 — a favicon is drawn at 16-32px, and at that size
   // the three-letter label is a smudge, so the tab icon is the shield alone.
   // The field colour still tells the ERP tab from the CMS one.
   const favicon = await artwork(shield, null, app.ink);
@@ -231,7 +269,18 @@ for (const app of APPS) {
   );
 
   if (app.faviconOnly) {
-    console.log(`apps/${app.dir}: favicon written`);
+    // The website has no manifest to install, but it does get crawled: an
+    // .ico for clients that request /favicon.ico blind, and the bare shield
+    // on transparent for the OG card, which sits on the site's own green.
+    await writeFile(
+      join(appRoot, "public", "favicon.ico"),
+      await ico(favicon, app.field, [16, 32, 48])
+    );
+    await sharp(shield)
+      .resize({ height: 256 })
+      .png()
+      .toFile(join(appRoot, "public", "images", "logo-mark.png"));
+    console.log(`apps/${app.dir}: logo, favicons and OG mark written`);
     continue;
   }
 

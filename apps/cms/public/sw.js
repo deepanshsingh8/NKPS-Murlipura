@@ -12,7 +12,7 @@
 // so leaving the name alone left the old PNGs on every device that had already
 // installed the app.
 
-const CACHE_VERSION = "nkps-cms-v2";
+const CACHE_VERSION = "nkps-cms-v3";
 const OFFLINE_URL = "/offline";
 const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png", "/icons/icon-512.png"];
 
