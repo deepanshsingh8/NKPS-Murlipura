@@ -3,14 +3,11 @@
 import { useState, useRef, useEffect } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Users, Loader2 } from "lucide-react";
+import { Search, Users } from "lucide-react";
 import { SectionHeading } from "@nkps/shared/components/SectionHeading";
 import { STAFF } from "@nkps/shared/lib/constants";
-import { createClient } from "@nkps/shared/lib/supabase/client";
 import { cn } from "@nkps/shared/lib/utils";
-import type { StaffMember } from "@nkps/shared/types";
-
-const PUBLIC_CATEGORIES = ["management", "pgt", "tgt", "prt", "motherTeachers", "admin"] as const;
+import type { PublicStaffMember } from "@/lib/staff-directory";
 
 const tabs = [
   { label: "Management", key: "management" as const },
@@ -64,52 +61,19 @@ const cardVariants = {
   exit: { opacity: 0, y: -12, scale: 0.98, transition: { duration: 0.2 } },
 };
 
-export function StaffDirectory() {
+/**
+ * `dbStaff` is fetched on the server (getPublicStaffDirectory); null means the
+ * DB had no rows or errored, so the STAFF constants are shown instead.
+ */
+export function StaffDirectory({
+  dbStaff,
+}: {
+  dbStaff: Record<string, PublicStaffMember[]> | null;
+}) {
   const [activeTab, setActiveTab] = useState<TabKey>("management");
   const [search, setSearch] = useState("");
   const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 });
-  const [dbStaff, setDbStaff] = useState<Record<string, StaffMember[]> | null>(null);
-  const [dbLoading, setDbLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const supabase = createClient();
-        // public_staff_directory, not staff_members: the base table also
-        // holds date_of_birth, address, phone, email and license_number, and
-        // `select("*")` was shipping all of it to every visitor. The view
-        // (migration 098) exposes only these columns and active staff, and
-        // the table itself is now authenticated-only. Columns are listed
-        // explicitly so widening the view can never silently widen this page.
-        const { data, error } = await supabase
-          .from("public_staff_directory")
-          .select("id, name, subject, category, photo_url, qualifications, sort_order")
-          .in("category", PUBLIC_CATEGORIES as unknown as string[])
-          .order("sort_order")
-          .order("name");
-
-        if (cancelled) return;
-
-        if (!error && data && data.length > 0) {
-          const grouped: Record<string, StaffMember[]> = {};
-          for (const member of data as StaffMember[]) {
-            if (!grouped[member.category]) grouped[member.category] = [];
-            grouped[member.category].push(member);
-          }
-          setDbStaff(grouped);
-        }
-      } catch {
-        // Silently fall back to constants
-      } finally {
-        if (!cancelled) setDbLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Use DB data if available, otherwise fall back to constants
   const getStaffForTab = (key: TabKey): Array<{ name: string; subject: string; photo_url?: string | null }> => {
@@ -291,13 +255,7 @@ export function StaffDirectory() {
         {/* Subtle member count */}
         <div className="mt-6 text-center">
           <p className="text-xs text-chalk-faint">
-            {dbLoading ? (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" /> Loading...
-              </span>
-            ) : (
-              `Showing ${filtered.length} of ${staffData.length} faculty members`
-            )}
+            Showing {filtered.length} of {staffData.length} faculty members
           </p>
         </div>
       </div>

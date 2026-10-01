@@ -3,14 +3,18 @@ import { MapPin, Phone, Mail, Clock, ArrowRight, GraduationCap } from "lucide-re
 import { FacebookIcon, InstagramIcon, YoutubeIcon } from "@nkps/shared/components/SocialIcons";
 import { SCHOOL, NAV_LINKS } from "@nkps/shared/lib/constants";
 
+// The navbar's "More" dropdown only renders when opened, so every public page
+// must also be linked here to appear in the server HTML crawlers read.
 const resources = [
+  { label: "News & Articles", href: "/articles" },
+  { label: "Academic Calendar", href: "/academic-calendar" },
+  { label: "Gallery", href: "/gallery" },
+  { label: "Alumni", href: "/alumni" },
   { label: "Prospectus", href: "/prospectus" },
   { label: "Holiday Homework", href: "/holiday-homework" },
   { label: "Transfer Certificates", href: "/transfer-certificates" },
-  { label: "Admissions", href: "/admissions" },
-  { label: "Gallery", href: "/gallery" },
-  { label: "Contact", href: "/contact" },
   { label: "For Parents", href: "/for-parents" },
+  { label: "Contact", href: "/contact" },
 ];
 
 export function Footer() {
@@ -131,7 +135,7 @@ export function Footer() {
               </li>
               <li className="flex items-start gap-3">
                 <Clock className="mt-0.5 h-4 w-4 shrink-0 text-gold-500" />
-                <span className="text-sm text-gray-300">Mon – Sat: 8:00 AM – 3:00 PM</span>
+                <span className="text-sm text-gray-300">{SCHOOL.officeHours}</span>
               </li>
             </ul>
           </div>

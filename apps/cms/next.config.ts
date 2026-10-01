@@ -75,6 +75,9 @@ const nextConfig: NextConfig = {
             key: "Permissions-Policy",
             value: "camera=(), microphone=(), geolocation=()",
           },
+          // Private app: keep every response out of search
+          // indexes (HTML, API and files alike).
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
       {

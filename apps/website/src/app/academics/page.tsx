@@ -6,15 +6,20 @@ import { CurriculumOverview } from "@/components/academics/CurriculumOverview";
 import { StaffDirectory } from "@/components/academics/StaffDirectory";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
+import { getPublicStaffDirectory } from "@/lib/staff-directory";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Academics & RBSE based Curriculum — NK Public School Jaipur",
+  title: "Academics & RBSE Curriculum",
   description:
-    "RBSE based curriculum at NK Public School, Jaipur — structured pre-primary, primary, secondary and senior-secondary programs with experienced faculty in Science, Commerce and Humanities streams.",
+    "RBSE curriculum at NK Public School, Murlipura, Jaipur — pre-primary, primary, secondary and senior-secondary programmes taught by experienced faculty.",
   path: "/academics",
 });
 
-export default function AcademicsPage() {
+export const revalidate = 60;
+
+export default async function AcademicsPage() {
+  const dbStaff = await getPublicStaffDirectory();
+
   return (
     <>
       <JsonLd
@@ -56,7 +61,7 @@ export default function AcademicsPage() {
         </div>
       </section>
 
-      <StaffDirectory />
+      <StaffDirectory dbStaff={dbStaff} />
     </>
   );
 }

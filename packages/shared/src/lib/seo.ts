@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { SCHOOL } from "@nkps/shared/lib/constants";
 
-// Canonical host is www, matching the nkpublicschool.com deployment (the apex
-// 301s to www in Vercel). NEXT_PUBLIC_SITE_URL overrides this per environment.
+// Canonical host is www (the apex 301s to www in Vercel).
+// NEXT_PUBLIC_SITE_URL overrides this per environment.
 const DEFAULT_SITE_URL = "https://www.nkpublicschool.org";
 
 function normalizeSiteUrl(raw: string | undefined): string {
@@ -17,7 +17,12 @@ function normalizeSiteUrl(raw: string | undefined): string {
 
 export const SITE_URL = normalizeSiteUrl(process.env.NEXT_PUBLIC_SITE_URL);
 
-const DEFAULT_OG_IMAGE = `${SITE_URL}/opengraph-image`;
+export const DEFAULT_OG_IMAGE = `${SITE_URL}/opengraph-image`;
+
+// Appended to page titles by the root layout's title template. Page titles
+// passed to buildMetadata should NOT repeat the school name — keep them short
+// (≤ ~30 chars) so the full title stays under ~60 chars in search results.
+export const TITLE_SUFFIX = ` | ${SCHOOL.name}`;
 
 type BuildMetadataArgs = {
   title: string;
@@ -25,6 +30,8 @@ type BuildMetadataArgs = {
   path: string;
   image?: string;
   noIndex?: boolean;
+  /** Use `title` verbatim, skipping the layout's "| School name" template. */
+  absoluteTitle?: boolean;
 };
 
 export function buildMetadata({
@@ -33,36 +40,62 @@ export function buildMetadata({
   path,
   image,
   noIndex,
+  absoluteTitle,
 }: BuildMetadataArgs): Metadata {
   const url = `${SITE_URL}${path.startsWith("/") ? path : `/${path}`}`;
   const ogImage = image || DEFAULT_OG_IMAGE;
+  // Social cards don't get the layout template, so add the brand here.
+  const fullTitle = absoluteTitle ? title : `${title}${TITLE_SUFFIX}`;
 
   return {
-    title,
+    title: absoluteTitle ? { absolute: title } : title,
     description,
     alternates: { canonical: url },
     openGraph: {
-      title,
+      title: fullTitle,
       description,
       url,
       type: "website",
       locale: "en_IN",
       siteName: SCHOOL.name,
-      images: [{ url: ogImage, width: 1200, height: 630, alt: title }],
+      images: [{ url: ogImage, width: 1200, height: 630, alt: fullTitle }],
     },
     twitter: {
       card: "summary_large_image",
-      title,
+      title: fullTitle,
       description,
       images: [ogImage],
     },
-    robots: noIndex
-      ? { index: false, follow: false }
-      : { index: true, follow: true },
+    robots: noIndex ? { index: false, follow: true } : INDEXABLE_ROBOTS,
   };
 }
 
-const SCHOOL_ID = `${SITE_URL}/#school`;
+// CMS text (excerpts, markdown) can contain newlines and run long. Collapse
+// whitespace and cut at a word boundary so the meta description stays clean
+// and within the ~160 chars search engines display.
+export function toMetaDescription(text: string, max = 160): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.–—-]+$/, "")}…`;
+}
+
+// Set per page (not in the root layout) so routes without their own metadata —
+// the 404 page in particular — don't inherit "index, follow" alongside the
+// noindex Next.js injects for 404s.
+export const INDEXABLE_ROBOTS: NonNullable<Metadata["robots"]> = {
+  index: true,
+  follow: true,
+  googleBot: {
+    index: true,
+    follow: true,
+    "max-image-preview": "large",
+    "max-snippet": -1,
+    "max-video-preview": -1,
+  },
+};
+
+export const SCHOOL_ID = `${SITE_URL}/#school`;
 const ORG_ID = `${SITE_URL}/#organization`;
 const PLACE_ID = `${SITE_URL}/#place`;
 

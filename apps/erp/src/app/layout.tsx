@@ -27,6 +27,14 @@ const playfair = Playfair_Display({
 // Public-site routes live in apps/website/.
 export const metadata: Metadata = {
   title: "NKPS Portal",
+  // The ERP is a private, login-gated app and must never be indexed. Mirrors
+  // apps/cms; robots.ts and the X-Robots-Tag header in next.config.ts back
+  // this up for crawlers and non-HTML responses.
+  robots: {
+    index: false,
+    follow: false,
+    googleBot: { index: false, follow: false },
+  },
   appleWebApp: {
     capable: true,
     // "black" rather than "default" or "black-translucent". The status bar has

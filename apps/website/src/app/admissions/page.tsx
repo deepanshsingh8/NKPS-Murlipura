@@ -5,9 +5,9 @@ import { JsonLd } from "@/components/seo/JsonLd";
 import { buildMetadata, breadcrumbJsonLd, faqJsonLd } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Admissions — Apply to NK Public School, Murlipura (Nursery–XII)",
+  title: "Admissions – Nursery to XII",
   description:
-    "Admission process, eligibility, fees and FAQ for NK Public School, Murlipura, Jaipur — English medium co-ed school (Nursery to Class XII). Call the school office to begin your admission today.",
+    "Admission process, eligibility, fees and FAQs for NK Public School, Murlipura, Jaipur — an English-medium co-ed school, Nursery to Class XII.",
   path: "/admissions",
 });
 

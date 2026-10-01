@@ -5,9 +5,9 @@ import { getPageMedia, mediaUrl, getSectionCards } from "@/lib/site-media";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Facilities — Smart Classrooms, Labs, Library — NKPS Jaipur",
+  title: "Campus Facilities & Labs",
   description:
-    "Modern facilities at NK Public School, Jaipur — smart classrooms, science and computer labs, 10,000-volume library, sports grounds, auditorium, indoor games and school bus transport.",
+    "Smart classrooms, science and computer labs, a 10,000-volume library, sports grounds, auditorium and bus transport at NK Public School, Murlipura.",
   path: "/facilities",
 });
 

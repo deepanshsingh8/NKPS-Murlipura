@@ -449,7 +449,7 @@ export function ContactPageClient() {
 
           <AnimatedSection delay={0.2}>
             <div className="mt-12 space-y-4">
-              <Accordion defaultValue={[]}>
+              <Accordion defaultValue={[]} hiddenUntilFound>
                 {faqs.map((faq, index) => (
                   <AccordionItem
                     key={index}

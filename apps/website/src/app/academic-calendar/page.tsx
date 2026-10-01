@@ -2,11 +2,11 @@ import { Metadata } from "next";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
-import { createClient } from "@nkps/shared/lib/supabase/server";
-import type { CalendarEvent, CalendarEventType } from "@nkps/shared/types";
+import { getUpcomingSchoolEvents, type PublicCalendarEvent } from "@/lib/calendar-events";
+import type { CalendarEventType } from "@nkps/shared/types";
 
 export const metadata: Metadata = buildMetadata({
-  title: "Academic Calendar — NK Public School Jaipur",
+  title: "Academic Calendar",
   description:
     "Upcoming events, holidays, exams, and PTM schedule at NK Public School, Jaipur. Stay informed about important academic dates.",
   path: "/academic-calendar",
@@ -55,19 +55,11 @@ function formatRange(start: string, end: string | null) {
 }
 
 export default async function AcademicCalendarPage() {
-  const supabase = await createClient();
-  const today = new Date().toISOString().split("T")[0];
+  // Server/admin read (no cookies) so this page stays ISR-cached rather than
+  // rendering on every request.
+  const events = await getUpcomingSchoolEvents();
 
-  const { data } = await supabase
-    .from("calendar_events")
-    .select("*")
-    .gte("start_date", today)
-    .is("class_id", null)
-    .order("start_date", { ascending: true });
-
-  const events = (data as CalendarEvent[] | null) ?? [];
-
-  const grouped = events.reduce<Record<string, CalendarEvent[]>>((acc, ev) => {
+  const grouped = events.reduce<Record<string, PublicCalendarEvent[]>>((acc, ev) => {
     const key = monthKey(ev.start_date);
     (acc[key] ||= []).push(ev);
     return acc;

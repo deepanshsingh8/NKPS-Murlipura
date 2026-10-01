@@ -11,12 +11,13 @@ import { PageTransition } from "@nkps/shared/components/PageTransition";
 import { SectionDivider } from "@nkps/shared/components/SectionDivider";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { getPageMedia, mediaUrl, getSectionCards } from "@/lib/site-media";
-import { buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
+import { SCHOOL } from "@nkps/shared/lib/constants";
+import { SITE_URL, SCHOOL_ID, buildMetadata, breadcrumbJsonLd } from "@nkps/shared/lib/seo";
 
 export const metadata: Metadata = buildMetadata({
-  title: "About NK Public School, Murlipura — Legacy Since 1985",
+  title: "About Us – Legacy Since 1985",
   description:
-    "Learn about NK Public School, Murlipura — founded in 1985 by Late Shri R.K. Choudhary. Four decades of discipline, academic excellence and character building in Arya Nagar, Jaipur.",
+    "NK Public School, Murlipura was founded in 1985 by Late Shri R.K. Choudhary — four decades of discipline, academic excellence and character in Jaipur.",
   path: "/about",
 });
 
@@ -33,8 +34,39 @@ export default async function AboutPage() {
   const aboutHeroImage = mediaUrl(media, "about_hero", "/images/gallery/g10.jpg");
   const founderPhoto = mediaUrl(media, "founder_photo", "/images/about/rk-choudhary.png");
 
+  const absolute = (url: string) => (url.startsWith("/") ? `${SITE_URL}${url}` : url);
+
+  // Who runs the school, tied to the site-wide School entity — helps search
+  // engines connect the leadership (E-E-A-T) to the organisation.
+  const aboutJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "AboutPage",
+    url: `${SITE_URL}/about`,
+    name: `About ${SCHOOL.name}`,
+    about: { "@id": SCHOOL_ID },
+    mentions: [
+      {
+        "@type": "Person",
+        name: SCHOOL.founder.name,
+        description: SCHOOL.founder.bio,
+        image: absolute(founderPhoto),
+        affiliation: { "@id": SCHOOL_ID },
+      },
+      ...leadershipCards
+        .filter((c) => c.name)
+        .map((c) => ({
+          "@type": "Person",
+          name: c.name,
+          jobTitle: c.designation || undefined,
+          image: c.image_url ? absolute(c.image_url) : undefined,
+          worksFor: { "@id": SCHOOL_ID },
+        })),
+    ],
+  };
+
   return (
     <PageTransition>
+      <JsonLd data={aboutJsonLd} />
       <JsonLd
         data={breadcrumbJsonLd([
           { name: "Home", path: "/" },
@@ -55,7 +87,7 @@ export default async function AboutPage() {
           alt="NK Public School, Murlipura — Arya Nagar campus, Jaipur"
           fill
           className="object-cover"
-          priority
+          preload
         />
         <div className="absolute inset-0 bg-gradient-to-b from-navy-950/70 via-navy-900/50 to-navy-950/80" />
         <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">

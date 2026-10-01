@@ -76,6 +76,7 @@ export function Navbar() {
               alt="NK Public School Logo"
               width={40}
               height={40}
+              loading="eager"
               className="rounded-full"
             />
             <span
