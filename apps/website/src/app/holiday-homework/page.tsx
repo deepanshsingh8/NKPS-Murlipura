@@ -59,7 +59,7 @@ export default async function HolidayHomeworkPage() {
 
       <section className="mx-auto max-w-4xl px-4 py-16 md:px-8">
         {items.length === 0 ? (
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <div className="rounded-2xl border border-dashed border-chalk/20 bg-white/[0.04] p-10 text-center">
               <NotebookPen className="mx-auto mb-3 h-8 w-8 text-chalk-faint" />
               <p className="text-sm text-chalk-faint">

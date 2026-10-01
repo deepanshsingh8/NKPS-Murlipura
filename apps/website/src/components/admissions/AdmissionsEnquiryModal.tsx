@@ -20,16 +20,38 @@ const enquirySchema = contactFormSchema.extend({
 });
 type EnquiryData = z.infer<typeof enquirySchema>;
 
+// Open once the visitor has scrolled this fraction of a viewport — enough to
+// show intent without interrupting the first read of the page.
+const SCROLL_TRIGGER = 0.5;
+const SHOWN_KEY = "nkps:admissions-enquiry-shown";
+
+// sessionStorage can be unavailable (private mode, blocked storage); treat
+// that as "not shown yet" and never let it throw.
+function alreadyShownThisSession(): boolean {
+  try {
+    return sessionStorage.getItem(SHOWN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markShownThisSession() {
+  try {
+    sessionStorage.setItem(SHOWN_KEY, "1");
+  } catch {
+    // Storage blocked: the pop-up may show again on the next visit.
+  }
+}
+
 const DEFAULT_ENQUIRY_MESSAGE =
   "Admissions enquiry submitted via the website. Please contact me with admission details.";
 
 /**
- * Admissions enquiry pop-up shown on the /admissions page. It opens
- * automatically every time the page is visited (per product requirement —
- * each admissions visit should surface the enquiry prompt), captures the
- * visitor's enquiry, and can be dismissed — either way the admissions page
- * remains fully visible underneath. Closing it only hides it for the current
- * view; the next visit / refresh shows it again.
+ * Admissions enquiry pop-up shown on the /admissions page. It opens once per
+ * browser session, after the visitor has scrolled into the page — never on
+ * arrival, because Google demotes pages whose mobile pop-up covers the content
+ * straight from search. It captures the visitor's enquiry and can be
+ * dismissed; either way the admissions page remains fully visible underneath.
  *
  * Email + phone are validated (format-level) on both the client (zod here) and
  * the server (/api/contact) before anything is stored.
@@ -48,15 +70,19 @@ export function AdmissionsEnquiryModal() {
     defaultValues: { subject: "Admissions" },
   });
 
-  // Auto-open on every visit, shortly after the page settles. No persistence
-  // gate — each mount (page visit / refresh) re-opens the prompt by design.
+  // Open once per session, after the visitor scrolls past SCROLL_TRIGGER.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const t = setTimeout(() => setOpen(true), 600);
-    return () => clearTimeout(t);
+    if (alreadyShownThisSession()) return;
+    const onScroll = () => {
+      if (window.scrollY < window.innerHeight * SCROLL_TRIGGER) return;
+      window.removeEventListener("scroll", onScroll);
+      markShownThisSession();
+      setOpen(true);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Closing only hides it for the current view; it reopens on the next visit.
   const close = useCallback(() => {
     setOpen(false);
   }, []);

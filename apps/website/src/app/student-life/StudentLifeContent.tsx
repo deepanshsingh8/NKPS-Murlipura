@@ -103,7 +103,7 @@ export function StudentLifeContent({
       {activities.length > 0 && (
       <section className="py-20 px-6">
         <div className="mx-auto max-w-6xl">
-          <AnimatedSection>
+          <AnimatedSection aboveFold>
             <SectionHeading
               title="Activities & Clubs"
               subtitle="Discover your passion through our diverse range of extracurricular activities"

@@ -75,9 +75,12 @@ self-canonical, no "Loading…" placeholders; FAQ answers in the DOM; 404 only
 out of the sitemap while empty; ERP /portal/login → `X-Robots-Tag` + meta noindex.
 
 Flagged, not changed (product decisions):
-- /admissions enquiry pop-up auto-opens 600 ms after every visit. Google can
-  demote pages whose mobile interstitial covers content on arrival from search
-  — consider opening it on scroll/exit-intent or a delay of ~15 s, once per session.
+- ~~/admissions pop-up auto-opened 600 ms after every visit~~ — fixed (user
+  approved): opens once per session after scrolling half a viewport, and its
+  form code is lazy-loaded. Plus `AnimatedSection aboveFold` on the first
+  section of 10 pages. /admissions LCP 4.97 s → 3.76 s, perf 82 → 89.
+- Student Life activity names in the CMS look like placeholders
+  ("Sports-Indoor-1", "Sports-Outdoor") — rename in CMS.
 - ~~Footer office hours 8 AM vs 9 AM~~ — fixed: footer now reads
   `SCHOOL.officeHours` (Mon–Sat, 9:00 AM – 3:00 PM, confirmed by user).
 - Lighthouse a11y flags colour contrast (96/100) — not SEO, worth a pass later.
