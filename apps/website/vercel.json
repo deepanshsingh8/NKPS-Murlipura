@@ -11,6 +11,23 @@
     { "source": "/erp", "destination": "https://erp.nkpublicschool.org", "permanent": true },
     { "source": "/erp/(.*)", "destination": "https://erp.nkpublicschool.org/$1", "permanent": true },
     { "source": "/portal/(.*)", "destination": "https://erp.nkpublicschool.org/portal/$1", "permanent": true },
-    { "source": "/articles/nkps-murlipura-2025-board-results", "destination": "/articles/smart-panel-classrooms", "permanent": true }
+    { "source": "/articles/nkps-murlipura-2025-board-results", "destination": "/articles/smart-panel-classrooms", "permanent": true },
+    { "source": "/english", "destination": "/", "permanent": true },
+    { "source": "/english/", "destination": "/", "permanent": true },
+    { "source": "/english/contact", "destination": "/contact", "permanent": true },
+    { "source": "/english/career", "destination": "/contact", "permanent": true },
+    { "source": "/english/page/welcome-to-nk-public-school", "destination": "/about", "permanent": true },
+    { "source": "/english/page/admission-information", "destination": "/admissions", "permanent": true },
+    { "source": "/english/page/examinations", "destination": "/academics", "permanent": true },
+    { "source": "/english/message_detail/:id", "destination": "/about", "permanent": true },
+    { "source": "/english/fee_committee", "destination": "/mandatory-public-disclosure", "permanent": true },
+    { "source": "/english/fee_committee/:path*", "destination": "/mandatory-public-disclosure", "permanent": true },
+    { "source": "/english/alumni_registration", "destination": "/alumni", "permanent": true },
+    { "source": "/english/achievements", "destination": "/articles", "permanent": true },
+    { "source": "/english/download_prospectus", "destination": "/prospectus", "permanent": true },
+    { "source": "/english/assets/uploads/prospectus_images/:path*", "destination": "/prospectus", "permanent": true },
+    { "source": "/english/news/newsdetail/summer-holiday-homework-:rest", "destination": "/holiday-homework", "permanent": true },
+    { "source": "/english/news/:path*", "destination": "/articles", "permanent": true },
+    { "source": "/english/pictures/:path*", "destination": "/gallery", "permanent": true }
   ]
 }
