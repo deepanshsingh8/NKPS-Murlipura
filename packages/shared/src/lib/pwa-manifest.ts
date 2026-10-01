@@ -31,7 +31,7 @@ const BACKGROUND_COLOR = "#FFFFFF";
  * holds the previous PNGs. `scripts/check-pwa-icons.mjs` keeps the two sw.js
  * files in step with it, since a static file in public/ cannot import this.
  */
-export const ICON_VERSION = "2";
+export const ICON_VERSION = "3";
 
 /** An icon URL carrying the current version. */
 export function iconUrl(file: string): string {

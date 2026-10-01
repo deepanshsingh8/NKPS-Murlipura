@@ -197,6 +197,10 @@ only — parallel groups differ from the canonical assignment by design).
   The reason is required and enforced: a bare marker is still reported, because
   a marker with no reason is drift with a note on it. `apps/website` is out of
   scope; it has no dark mode and reports no statuses.
+- **Logo.** The crest's source of truth is `assets/logos/*.svg` (full crest
+  and shield-only). Every PNG of it — `public/images/logo.png` in each app,
+  favicons, PWA icons, the website OG mark — is generated from those by
+  `scripts/generate-pwa-icons.mjs`; never hand-edit a PNG.
 - **PWA icons.** Regenerating the icons is not enough to ship them. They keep
   their filenames, so the URLs come out byte-different and string-identical,
   and neither Android's install updater nor any cache in between can tell that
