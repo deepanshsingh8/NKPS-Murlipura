@@ -78,8 +78,8 @@ Flagged, not changed (product decisions):
 - /admissions enquiry pop-up auto-opens 600 ms after every visit. Google can
   demote pages whose mobile interstitial covers content on arrival from search
   — consider opening it on scroll/exit-intent or a delay of ~15 s, once per session.
-- Footer says "Mon – Sat: 8:00 AM – 3:00 PM" but schema + contact page say
-  9:00 AM – 3:00 PM. Pick one so NAP data is consistent (local SEO).
+- ~~Footer office hours 8 AM vs 9 AM~~ — fixed: footer now reads
+  `SCHOOL.officeHours` (Mon–Sat, 9:00 AM – 3:00 PM, confirmed by user).
 - Lighthouse a11y flags colour contrast (96/100) — not SEO, worth a pass later.
 
 ### Phase B — content / data (needs school input)

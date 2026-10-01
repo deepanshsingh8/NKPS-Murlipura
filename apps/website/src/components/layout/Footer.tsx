@@ -135,7 +135,7 @@ export function Footer() {
               </li>
               <li className="flex items-start gap-3">
                 <Clock className="mt-0.5 h-4 w-4 shrink-0 text-gold-500" />
-                <span className="text-sm text-gray-300">Mon – Sat: 8:00 AM – 3:00 PM</span>
+                <span className="text-sm text-gray-300">{SCHOOL.officeHours}</span>
               </li>
             </ul>
           </div>
