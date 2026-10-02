@@ -4,7 +4,15 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
-import { Menu, X, Phone, Mail, ChevronDown } from "lucide-react";
+import {
+  Menu,
+  X,
+  Phone,
+  Mail,
+  ChevronDown,
+  GraduationCap,
+  LayoutGrid,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@nkps/shared/lib/utils";
 import { NAV_LINKS, SCHOOL } from "@nkps/shared/lib/constants";
@@ -13,16 +21,34 @@ import {
   InstagramIcon,
   YoutubeIcon,
 } from "@nkps/shared/components/SocialIcons";
-import { getErpUrl } from "@nkps/shared/lib/cross-app";
+import { getCmsUrl, getErpUrl } from "@nkps/shared/lib/cross-app";
 // A static import, not "/images/logo.png": the optimizer caches by URL for
 // 31 days (next.config.ts), so a string src keeps serving the previous crest
 // to every returning visitor. The import puts a content hash in the URL.
 import logo from "../../../public/images/logo.png";
 
+// The two sign-in destinations behind the "Login" menu. ERP is the one most
+// visitors want (every student, parent and teacher), so it is listed first.
+const LOGIN_LINKS = [
+  {
+    label: "ERP Login",
+    description: "Students, parents, teachers & staff",
+    href: getErpUrl("/portal/login"),
+    icon: GraduationCap,
+  },
+  {
+    label: "CMS Login",
+    description: "Admins & editors — website content",
+    href: getCmsUrl("/login"),
+    icon: LayoutGrid,
+  },
+];
+
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
   const pathname = usePathname();
   const isHome = pathname === "/";
 
@@ -46,6 +72,7 @@ export function Navbar() {
     setMobileOpen(false);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMoreOpen(false);
+    setLoginOpen(false);
   }, [pathname]);
 
   useEffect(() => {
@@ -187,17 +214,69 @@ export function Navbar() {
             </div>
           </div>
 
-          {/* ERP Login + Mobile Hamburger */}
+          {/* Login menu + Mobile Hamburger */}
           <div className="flex items-center gap-2">
-            {/* ERP Login - shimmer button */}
-            <Link
-              href={getErpUrl("/portal/login")}
-              className="group relative hidden lg:inline-flex items-center gap-1.5 overflow-hidden rounded-full bg-gradient-to-r from-gold-500 to-gold-400 px-3.5 py-1.5 text-xs font-semibold text-navy-900 transition-all duration-300 hover:shadow-lg hover:shadow-gold-500/25 hover:scale-[1.02]"
+            {/* Login - shimmer button opening an ERP / CMS chooser */}
+            <div
+              className="relative hidden lg:block"
+              onMouseEnter={() => setLoginOpen(true)}
+              onMouseLeave={() => setLoginOpen(false)}
             >
-              {/* Shimmer effect */}
-              <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
-              <span className="relative z-10">ERP Login</span>
-            </Link>
+              <button
+                type="button"
+                onClick={() => setLoginOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={loginOpen}
+                className="group relative inline-flex items-center gap-1 overflow-hidden rounded-full bg-gradient-to-r from-gold-500 to-gold-400 px-3.5 py-1.5 text-xs font-semibold text-navy-900 transition-all duration-300 hover:shadow-lg hover:shadow-gold-500/25 hover:scale-[1.02] cursor-pointer"
+              >
+                {/* Shimmer effect */}
+                <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
+                <span className="relative z-10">Login</span>
+                <ChevronDown
+                  className={cn(
+                    "relative z-10 h-3.5 w-3.5 transition-transform duration-300",
+                    loginOpen && "rotate-180"
+                  )}
+                />
+              </button>
+
+              <AnimatePresence>
+                {loginOpen && (
+                  <motion.div
+                    role="menu"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    // pt-2 rather than mt-2: the gap stays inside the hover
+                    // area, so moving the pointer down doesn't close the menu.
+                    className="absolute right-0 top-full pt-2"
+                  >
+                    <div className="w-64 rounded-2xl border border-gold-500/30 bg-navy-900/95 p-2 shadow-lg shadow-black/30 backdrop-blur-xl">
+                      {LOGIN_LINKS.map((link) => (
+                        <Link
+                          key={link.href}
+                          href={link.href}
+                          role="menuitem"
+                          onClick={() => setLoginOpen(false)}
+                          className="flex items-start gap-3 rounded-xl px-3 py-2.5 transition-colors duration-200 hover:bg-white/10"
+                        >
+                          <link.icon className="mt-0.5 h-4 w-4 shrink-0 text-gold-400" />
+                          <span>
+                            <span className="block text-sm font-medium text-white">
+                              {link.label}
+                            </span>
+                            <span className="block text-xs text-white/60">
+                              {link.description}
+                            </span>
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
             {/* Mobile Hamburger - morphs to X */}
             <motion.button
@@ -279,7 +358,7 @@ export function Navbar() {
                   );
                 })}
 
-                {/* ERP Login */}
+                {/* Login — one button per destination */}
                 <motion.div
                   initial={{ opacity: 0, x: 60 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -289,15 +368,24 @@ export function Navbar() {
                     delay: NAV_LINKS.length * 0.04,
                     ease: "easeOut",
                   }}
-                  className="mt-3"
+                  className="mt-3 flex flex-wrap justify-center gap-3"
                 >
-                  <Link
-                    href={getErpUrl("/portal/login")}
-                    onClick={() => setMobileOpen(false)}
-                    className="inline-flex items-center rounded-full bg-gradient-to-r from-gold-500 to-gold-400 px-7 py-2.5 text-sm font-semibold text-navy-900 transition-all duration-300 hover:shadow-lg hover:shadow-gold-500/25"
-                  >
-                    ERP Login
-                  </Link>
+                  {LOGIN_LINKS.map((link, i) => (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      onClick={() => setMobileOpen(false)}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-semibold transition-all duration-300",
+                        i === 0
+                          ? "bg-gradient-to-r from-gold-500 to-gold-400 text-navy-900 hover:shadow-lg hover:shadow-gold-500/25"
+                          : "border border-gold-500/50 text-gold-400 hover:bg-white/10"
+                      )}
+                    >
+                      <link.icon className="h-4 w-4" />
+                      {link.label}
+                    </Link>
+                  ))}
                 </motion.div>
               </nav>
 
