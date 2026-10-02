@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { HeroSlider } from "@/components/home/HeroSlider";
-import { QuickLinks } from "@/components/home/QuickLinks";
 import { FacilitiesPreview } from "@/components/home/FacilitiesPreview";
 import { NewsAchievements } from "@/components/home/NewsAchievements";
 import { StatsCounter } from "@/components/home/StatsCounter";
@@ -76,8 +75,6 @@ export default async function HomePage() {
           </p>
         </div>
       </section>
-
-      <QuickLinks />
 
       <FacilitiesPreview cards={facilityCards} />
 
